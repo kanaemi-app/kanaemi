@@ -21,5 +21,7 @@ pub use machine::*;
 pub use output::*;
 pub use romaji::*;
 
-/// The version of this crate, as Cargo records it.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The version of this build: the latest `v` tag as `git describe` gives it,
+/// without the `v` (`0.1.0`, or `0.1.0-3-gabc1234` three commits past it).
+/// Without such a tag or a Git checkout, the version Cargo records.
+pub const VERSION: &str = env!("KANAEMI_VERSION");
