@@ -9,8 +9,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use kanaemi_config::{DICTIONARY_DIR, FILE_NAME};
-use kanaemi_core::{Event, Key, KeyEvent, KeyKind, Modifiers};
-use kanaemi_runtime::{Field, Profile};
+use kanaemi_core::{Event, Key, KeyEvent, KeyKind, Mode, Modifiers};
+use kanaemi_runtime::{ControlPort, Field, Profile};
 
 const FOCUS_IN: Event = Event::FocusIn { password: false };
 const WAIT: Duration = Duration::from_secs(5);
@@ -108,7 +108,11 @@ struct Client {
 
 impl Client {
     fn connect(ime: &Ime) -> Self {
-        let stream = TcpStream::connect(("127.0.0.1", ime.port)).unwrap();
+        Self::connect_to(ime.port)
+    }
+
+    fn connect_to(port: u16) -> Self {
+        let stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
         stream.set_read_timeout(Some(WAIT)).unwrap();
         Self {
             lines: BufReader::new(stream),
@@ -347,4 +351,42 @@ fn connections_end_when_the_port_is_taken_out_of_the_settings() {
         rest.lines().all(|line| line.contains("\"event\"")),
         "{rest:?}"
     );
+}
+
+#[test]
+fn a_port_without_a_profile_answers_and_tells_the_mode_it_is_given() {
+    let port = free_port();
+    let (wake, woken) = mpsc::channel();
+    let mut control = ControlPort::new(move || {
+        let _ = wake.send(());
+    });
+    control.listen_on(Some(port));
+    control.tell(Some(Mode::Kana));
+    let mut client = Client::connect_to(port);
+    client.send(r#"{"op": "watch-mode", "id": 1}"#);
+    woken.recv_timeout(WAIT).expect("woken for a request");
+    for request in control.take_requests() {
+        control.answer(request, Some(Mode::Kana));
+    }
+    assert_eq!(
+        client.receive(),
+        serde_json::json!({"id": 1, "mode": "kana"})
+    );
+    control.tell(Some(Mode::Kana));
+    control.tell(None);
+    assert_eq!(
+        client.receive(),
+        serde_json::json!({"event": "mode", "mode": null}),
+        "the mode already answered is not told again"
+    );
+}
+
+#[test]
+fn a_port_without_a_profile_lets_go_when_told_to_listen_on_none() {
+    let port = free_port();
+    let mut control = ControlPort::new(|| {});
+    control.listen_on(Some(port));
+    assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
+    control.listen_on(None);
+    assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
 }

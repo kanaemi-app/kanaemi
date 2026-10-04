@@ -9,16 +9,37 @@ use std::rc::Rc;
 
 use kanaemi_config::DictionarySource;
 use kanaemi_core::{Candidate, Config, Converter, Effect, Event, Mode};
-use kanaemi_engine::{Engine, Selections};
+use kanaemi_engine::{Engine, LineSink, Selections};
 
-use crate::control::{ControlRequest, Server, Wake};
+use crate::control::{ControlPort, ControlRequest};
 use crate::dictionaries::{self, FileStamp, Stamp};
 use crate::settings;
+
+/// What this process may do with the settings folder.
+#[derive(Clone, Copy)]
+pub enum Access {
+    /// Read and write everything, as the user.
+    Full,
+    /// Read the settings, the dictionaries and the model only, as a process
+    /// in a sandbox may. What the user typed (the user custom dictionary and
+    /// the record of picks) is neither read nor written, so a sandboxed
+    /// application cannot reach it; the lines registrations and deletions
+    /// would write go to the sink this makes instead, and stay in memory
+    /// until the IME stops.
+    Sandboxed(fn() -> Box<dyn LineSink>),
+}
+
+impl Access {
+    fn is_full(self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
 
 /// The settings and the engine every field shares, read from one settings
 /// folder.
 pub struct Profile {
     dir: PathBuf,
+    access: Access,
     config: Config,
     /// As the settings list them; `None` reads the defaults.
     dictionaries: Option<Vec<DictionarySource>>,
@@ -36,10 +57,9 @@ pub struct Profile {
     unsaved: Option<Selections>,
     /// The port the settings name for other programs' requests.
     control_port: Option<u16>,
-    /// How to wake the thread fields are served on; requests are taken only
-    /// once the platform gives one.
-    wake: Option<Wake>,
-    control: Option<Server>,
+    /// Requests are taken only once the platform says how to wake the
+    /// thread fields are served on.
+    control: Option<ControlPort>,
     /// The field with the focus, by its id, and its mode.
     focus: Option<(u64, Mode)>,
 }
@@ -48,16 +68,25 @@ impl Profile {
     /// Reads the settings in `dir` and opens the dictionaries they list,
     /// creating the folder and a commented settings file when missing.
     pub fn open(dir: impl Into<PathBuf>) -> Self {
+        Self::open_with(dir, Access::Full)
+    }
+
+    /// Like [`Self::open`], doing with the folder only what `access` allows:
+    /// a sandboxed profile creates nothing there.
+    pub fn open_with(dir: impl Into<PathBuf>, access: Access) -> Self {
         let dir = dir.into();
-        if let Err(error) = std::fs::create_dir_all(&dir) {
+        if access.is_full()
+            && let Err(error) = std::fs::create_dir_all(&dir)
+        {
             tracing::warn!(path = %dir.display(), %error, "settings folder not created");
         }
         // Stamped before reading, so a change while reading is seen next time.
-        let (settings, settings_stamp) = settings::read_stamped(&dir);
+        let (settings, settings_stamp) = settings::read_stamped(&dir, access);
         let dictionary_stamp = dictionaries::stamp(&dir, settings.dictionaries.as_deref());
         let user_stamp = dictionaries::user_stamp(&dir);
-        let engine = dictionaries::open_engine(&dir, settings.dictionaries.as_deref());
+        let engine = dictionaries::open_engine(&dir, settings.dictionaries.as_deref(), access);
         let mut profile = Self {
+            access,
             config: settings.config,
             dictionaries: settings.dictionaries,
             generation: 0,
@@ -69,7 +98,6 @@ impl Profile {
             selections_read: false,
             unsaved: None,
             control_port: settings.control_port,
-            wake: None,
             control: None,
             focus: None,
             dir,
@@ -96,12 +124,14 @@ impl Profile {
     /// the dictionaries in use, and the record of picks.
     pub(crate) fn reload_if_changed(&mut self) {
         if settings::stamp(&self.dir) != self.settings_stamp {
-            let (settings, stamp) = settings::read_stamped(&self.dir);
+            let (settings, stamp) = settings::read_stamped(&self.dir, self.access);
             self.settings_stamp = stamp;
             self.config = settings.config;
             self.dictionaries = settings.dictionaries;
             self.control_port = settings.control_port;
-            self.listen_on_port();
+            if let Some(control) = &mut self.control {
+                control.listen_on(self.control_port);
+            }
             self.generation += 1;
             tracing::info!("settings read again");
         }
@@ -110,18 +140,26 @@ impl Profile {
         let user_changed = std::mem::replace(&mut self.user_stamp, user_stamp) != user_stamp;
         if stamp != self.dictionary_stamp {
             self.dictionary_stamp = stamp;
-            let engine = dictionaries::open_engine(&self.dir, self.dictionaries.as_deref());
+            let engine =
+                dictionaries::open_engine(&self.dir, self.dictionaries.as_deref(), self.access);
             let mut shared = self.engine.0.borrow_mut();
             let previous = std::mem::replace(&mut *shared, engine);
+            // A sandbox cannot read the user custom dictionary back, so the
+            // words it registered live only in memory.
+            let kept = (!self.access.is_full()).then(|| previous.user_dictionary().clone());
             shared.take_over(previous);
+            if let Some(user) = kept {
+                shared.replace_user(user);
+            }
             tracing::info!("dictionaries opened again");
-        } else if user_changed {
+        } else if user_changed && self.access.is_full() {
             let user = dictionaries::read_user(&self.dir);
             self.engine.0.borrow_mut().replace_user(user);
             tracing::info!("user custom dictionary read again");
         }
-        if !self.selections_read
-            || dictionaries::selections_stamp(&self.dir) != self.selections_stamp
+        if self.access.is_full()
+            && (!self.selections_read
+                || dictionaries::selections_stamp(&self.dir) != self.selections_stamp)
         {
             let shared = self.engine.0.clone();
             self.read_selections(&mut shared.borrow_mut());
@@ -147,8 +185,11 @@ impl Profile {
     }
 
     /// Writes the picks not yet written, unless the record on disk could
-    /// not be read or changed since it was.
+    /// not be read or changed since it was. A sandbox keeps no record.
     pub(crate) fn save_selections(&mut self) {
+        if !self.access.is_full() {
+            return;
+        }
         let shared = self.engine.0.clone();
         let mut engine = shared.borrow_mut();
         if dictionaries::selections_stamp(&self.dir) != self.selections_stamp {
@@ -174,6 +215,9 @@ impl Profile {
     /// Puts the record of picks on disk in place of the one held here, when
     /// it can be read.
     fn read_selections(&mut self, engine: &mut Engine) {
+        if !self.access.is_full() {
+            return;
+        }
         // Stamped before reading, so a change while reading is seen next time.
         self.selections_stamp = dictionaries::selections_stamp(&self.dir);
         let read = dictionaries::read_selections(&self.dir);
@@ -191,22 +235,25 @@ impl Profile {
     /// with `wake`, which may be called from any thread. The port follows
     /// the settings as they are read again.
     pub fn listen(&mut self, wake: impl Fn() + Send + Sync + 'static) {
-        self.wake = Some(std::sync::Arc::new(wake));
-        self.listen_on_port();
+        let control = self.control.insert(ControlPort::new(wake));
+        control.tell(self.focus.map(|(_, mode)| mode));
+        control.listen_on(self.control_port);
     }
 
     /// The requests that came in since the last call, oldest first. Answer
     /// each with [`Profile::answer`], in order, after putting the field with
     /// the focus in the mode it asks for.
     pub fn take_control_requests(&mut self) -> Vec<ControlRequest> {
-        self.control.as_mut().map(Server::take).unwrap_or_default()
+        self.control
+            .as_mut()
+            .map(ControlPort::take_requests)
+            .unwrap_or_default()
     }
 
     /// Answers `request` with what the field with the focus is in now.
     pub fn answer(&mut self, request: ControlRequest) {
-        let watcher = request.answer(self.focus.map(|(_, mode)| mode));
-        if let (Some(watcher), Some(control)) = (watcher, self.control.as_mut()) {
-            control.watch(watcher);
+        if let Some(control) = &mut self.control {
+            control.answer(request, self.focus.map(|(_, mode)| mode));
         }
     }
 
@@ -223,27 +270,6 @@ impl Profile {
         }
         if let Some(control) = &mut self.control {
             control.tell(self.focus.map(|(_, mode)| mode));
-        }
-    }
-
-    /// Listens on the port the settings name, letting go of any other.
-    fn listen_on_port(&mut self) {
-        let Some(wake) = self.wake.clone() else {
-            return;
-        };
-        if self.control.as_ref().map(Server::port) == self.control_port {
-            return;
-        }
-        self.control = None;
-        let Some(port) = self.control_port else {
-            return;
-        };
-        match Server::listen(port, wake) {
-            Ok(server) => {
-                tracing::info!(port, "listening for other programs");
-                self.control = Some(server);
-            }
-            Err(error) => tracing::warn!(port, %error, "control port not listened on"),
         }
     }
 }
@@ -450,6 +476,80 @@ mod tests {
         fs::write(dir.join(USER_CUSTOM_FILE), "きしゃ\t記者\n").unwrap();
         profile.reload_if_changed();
         assert_eq!(surfaces(&profile, "きしゃ"), ["記者"]);
+    }
+
+    thread_local! {
+        static SENT: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Keeps the lines a sandboxed profile sends, on this test's thread.
+    struct Sent;
+
+    impl LineSink for Sent {
+        fn append(&mut self, line: &str) -> std::io::Result<()> {
+            SENT.with_borrow_mut(|sent| sent.push(line.to_owned()));
+            Ok(())
+        }
+    }
+
+    const SANDBOXED: Access = Access::Sandboxed(|| Box::new(Sent));
+
+    fn register(profile: &mut Profile, reading: &str, surface: &str) {
+        profile.learn(&[Effect::Registered {
+            reading: reading.to_owned(),
+            okurigana: None,
+            surface: surface.to_owned(),
+        }]);
+    }
+
+    #[test]
+    fn a_sandboxed_profile_neither_reads_nor_writes_what_the_user_typed() {
+        let dir = picks_dir("sandboxed");
+        fs::write(dir.join(USER_CUSTOM_FILE), "きしゃ\t帰社\n").unwrap();
+        let mut profile = Profile::open_with(&dir, SANDBOXED);
+        assert_eq!(surfaces(&profile, "きしゃ"), ["記者", "貴社"]);
+        pick(&mut profile, "貴社", 3);
+        profile.save_selections();
+        assert!(!dir.join(SELECTIONS_FILE).exists());
+        register(&mut profile, "きしゃ", "汽車");
+        assert_eq!(
+            fs::read_to_string(dir.join(USER_CUSTOM_FILE)).unwrap(),
+            "きしゃ\t帰社\n"
+        );
+        assert_eq!(SENT.take(), ["きしゃ\t汽車"], "sent to the sink instead");
+    }
+
+    #[test]
+    fn a_sandboxed_profile_does_not_read_the_record_of_picks() {
+        let dir = picks_dir("sandboxed-record");
+        pick(&mut Profile::open(&dir), "貴社", 3);
+        let mut profile = Profile::open_with(&dir, SANDBOXED);
+        assert_eq!(surfaces(&profile, "きしゃ"), ["記者", "貴社"]);
+        age(&dir.join(SELECTIONS_FILE));
+        profile.reload_if_changed();
+        assert_eq!(surfaces(&profile, "きしゃ"), ["記者", "貴社"]);
+    }
+
+    #[test]
+    fn a_sandboxed_profile_writes_nothing_into_the_settings_folder() {
+        let dir = temp_dir("sandboxed-folder").join("missing");
+        let mut profile = Profile::open_with(&dir, SANDBOXED);
+        register(&mut profile, "きしゃ", "汽車");
+        profile.learn(&[Effect::FocusMoved]);
+        profile.reload_if_changed();
+        assert!(!dir.exists());
+        SENT.take();
+    }
+
+    #[test]
+    fn a_sandboxed_profile_keeps_its_words_when_the_dictionaries_open_again() {
+        let dir = temp_dir("sandboxed-reopen");
+        let mut profile = Profile::open_with(&dir, SANDBOXED);
+        register(&mut profile, "きしゃ", "帰社");
+        fs::write(dir.join(DICTIONARY_DIR).join("a.tsv"), "きしゃ\t汽車\n").unwrap();
+        profile.reload_if_changed();
+        assert_eq!(surfaces(&profile, "きしゃ"), ["帰社", "汽車"]);
+        SENT.take();
     }
 
     #[test]

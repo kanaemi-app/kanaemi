@@ -11,13 +11,26 @@ use kanaemi_config::{
     DictionarySource, MODEL_FILE, SELECTIONS_FILE, USER_CUSTOM_FILE, dictionary_sources,
 };
 use kanaemi_engine::{
-    Dictionary, DictionaryError, Engine, FileSink, RankingModel, Selections, Slot, TextDictionary,
-    open_dictionary, replace_file,
+    BinaryDictionary, Dictionary, DictionaryError, Engine, FileSink, LineSink, RankingModel,
+    Selections, Slot, TextDictionary, is_binary, replace_file,
 };
 
+use crate::Access;
+use crate::shared::SharedFiles;
+
+type SharedDictionary = dyn Dictionary + Send + Sync;
+
+static DICTIONARIES: SharedFiles<SharedDictionary> = SharedFiles::new();
+static MODELS: SharedFiles<RankingModel> = SharedFiles::new();
+
 /// A dictionary that cannot be read is skipped; without any the IME still
-/// types kana and katakana.
-pub(crate) fn open_engine(support_dir: &Path, sources: Option<&[DictionarySource]>) -> Engine {
+/// types kana and katakana. A sandboxed engine starts with an empty user
+/// custom dictionary and sends what it learns to its sink.
+pub(crate) fn open_engine(
+    support_dir: &Path,
+    sources: Option<&[DictionarySource]>,
+    access: Access,
+) -> Engine {
     let slots = dictionary_sources(support_dir, sources)
         .into_iter()
         .filter_map(|source| match source {
@@ -26,12 +39,15 @@ pub(crate) fn open_engine(support_dir: &Path, sources: Option<&[DictionarySource
             DictionarySource::Converted { binary, text } => open_converted(&binary, &text),
         })
         .collect::<Vec<_>>();
-    let mut engine = Engine::new(
-        slots,
-        read_user(support_dir),
-        FileSink::new(support_dir.join(USER_CUSTOM_FILE)),
-    );
-    engine.set_model(read_model(support_dir).map(Arc::new));
+    let (user, sink): (_, Box<dyn LineSink>) = match access {
+        Access::Full => (
+            read_user(support_dir),
+            Box::new(FileSink::new(support_dir.join(USER_CUSTOM_FILE))),
+        ),
+        Access::Sandboxed(sink) => (TextDictionary::parse_user_custom("").0, sink()),
+    };
+    let mut engine = Engine::new(slots, user, sink);
+    engine.set_model(read_model(support_dir));
     engine
 }
 
@@ -42,6 +58,7 @@ fn open(path: &Path) -> Option<Box<dyn Dictionary>> {
             |error| tracing::warn!(path = %path.display(), %error, "dictionary unreadable"),
         )
         .ok()
+        .map(|dictionary| Box::new(dictionary) as Box<dyn Dictionary>)
 }
 
 /// The binary dictionary, or the text one it was converted from when the
@@ -56,23 +73,38 @@ fn open_converted(binary: &Path, text: &Path) -> Option<Slot> {
             |error| tracing::warn!(path = %text.display(), %error, "dictionary unreadable"),
         )
         .ok()
-        .map(Slot::Dictionary)
+        .map(|dictionary| Slot::Dictionary(Box::new(dictionary)))
 }
 
-fn try_open(path: &Path) -> Result<Box<dyn Dictionary>, DictionaryError> {
-    let (dictionary, invalid) = open_dictionary(path)?;
-    tracing::info!(path = %path.display(), invalid = invalid.len(), "dictionary loaded");
-    Ok(dictionary)
+/// The dictionary in `path`, shared with every engine of this process that
+/// holds it as the file is now: a binary dictionary by its first bytes,
+/// whatever its name, or else a text dictionary.
+fn try_open(path: &Path) -> Result<Arc<SharedDictionary>, DictionaryError> {
+    DICTIONARIES.get(path, || {
+        let (dictionary, invalid): (Arc<SharedDictionary>, _) = if is_binary(path)? {
+            (Arc::new(BinaryDictionary::open(path)?), 0)
+        } else {
+            let (dictionary, invalid) = TextDictionary::parse(fs::read(path)?);
+            (Arc::new(dictionary), invalid.len())
+        };
+        tracing::info!(path = %path.display(), invalid, "dictionary loaded");
+        Ok(dictionary)
+    })
 }
 
 /// A missing model ranks by the rules; a broken one too, after a warning.
-fn read_model(support_dir: &Path) -> Option<RankingModel> {
+/// Shared like the dictionaries.
+fn read_model(support_dir: &Path) -> Option<Arc<RankingModel>> {
     let path = support_dir.join(MODEL_FILE);
     if !path.exists() {
         return None;
     }
-    RankingModel::open(&path)
-        .inspect(|_| tracing::info!(path = %path.display(), "ranking model loaded"))
+    MODELS
+        .get(&path, || {
+            RankingModel::open(&path)
+                .map(Arc::new)
+                .inspect(|_| tracing::info!(path = %path.display(), "ranking model loaded"))
+        })
         .inspect_err(
             |error| tracing::warn!(path = %path.display(), %error, "ranking model unreadable"),
         )
@@ -123,7 +155,7 @@ pub(crate) fn read_user(support_dir: &Path) -> TextDictionary {
 /// A file as it stands, to tell when it changed; `None` when it is missing.
 pub(crate) type FileStamp = Option<kanaemi_engine::FileStamp>;
 
-fn file_stamp(path: &Path) -> FileStamp {
+pub(crate) fn file_stamp(path: &Path) -> FileStamp {
     kanaemi_engine::FileStamp::of(path)
 }
 
@@ -201,7 +233,7 @@ mod tests {
         fs::write(dir.join(DICTIONARY_DIR).join("10-a.tsv"), "きしゃ\t汽車\n").unwrap();
         fs::write(dir.join(DICTIONARY_DIR).join("notes.txt"), "きしゃ\t帰社\n").unwrap();
         assert_eq!(
-            surfaces(&open_engine(&dir, None), "きしゃ"),
+            surfaces(&open_engine(&dir, None, Access::Full), "きしゃ"),
             ["貴社", "汽車", "記者"]
         );
     }
@@ -215,12 +247,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            surfaces(&open_engine(&dir, None), "きしゃ"),
+            surfaces(&open_engine(&dir, None, Access::Full), "きしゃ"),
             ["汽車", "記者"]
         );
         fs::write(dir.join(MODEL_FILE), b"broken").unwrap();
         assert_eq!(
-            surfaces(&open_engine(&dir, None), "きしゃ"),
+            surfaces(&open_engine(&dir, None, Access::Full), "きしゃ"),
             ["汽車", "記者"],
             "a broken model ranks by the rules"
         );
@@ -241,12 +273,12 @@ mod tests {
         fs::write(dir.join(DICTIONARY_DIR).join("b.kdic"), binary).unwrap();
         fs::write(dir.join(DICTIONARY_DIR).join("a.tsv"), "きしゃ\t汽車\n").unwrap();
         assert_eq!(
-            surfaces(&open_engine(&dir, None), "きしゃ"),
+            surfaces(&open_engine(&dir, None, Access::Full), "きしゃ"),
             ["汽車", "記者"]
         );
         fs::write(dir.join(DICTIONARY_DIR).join("b.tsv"), "きしゃ\t帰社\n").unwrap();
         assert_eq!(
-            surfaces(&open_engine(&dir, None), "きしゃ"),
+            surfaces(&open_engine(&dir, None, Access::Full), "きしゃ"),
             ["汽車", "記者"],
             "b.kdic stands for b.tsv"
         );
@@ -259,7 +291,10 @@ mod tests {
         // It starts as a binary dictionary does, but ends too soon to open.
         fs::write(dir.join(DICTIONARY_DIR).join("b.kdic"), &binary[..16]).unwrap();
         fs::write(dir.join(DICTIONARY_DIR).join("b.tsv"), "きしゃ\t記者\n").unwrap();
-        assert_eq!(surfaces(&open_engine(&dir, None), "きしゃ"), ["記者"]);
+        assert_eq!(
+            surfaces(&open_engine(&dir, None, Access::Full), "きしゃ"),
+            ["記者"]
+        );
     }
 
     #[test]
@@ -277,7 +312,7 @@ mod tests {
             DictionarySource::UserCustom,
         ];
         assert_eq!(
-            surfaces(&open_engine(&dir, Some(&sources)), "きしゃ"),
+            surfaces(&open_engine(&dir, Some(&sources), Access::Full), "きしゃ"),
             ["汽車", "貴社"]
         );
     }
@@ -286,7 +321,7 @@ mod tests {
     fn nothing_on_disk_still_gives_an_engine_that_registers() {
         let dir = temp_dir("empty");
         fs::remove_dir_all(dir.join(DICTIONARY_DIR)).unwrap();
-        let mut engine = open_engine(&dir, None);
+        let mut engine = open_engine(&dir, None, Access::Full);
         assert_eq!(surfaces(&engine, "きしゃ"), Vec::<String>::new());
         engine.learn(&registered("きしゃ", "記者"));
         assert!(engine.take_write_errors().is_empty());
@@ -353,7 +388,7 @@ mod tests {
     fn the_user_stamp_changes_on_every_append() {
         let dir = temp_dir("user-stamp");
         assert_eq!(user_stamp(&dir), None);
-        let mut engine = open_engine(&dir, None);
+        let mut engine = open_engine(&dir, None, Access::Full);
         engine.learn(&registered("きしゃ", "記者"));
         let first = user_stamp(&dir);
         assert!(first.is_some());
@@ -364,7 +399,7 @@ mod tests {
     #[test]
     fn a_hand_edit_reads_back_into_the_engine() {
         let dir = temp_dir("user-edit");
-        let mut engine = open_engine(&dir, None);
+        let mut engine = open_engine(&dir, None, Access::Full);
         fs::write(dir.join(USER_CUSTOM_FILE), "きしゃ\t記者\n").unwrap();
         engine.replace_user(read_user(&dir));
         assert_eq!(surfaces(&engine, "きしゃ"), ["記者"]);
