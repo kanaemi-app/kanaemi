@@ -1,0 +1,14 @@
+[package]
+name = "kanaemi-runtime"
+description = "What every platform's input method does alike: dictionaries, the model, settings, logging and the per-field state"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kanaemi-config.workspace = true
+kanaemi-core.workspace = true
+kanaemi-engine.workspace = true
+tracing = { version = "0.1", features = ["release_max_level_info"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
