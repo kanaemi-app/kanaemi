@@ -27,6 +27,8 @@ pub struct Settings {
     /// The romaji tables as written, bundled names and file names; `None`
     /// when the default stack is used.
     pub romaji_tables: Option<Vec<String>>,
+    /// The port to take requests from other programs on; `None` takes none.
+    pub control_port: Option<u16>,
 }
 
 /// An item that could not be read, named by its path in the file.
@@ -66,6 +68,8 @@ pub enum ProblemKind {
     ModifierKey,
     /// A number of milliseconds is a whole number above 0.
     NotAPositiveInteger,
+    /// A port is a whole number from 1 to 65535.
+    NotAPort,
     /// Keys used while typing are bound to an action written `@name`.
     UnknownAction(String),
     /// An action that means nothing where it is bound.
@@ -95,6 +99,7 @@ impl std::fmt::Display for ProblemKind {
             }
             Self::ModifierKey => write!(f, "a modifier key cannot be sent as another key"),
             Self::NotAPositiveInteger => write!(f, "not a whole number above 0"),
+            Self::NotAPort => write!(f, "not a whole number from 1 to 65535"),
             Self::UnknownAction(name) => write!(f, "unknown action {name}"),
             Self::ActionNotHere(name) => write!(f, "{name} does nothing here"),
             Self::NotSendable => write!(f, "only named keys can be sent to the application"),
@@ -115,6 +120,7 @@ impl Settings {
                 },
                 dictionaries: None,
                 romaji_tables: None,
+                control_port: None,
             },
             problems: Vec::new(),
             dir: dir.as_ref(),
@@ -154,6 +160,7 @@ impl Reader<'_> {
                 "marks" => self.section(&name, value, Self::mark),
                 "romaji" => self.section(&name, value, Self::romaji),
                 "keys" => self.section(&name, value, Self::keys),
+                "control" => self.section(&name, value, Self::control),
                 _ => self.problem(name, ProblemKind::UnknownItem),
             }
         }
@@ -202,6 +209,16 @@ impl Reader<'_> {
             sources.insert(0, DictionarySource::UserCustom);
         }
         self.settings.dictionaries = Some(sources);
+    }
+
+    fn control(&mut self, item: &str, key: &str, value: Value) {
+        if key != "port" {
+            return self.problem(item, ProblemKind::UnknownItem);
+        }
+        match value.as_integer().and_then(|port| u16::try_from(port).ok()) {
+            Some(port) if port > 0 => self.settings.control_port = Some(port),
+            _ => self.problem(item, ProblemKind::NotAPort),
+        }
     }
 
     fn mark(&mut self, item: &str, key: &str, value: Value) {

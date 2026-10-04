@@ -50,6 +50,13 @@ pub fn Input() -> Element {
         .collect();
     let chosen_tables = romaji_written.unwrap_or_else(|| default_tables.clone());
 
+    let control_port = ctx
+        .store
+        .read()
+        .state
+        .as_ref()
+        .ok()
+        .and_then(|l| l.settings.control_port);
     let pass = config.pass_while_composing;
     let pass_names = [
         (
@@ -158,6 +165,35 @@ pub fn Input() -> Element {
                             Err(_) => e.value().into(),
                         };
                         ctx.change(&["keys", "tap_timeout_ms"], Some(value));
+                    },
+                }
+            }
+        }
+        Group {
+            title: "外からの操作",
+            note: "エディタなどのほかのプログラムが、このポート（127.0.0.1）につないで、入力モードを知り、変えられます。つないできた相手は確かめないので、同じマシンのどのプログラムからでもつなげます。空にすると待ちません。",
+            Row {
+                label: "待つポート",
+                description: "1 から 65535 までの、ほかで使っていない番号を選んでください。".to_owned(),
+                path: path(&["control", "port"]),
+                shipped: control_port.is_some().then(|| "待たない".to_owned()),
+                input {
+                    class: "number",
+                    r#type: "number",
+                    min: "1",
+                    max: "65535",
+                    placeholder: "50123",
+                    value: control_port.map(|p| p.to_string()).unwrap_or_default(),
+                    onchange: move |e| {
+                        let text = e.value();
+                        let value = match text.trim() {
+                            "" => None,
+                            port => Some(match port.parse::<i64>() {
+                                Ok(port) => port.into(),
+                                Err(_) => text.clone().into(),
+                            }),
+                        };
+                        ctx.change(&["control", "port"], value);
                     },
                 }
             }

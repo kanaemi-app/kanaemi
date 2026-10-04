@@ -107,6 +107,34 @@ fn the_mode_indicator_can_be_turned_off() {
 }
 
 #[test]
+fn a_control_port_is_read_from_the_control_table() {
+    let (settings, problems) = load("[control]\nport = 50123");
+    assert_eq!(problems, Vec::<String>::new());
+    assert_eq!(settings.control_port, Some(50123));
+}
+
+#[test]
+fn without_a_control_port_nothing_listens() {
+    assert_eq!(load("").0.control_port, None);
+    assert_eq!(load(TEMPLATE).0.control_port, None);
+}
+
+#[test]
+fn a_control_port_is_a_port_number() {
+    for value in ["0", "65536", "-1", "\"50123\"", "1.5"] {
+        let (settings, problems) = load(&format!("[control]\nport = {value}"));
+        assert_eq!(problems, ["control.port"], "{value}");
+        assert_eq!(settings.control_port, None, "{value}");
+    }
+}
+
+#[test]
+fn an_unknown_control_item_is_reported() {
+    let (_, problems) = load("[control]\nhost = \"localhost\"");
+    assert_eq!(problems, ["control.host"]);
+}
+
+#[test]
 fn romaji_tables_stack_bundled_tables_and_files() {
     let dir = temp_dir("romaji");
     fs::create_dir_all(dir.join("romaji")).unwrap();

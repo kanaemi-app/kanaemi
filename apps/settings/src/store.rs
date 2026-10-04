@@ -276,6 +276,31 @@ mod tests {
     }
 
     #[test]
+    fn the_control_port_is_written_and_taken_out_again() {
+        let dir = temp_dir("control-port");
+        let mut store = Store::open(dir.clone());
+
+        store
+            .change(&["control", "port"], Some(50123.into()))
+            .unwrap();
+        let port = |store: &Store| {
+            store
+                .state
+                .as_ref()
+                .ok()
+                .and_then(|l| l.settings.control_port)
+        };
+        assert_eq!(port(&store), Some(50123));
+        assert!(
+            store
+                .change(&["control", "port"], Some(70000.into()))
+                .is_err()
+        );
+        store.change(&["control", "port"], None).unwrap();
+        assert_eq!(port(&store), None);
+    }
+
+    #[test]
     fn a_problem_elsewhere_does_not_block_a_change() {
         let dir = temp_dir("elsewhere");
         fs::create_dir_all(&dir).unwrap();
