@@ -4,12 +4,14 @@
 //! profile every field shares. A platform's input method keeps only what
 //! talks to its own input method framework.
 
+mod control;
 mod dictionaries;
 mod field;
 mod logging;
 mod profile;
 mod settings;
 
+pub use control::*;
 pub use field::*;
 pub use logging::*;
 pub use profile::*;
