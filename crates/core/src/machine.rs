@@ -137,11 +137,25 @@ impl<C: Converter> Core<C> {
                 self.select(index);
                 false
             }
+            Event::SetMode(Mode::Kana) => {
+                self.enter_kana();
+                false
+            }
+            Event::SetMode(Mode::Abc) => {
+                if self.mode != Mode::Abc {
+                    self.leave_kana();
+                }
+                false
+            }
         };
         if !self.commit.is_empty() {
             self.effects.push(Effect::Typed(self.commit.clone()));
         }
-        self.output(consumed, before)
+        let mut output = self.output(consumed, before);
+        if let Event::SetMode(_) = event {
+            output.indicator = None;
+        }
+        output
     }
 
     pub fn mode(&self) -> Mode {
