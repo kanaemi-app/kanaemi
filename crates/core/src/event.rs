@@ -1,3 +1,5 @@
+use crate::Mode;
+
 /// A key, as the core tells keys apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
@@ -78,4 +80,8 @@ pub enum Event {
     Flush,
     /// A candidate on the shown page was picked, by its position from 0.
     Select(usize),
+    /// Another program puts the field in `Mode`, as the `abc` and `kana`
+    /// actions would; already in it, nothing changes. The program shows the
+    /// mode itself, so the indicator stays off.
+    SetMode(Mode),
 }

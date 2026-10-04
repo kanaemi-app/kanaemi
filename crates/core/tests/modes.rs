@@ -458,3 +458,42 @@ fn a_modifier_key_held_across_a_focus_change_does_not_block_taps() {
     t.handle(Event::FocusIn { password: false });
     assert_eq!(t.tap(Key::ShiftRight).mode, Mode::Kana);
 }
+
+#[test]
+fn setting_the_mode_from_outside_switches_it_without_the_indicator() {
+    let mut t = T::new();
+    let out = t.handle(Event::SetMode(Mode::Kana));
+    assert_eq!((out.mode, out.indicator), (Mode::Kana, None));
+    let out = t.handle(Event::SetMode(Mode::Abc));
+    assert_eq!((out.mode, out.indicator), (Mode::Abc, None));
+}
+
+#[test]
+fn setting_the_mode_it_is_in_changes_nothing() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    let out = t.handle(Event::SetMode(Mode::Kana));
+    assert_eq!(out.commit, None);
+    assert_eq!(out.preedit, "›かんじ");
+    assert_eq!(out.mode, Mode::Kana);
+}
+
+#[test]
+fn setting_abc_from_outside_commits_what_is_typed_as_the_abc_action_does() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    let out = t.handle(Event::SetMode(Mode::Abc));
+    assert_eq!(out.commit.as_deref(), Some("かんじ"));
+    assert_eq!(out.preedit, "");
+    assert_eq!(out.mode, Mode::Abc);
+}
+
+#[test]
+fn a_password_field_stays_in_abc_whatever_is_set() {
+    let mut t = T::new();
+    t.handle(Event::FocusIn { password: true });
+    let out = t.handle(Event::SetMode(Mode::Kana));
+    assert_eq!(out.mode, Mode::Abc);
+}
