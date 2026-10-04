@@ -6,6 +6,7 @@ IME と設定アプリが読み書きするファイルを置くフォルダ。
 | --- | --- |
 | macOS | `~/Library/Application Support/kanaemi/` |
 | Windows | `%APPDATA%\kanaemi\` |
+| Linux | `$XDG_CONFIG_HOME/kanaemi/`（なければ `~/.config/kanaemi/`） |
 
 ## ファイル
 
@@ -20,6 +21,7 @@ IME と設定アプリが読み書きするファイルを置くフォルダ。
 
 - IME は、設定のフォルダと `config.toml` がなければ作る。
 - 利用者の打った語を含むファイル（`custom.tsv`・`selections.tsv`）は、IME と設定アプリが作るとき、持ち主だけが読み書きできるようにする。
+- Windows では、書き込み用のプロセス（`kanaemi-server`）が、AppContainer のアプリに `config.toml`・`dictionaries/`・`romaji/`・`ranking.model` だけを読ませる（[Windows ではユーザーデータの書き込みを別プロセスに任せる](../adr/20261003-write-user-data-from-a-separate-process-on-windows.md)）。AppContainer のアプリの中の IME は、`custom.tsv` と `selections.tsv` を読みも書きもせず、辞書登録と削除の行を書き込み用のプロセスに送る。
 
 IME のログは、設定のフォルダの外に書く。
 
@@ -27,6 +29,7 @@ IME のログは、設定のフォルダの外に書く。
 | --- | --- |
 | macOS | `~/Library/Logs/kanaemi.log` |
 | Windows | `%LOCALAPPDATA%\kanaemi\kanaemi.log` |
+| Linux | `$XDG_STATE_HOME/kanaemi/kanaemi.log`（なければ `~/.local/state/kanaemi/kanaemi.log`） |
 
 ## 読み直し
 
