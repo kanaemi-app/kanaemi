@@ -8,3 +8,5 @@ publish = false
 
 [dependencies]
 kanaemi-core.workspace = true
+toml = { version = "0.9", features = ["preserve_order"] }
+toml_edit = "0.25"
