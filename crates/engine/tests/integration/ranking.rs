@@ -66,3 +66,14 @@ fn an_engine_opened_again_without_a_model_ranks_by_the_rules() {
     new.take_over(old);
     assert_eq!(surfaces(&new, "きしゃ"), ["記者", "汽車", "貴社"]);
 }
+
+#[test]
+fn engines_rank_with_one_model_they_share() {
+    let shared = model(16, &[("s\u{1f}貴社", 2.0)]);
+    let mut first = engine(KISHA);
+    let mut second = engine(KISHA);
+    first.set_model(Some(shared.clone()));
+    second.set_model(Some(shared));
+    assert_eq!(surfaces(&first, "きしゃ")[0], "貴社");
+    assert_eq!(surfaces(&second, "きしゃ")[0], "貴社");
+}

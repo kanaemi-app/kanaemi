@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use kanaemi_core::Effect;
@@ -97,7 +98,7 @@ pub fn dictionary(text: &str) -> Box<dyn Dictionary> {
 /// A ranking model file of `2^bits` f32 weights, written as the ranking model
 /// spec lays it out, and opened as the input method opens one. Each feature
 /// is its name and values joined by U+001F.
-pub fn model(bits: u8, weights: &[(&str, f32)]) -> RankingModel {
+pub fn model(bits: u8, weights: &[(&str, f32)]) -> Arc<RankingModel> {
     let mut all = vec![0.0f32; 1 << bits];
     for (feature, weight) in weights {
         let index = xxhash_rust::xxh3::xxh3_64(feature.as_bytes()) & ((1 << bits) - 1);
@@ -114,5 +115,5 @@ pub fn model(bits: u8, weights: &[(&str, f32)]) -> RankingModel {
     file.extend_from_slice(&body);
     let path = temp_path("ranking.model");
     std::fs::write(&path, file).unwrap();
-    RankingModel::open(&path).unwrap()
+    Arc::new(RankingModel::open(&path).unwrap())
 }

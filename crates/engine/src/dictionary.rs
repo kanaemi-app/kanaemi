@@ -29,6 +29,18 @@ pub trait Dictionary {
     fn okuri(&self, stem: &str, row: char) -> Vec<Entry>;
 }
 
+/// A dictionary shared between engines, as engines on several threads of one
+/// process share each file.
+impl<D: Dictionary + ?Sized> Dictionary for std::sync::Arc<D> {
+    fn lookup(&self, key: &str) -> Vec<Entry> {
+        (**self).lookup(key)
+    }
+
+    fn okuri(&self, stem: &str, row: char) -> Vec<Entry> {
+        (**self).okuri(stem, row)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DictionaryError {
     #[error(transparent)]

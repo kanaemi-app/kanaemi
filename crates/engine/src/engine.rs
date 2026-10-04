@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kanaemi_core::{Candidate, Converter, Effect};
 
 use crate::numeric::{Numbers, fill};
@@ -67,7 +69,7 @@ pub struct Engine {
     slots: Vec<Slot>,
     user: UserCustom,
     field: FieldSession,
-    model: Option<RankingModel>,
+    model: Option<Arc<RankingModel>>,
     selections: Selections,
     /// Whether `selections` changed since it was last handed over.
     selections_changed: bool,
@@ -116,8 +118,9 @@ impl Engine {
         }
     }
 
-    /// Ranks with `model` from now on; without one, by the rules alone.
-    pub fn set_model(&mut self, model: Option<RankingModel>) {
+    /// Ranks with `model` from now on; without one, by the rules alone. The
+    /// engines of one process may share it.
+    pub fn set_model(&mut self, model: Option<Arc<RankingModel>>) {
         self.model = model;
     }
 
@@ -135,6 +138,12 @@ impl Engine {
     /// Writes that failed since the last call. Their effect was kept in memory.
     pub fn take_write_errors(&mut self) -> Vec<WriteError> {
         self.user.take_errors()
+    }
+
+    /// The user custom dictionary as it is in memory, for a host that cannot
+    /// read it back from where its lines went.
+    pub fn user_dictionary(&self) -> &TextDictionary {
+        self.user.dictionary()
     }
 
     /// Puts the user custom dictionary read again in place, with the lines not

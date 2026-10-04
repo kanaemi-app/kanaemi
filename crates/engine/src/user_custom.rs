@@ -5,12 +5,21 @@ use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{InvalidLine, InvalidReason, TextDictionary};
 
 /// Where registrations and deletions are written as text dictionary lines.
 pub trait LineSink {
     fn append(&mut self, line: &str) -> io::Result<()>;
+}
+
+/// A sink chosen when the engine is opened, as a host that writes either to a
+/// file or elsewhere does.
+impl<S: LineSink + ?Sized> LineSink for Box<S> {
+    fn append(&mut self, line: &str) -> io::Result<()> {
+        (**self).append(line)
+    }
 }
 
 /// A registration or deletion that was not written. Its effect is kept in
@@ -208,7 +217,10 @@ fn append_line(file: &mut impl LineFile, line: &str) -> io::Result<()> {
 pub fn replace_file(path: impl AsRef<Path>, bytes: impl AsRef<[u8]>) -> io::Result<()> {
     let (path, bytes) = (path.as_ref(), bytes.as_ref());
     let mut partial = path.as_os_str().to_owned();
-    partial.push(format!(".{}.partial", std::process::id()));
+    // Unique to each call: threads of one process may write the same file.
+    static WRITES: AtomicU64 = AtomicU64::new(0);
+    let write = WRITES.fetch_add(1, Ordering::Relaxed);
+    partial.push(format!(".{}-{write}.partial", std::process::id()));
     let partial = PathBuf::from(partial);
     let written = private(OpenOptions::new().write(true).create(true).truncate(true))
         .open(&partial)

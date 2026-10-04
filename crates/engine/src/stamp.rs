@@ -48,6 +48,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    #[cfg(unix)]
     use crate::replace_file;
 
     fn temp_file(name: &str) -> PathBuf {
