@@ -28,5 +28,9 @@ test:
 install-macos:
     apps/macos/install.sh
 
+# Build the Windows input method and install it into Program Files; run from an elevated shell.
+install-windows:
+    powershell -NoProfile -ExecutionPolicy Bypass -File apps/windows/install.ps1
+
 # Everything CI runs.
 ci: fmt-check lint test
