@@ -10,8 +10,11 @@ mod field;
 mod logging;
 mod profile;
 mod settings;
+mod shared;
 
 pub use control::*;
 pub use field::*;
 pub use logging::*;
 pub use profile::*;
+// A sandboxed profile takes one, so a platform needs no other crate to make it.
+pub use kanaemi_engine::LineSink;

@@ -23,7 +23,7 @@ use kanaemi_core::Mode;
 use serde_json::{Map, Value, json};
 
 /// Asks the thread fields are served on to take the requests that came in.
-pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
+type Wake = Arc<dyn Fn() + Send + Sync>;
 
 /// The longest line a request may take; no request comes near it.
 const MAX_LINE: u64 = 4 * 1024;
@@ -37,7 +37,8 @@ const MAX_UNREAD: usize = 64;
 /// How often a connection's writer looks whether its reader has ended.
 const WRITER_POLL: Duration = Duration::from_millis(500);
 
-/// A request from another program, to answer with [`crate::Profile::answer`].
+/// A request from another program, to answer with [`crate::Profile::answer`]
+/// or [`ControlPort::answer`].
 pub struct ControlRequest {
     id: Option<Value>,
     kind: Kind,
@@ -68,7 +69,7 @@ impl ControlRequest {
     /// Answers with the mode of the field with the focus, or why not; a
     /// watch is answered even without one, and gives the connection to tell
     /// changes to.
-    pub(crate) fn answer(self, focused: Option<Mode>) -> Option<Arc<Link>> {
+    fn answer(self, focused: Option<Mode>) -> Option<Arc<Link>> {
         let mut body = match (&self.kind, focused) {
             (Kind::Bad(message), _) => error("bad-request", message),
             (Kind::WatchMode, mode) => json!({ "mode": mode.map(mode_name) }),
@@ -86,7 +87,7 @@ impl ControlRequest {
 }
 
 /// One connection, as its answers are sent.
-pub(crate) struct Link {
+struct Link {
     id: u64,
     lines: SyncSender<String>,
     stream: TcpStream,
@@ -117,7 +118,7 @@ impl Link {
 type Connections = Arc<Mutex<HashMap<u64, TcpStream>>>;
 
 /// The port the settings name, taking requests while it is held.
-pub(crate) struct Server {
+struct Server {
     port: u16,
     incoming: Receiver<ControlRequest>,
     /// Whether a wake is on its way, so a burst of requests wakes once.
@@ -133,7 +134,7 @@ pub(crate) struct Server {
 impl Server {
     /// Listens on `port` of the local machine, waking the serving thread
     /// with `wake` when requests come in.
-    pub(crate) fn listen(port: u16, wake: Wake) -> io::Result<Self> {
+    fn listen(port: u16, wake: Wake) -> io::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
         let (requests, incoming) = mpsc::sync_channel(MAX_WAITING);
         let waking = Arc::new(AtomicBool::new(false));
@@ -163,20 +164,20 @@ impl Server {
         })
     }
 
-    pub(crate) fn port(&self) -> u16 {
+    fn port(&self) -> u16 {
         self.port
     }
 
     /// The requests that came in since the last call, oldest first. Ones
     /// that come in meanwhile wake the serving thread again.
-    pub(crate) fn take(&mut self) -> Vec<ControlRequest> {
+    fn take(&mut self) -> Vec<ControlRequest> {
         self.waking.store(false, Ordering::SeqCst);
         self.forget_ended();
         self.incoming.try_iter().take(MAX_WAITING).collect()
     }
 
     /// Tells changes to `link` from now on, once however often it asks.
-    pub(crate) fn watch(&mut self, link: Arc<Link>) {
+    fn watch(&mut self, link: Arc<Link>) {
         self.forget_ended();
         if !self.watchers.iter().any(|watcher| watcher.id == link.id) {
             self.watchers.push(link);
@@ -191,13 +192,81 @@ impl Server {
 
     /// Tells every watching connection the mode of the field with the
     /// focus, when it is not the one last told.
-    pub(crate) fn tell(&mut self, mode: Option<Mode>) {
+    fn tell(&mut self, mode: Option<Mode>) {
         if mode == self.told {
             return;
         }
         self.told = mode;
         let event = json!({ "event": "mode", "mode": mode.map(mode_name) }).to_string();
         self.watchers.retain(|watcher| watcher.send(event.clone()));
+    }
+}
+
+/// The port the settings name, for an input method that follows the field
+/// with the focus itself rather than through a [`crate::Profile`]: one whose
+/// fields live in other processes, which tell it their focus and mode.
+pub struct ControlPort {
+    wake: Wake,
+    server: Option<Server>,
+    /// The mode last told, so a port listened on anew starts from it.
+    told: Option<Mode>,
+}
+
+impl ControlPort {
+    /// Listens on no port yet. Requests that come in wake the thread that
+    /// serves them with `wake`, which may be called from any thread.
+    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Self {
+        Self {
+            wake: Arc::new(wake),
+            server: None,
+            told: None,
+        }
+    }
+
+    /// Listens on `port`, as the settings name it, letting go of any other;
+    /// on none for `None`. A port that cannot be listened on is logged and
+    /// tried again at the next call.
+    pub fn listen_on(&mut self, port: Option<u16>) {
+        if self.server.as_ref().map(Server::port) == port {
+            return;
+        }
+        self.server = None;
+        let Some(port) = port else {
+            return;
+        };
+        match Server::listen(port, self.wake.clone()) {
+            Ok(mut server) => {
+                tracing::info!(port, "listening for other programs");
+                server.told = self.told;
+                self.server = Some(server);
+            }
+            Err(error) => tracing::warn!(port, %error, "control port not listened on"),
+        }
+    }
+
+    /// The requests that came in since the last call, oldest first. Answer
+    /// each with [`ControlPort::answer`], in order, after putting the field
+    /// with the focus in the mode it asks for.
+    pub fn take_requests(&mut self) -> Vec<ControlRequest> {
+        self.server.as_mut().map(Server::take).unwrap_or_default()
+    }
+
+    /// Answers `request` with `focused`, the mode of the field with the
+    /// focus now, or `None` when no field has it.
+    pub fn answer(&mut self, request: ControlRequest, focused: Option<Mode>) {
+        let watcher = request.answer(focused);
+        if let (Some(watcher), Some(server)) = (watcher, self.server.as_mut()) {
+            server.watch(watcher);
+        }
+    }
+
+    /// Tells watching programs `focused`, the mode of the field with the
+    /// focus, when it is not the one last told.
+    pub fn tell(&mut self, focused: Option<Mode>) {
+        self.told = focused;
+        if let Some(server) = &mut self.server {
+            server.tell(focused);
+        }
     }
 }
 

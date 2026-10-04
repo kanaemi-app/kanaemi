@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use kanaemi_core::{Core, Event, Output};
+use kanaemi_core::{Core, Effect, Event, Output};
 
 use crate::Profile;
 use crate::profile::SharedEngine;
@@ -14,6 +14,7 @@ pub struct Field {
     core: Core<SharedEngine>,
     /// The settings the core was built from.
     generation: u64,
+    private: bool,
 }
 
 impl Field {
@@ -23,7 +24,17 @@ impl Field {
             id: NEXT.fetch_add(1, Ordering::Relaxed),
             core: Core::new(profile.converter(), profile.config().clone()),
             generation: profile.generation(),
+            private: false,
         }
+    }
+
+    /// Marks the field as one that asks not to be recorded, such as one in a
+    /// browser's private window. What is typed and committed there is
+    /// neither counted as a pick nor kept as what the field holds, and is
+    /// left out of the effects; a word registered or forgotten there still
+    /// changes the user's dictionary, as the user asked for it.
+    pub fn set_private(&mut self, private: bool) {
+        self.private = private;
     }
 
     /// Feeds `event` to the core and teaches the profile's engine what it
@@ -33,12 +44,27 @@ impl Field {
     /// mode the field was in before still counts, so a rebuilt core shows
     /// the switch to the mode it starts in as the old one would have.
     pub fn handle(&mut self, profile: &mut Profile, event: Event) -> Output {
+        self.run(profile, event, !self.private)
+    }
+
+    /// Ends the focus as [`Event::FocusOut`] does, but drops what is being
+    /// typed instead of committing it, and learns nothing of it. For a
+    /// platform that moves the IME to the next field before it tells the
+    /// last one's focus went, where a commit would land in the wrong field.
+    pub fn drop_focus(&mut self, profile: &mut Profile) -> Output {
+        let mut output = self.run(profile, Event::FocusOut, false);
+        output.commit = None;
+        output
+    }
+
+    fn run(&mut self, profile: &mut Profile, event: Event, learn_typed: bool) -> Output {
         let before = self.core.mode();
         if let Event::FocusIn { .. } = event {
             profile.reload_if_changed();
             if self.generation != profile.generation() {
                 *self = Self {
                     id: self.id,
+                    private: self.private,
                     ..Self::new(profile)
                 };
             }
@@ -49,6 +75,11 @@ impl Field {
         if output.mode != before && profile.config().mode_indicator && !from_outside {
             output.indicator = Some(output.mode);
         }
+        if !learn_typed {
+            output
+                .effects
+                .retain(|effect| !matches!(effect, Effect::Committed { .. } | Effect::Typed(_)));
+        }
         profile.learn(&output.effects);
         profile.follow_focus(self.id, event, output.mode);
         // The focus may not come back to any field before the IME stops.
@@ -56,6 +87,13 @@ impl Field {
             profile.save_selections();
         }
         output
+    }
+
+    /// What the core would answer to `event`, tried on a copy: neither the
+    /// field nor the profile changes. A platform that asks whether a key
+    /// will be used before it sends the key answers from this.
+    pub fn preview(&self, event: Event) -> Output {
+        self.core.clone().handle(event)
     }
 }
 
@@ -65,7 +103,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::SystemTime;
 
-    use kanaemi_config::{DICTIONARY_DIR, FILE_NAME, SELECTIONS_FILE};
+    use kanaemi_config::{DICTIONARY_DIR, FILE_NAME, SELECTIONS_FILE, USER_CUSTOM_FILE};
     use kanaemi_core::{Converter, Effect, Key, KeyEvent, KeyKind, Mode, Modifiers};
 
     use super::*;
@@ -177,6 +215,19 @@ mod tests {
         assert_eq!(field.handle(&mut profile, press(Key::Kana)).indicator, None);
     }
 
+    #[test]
+    fn a_key_tried_beforehand_leaves_the_field_as_it_was() {
+        let dir = temp_dir("preview");
+        let mut profile = Profile::open(&dir);
+        let mut field = Field::new(&profile);
+        field.handle(&mut profile, FOCUS_IN);
+        field.handle(&mut profile, press(Key::Kana));
+        field.handle(&mut profile, press(Key::Char('k')));
+        let tried = field.preview(press(Key::Char('a')));
+        assert_eq!(tried.commit.as_deref(), Some("か"));
+        assert_eq!(field.handle(&mut profile, press(Key::Char('a'))), tried);
+    }
+
     /// A folder with a dictionary where 記者 comes before 貴社 until 貴社 is
     /// picked again and again.
     fn picks_dir(name: &str) -> PathBuf {
@@ -261,5 +312,136 @@ mod tests {
         field.handle(&mut profile, FOCUS_IN);
         field.handle(&mut profile, Event::FocusOut);
         assert_eq!(first(&Profile::open(&dir)), "貴社");
+    }
+
+    fn typ(field: &mut Field, profile: &mut Profile, text: &str) -> Output {
+        let mut output = None;
+        for c in text.chars() {
+            output = Some(field.handle(profile, press(Key::Char(c))));
+        }
+        output.expect("something typed")
+    }
+
+    /// A focused field in kana mode with 貴社 picked for きしゃ, not yet
+    /// committed.
+    fn picking_kisha(profile: &mut Profile, private: bool) -> Field {
+        let mut field = Field::new(profile);
+        field.set_private(private);
+        field.handle(profile, FOCUS_IN);
+        field.handle(profile, press(Key::Kana));
+        typ(&mut field, profile, ";kisha");
+        field.handle(profile, press(Key::Space));
+        let output = field.handle(profile, press(Key::Space));
+        assert_eq!(output.preedit, "»貴社");
+        field
+    }
+
+    fn commit_kisha_three_times(profile: &mut Profile, private: bool) {
+        for _ in 0..3 {
+            let mut field = picking_kisha(profile, private);
+            let output = field.handle(profile, press(Key::Enter));
+            assert_eq!(output.commit.as_deref(), Some("貴社"));
+            field.handle(profile, Event::FocusOut);
+        }
+    }
+
+    #[test]
+    fn picks_in_a_field_that_is_not_private_are_counted() {
+        let dir = picks_dir("not-private");
+        commit_kisha_three_times(&mut Profile::open(&dir), false);
+        assert_eq!(first(&Profile::open(&dir)), "貴社");
+    }
+
+    #[test]
+    fn picks_in_a_private_field_are_neither_counted_nor_kept() {
+        let dir = picks_dir("private");
+        let mut profile = Profile::open(&dir);
+        commit_kisha_three_times(&mut profile, true);
+        assert_eq!(first(&profile), "記者");
+        assert!(!dir.join(SELECTIONS_FILE).exists());
+    }
+
+    #[test]
+    fn what_is_committed_in_a_private_field_is_left_out_of_the_effects() {
+        let dir = picks_dir("private-effects");
+        let mut profile = Profile::open(&dir);
+        let mut field = picking_kisha(&mut profile, true);
+        let output = field.handle(&mut profile, press(Key::Enter));
+        assert_eq!(output.commit.as_deref(), Some("貴社"), "still typed");
+        assert_eq!(output.effects, []);
+    }
+
+    #[test]
+    fn a_word_registered_in_a_private_field_still_goes_to_the_dictionary() {
+        let dir = temp_dir("private-register");
+        let mut profile = Profile::open(&dir);
+        let mut field = Field::new(&profile);
+        field.set_private(true);
+        field.handle(&mut profile, FOCUS_IN);
+        field.handle(&mut profile, press(Key::Kana));
+        typ(&mut field, &mut profile, ";nunu");
+        let mut output = field.handle(&mut profile, press(Key::Space));
+        while !output.preedit.ends_with(" « ") {
+            output = field.handle(&mut profile, press(Key::Space));
+        }
+        typ(&mut field, &mut profile, "a");
+        let output = field.handle(&mut profile, press(Key::Enter));
+        assert_eq!(output.commit.as_deref(), Some("あ"));
+        assert!(
+            fs::read_to_string(dir.join(USER_CUSTOM_FILE))
+                .unwrap()
+                .contains("ぬぬ\tあ")
+        );
+    }
+
+    #[test]
+    fn a_field_stays_private_when_changed_settings_rebuild_its_core() {
+        let dir = picks_dir("private-rebuilt");
+        let mut profile = Profile::open(&dir);
+        let mut field = Field::new(&profile);
+        field.set_private(true);
+        change_settings(&dir, "");
+        field.handle(&mut profile, FOCUS_IN);
+        field.handle(&mut profile, press(Key::Kana));
+        let output = typ(&mut field, &mut profile, "a");
+        assert_eq!(output.commit.as_deref(), Some("あ"));
+        assert_eq!(output.effects, []);
+    }
+
+    #[test]
+    fn a_focus_that_goes_normally_commits_the_pick_and_keeps_it() {
+        let dir = picks_dir("focus-out-commits");
+        let mut profile = Profile::open(&dir);
+        let mut field = picking_kisha(&mut profile, false);
+        let output = field.handle(&mut profile, Event::FocusOut);
+        assert_eq!(output.commit.as_deref(), Some("貴社"));
+        assert!(dir.join(SELECTIONS_FILE).exists());
+    }
+
+    #[test]
+    fn a_dropped_focus_drops_what_is_typed_without_learning_it() {
+        let dir = picks_dir("focus-dropped");
+        let mut profile = Profile::open(&dir);
+        let mut field = picking_kisha(&mut profile, false);
+        let output = field.drop_focus(&mut profile);
+        assert_eq!(
+            (output.commit, output.preedit.as_str(), output.candidates),
+            (None, "", None)
+        );
+        assert_eq!(output.effects, []);
+        assert!(!dir.join(SELECTIONS_FILE).exists());
+    }
+
+    #[test]
+    fn a_field_whose_focus_was_dropped_starts_afresh_when_it_comes_back() {
+        let dir = picks_dir("focus-dropped-back");
+        let mut profile = Profile::open(&dir);
+        let mut field = picking_kisha(&mut profile, false);
+        field.drop_focus(&mut profile);
+        let output = field.handle(&mut profile, FOCUS_IN);
+        assert_eq!(
+            (output.commit, output.preedit.as_str(), output.mode),
+            (None, "", Mode::Abc)
+        );
     }
 }
