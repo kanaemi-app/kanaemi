@@ -3,6 +3,7 @@ use std::fs;
 use kanaemi_core::Converter;
 use kanaemi_engine::{
     Engine, FileSink, InvalidReason, LineSink, Slot, TextDictionary, open_dictionary, replace_file,
+    unhide,
 };
 
 use crate::common::{Discard, dictionary, temp_path};
@@ -145,4 +146,90 @@ fn a_line_that_is_not_utf_8_is_reported_as_such() {
     fs::write(&path, with_a_broken_line()).unwrap();
     let (_, invalid) = TextDictionary::read_user_custom(&path).unwrap();
     assert_eq!(invalid[0].reason, InvalidReason::Encoding);
+}
+
+#[test]
+fn the_hidden_pairs_are_listed_by_reading_then_surface() {
+    let (user, _) = TextDictionary::parse_user_custom(
+        "!きしゃ\t汽車\n!かく\t欠く\n!かく\t書く\nかく\t欠く\n!きしゃ\t汽車\n",
+    );
+
+    let hidden: Vec<(&str, &str)> = user.hidden().collect();
+
+    assert_eq!(hidden, [("かく", "書く"), ("きしゃ", "汽車")]);
+}
+
+#[test]
+fn unhiding_removes_every_hide_line_of_the_pair_and_nothing_else() {
+    let path = temp_path("unhide.tsv");
+    fs::write(
+        &path,
+        "# 説明\n!きしゃ\t汽車\nきしゃ\t記者\n\\!きしゃ\t汽車\n!きしゃ\t汽車\r\n!かく\t書く",
+    )
+    .unwrap();
+
+    unhide(&path, "きしゃ", "汽車").unwrap();
+
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "# 説明\nきしゃ\t記者\n\\!きしゃ\t汽車\n!かく\t書く"
+    );
+    let (user, _) = TextDictionary::read_user_custom(&path).unwrap();
+    assert!(user.hidden().all(|pair| pair != ("きしゃ", "汽車")));
+    assert_eq!(user.hidden().collect::<Vec<_>>(), [("かく", "書く")]);
+}
+
+#[test]
+fn unhiding_a_reading_with_a_literal_star_matches_its_escaped_hide_line() {
+    let path = temp_path("unhide-star.tsv");
+    fs::write(&path, "!あ\\*\t亜\n!あ\t亜\n").unwrap();
+
+    unhide(&path, "あ*", "亜").unwrap();
+
+    assert_eq!(fs::read_to_string(&path).unwrap(), "!あ\t亜\n");
+}
+
+#[test]
+fn unhiding_keeps_lines_that_are_not_utf_8_byte_for_byte() {
+    let path = temp_path("unhide-broken.tsv");
+    let mut bytes = with_a_broken_line();
+    bytes.extend_from_slice("!きしゃ\t汽車\n".as_bytes());
+    fs::write(&path, &bytes).unwrap();
+
+    unhide(&path, "きしゃ", "汽車").unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), with_a_broken_line());
+}
+
+#[test]
+fn unhiding_matches_the_first_line_after_a_byte_order_mark() {
+    let path = temp_path("unhide-bom.tsv");
+    fs::write(&path, "\u{feff}!きしゃ\t汽車\nきしゃ\t記者\n").unwrap();
+
+    unhide(&path, "きしゃ", "汽車").unwrap();
+
+    assert_eq!(fs::read_to_string(&path).unwrap(), "きしゃ\t記者\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn unhiding_a_pair_that_is_not_hidden_leaves_the_file_alone() {
+    use std::os::unix::fs::MetadataExt;
+    let path = temp_path("unhide-nothing.tsv");
+    fs::write(&path, "!かく\t書く\n").unwrap();
+    let before = fs::metadata(&path).unwrap().ino();
+
+    unhide(&path, "きしゃ", "汽車").unwrap();
+
+    assert_eq!(fs::read_to_string(&path).unwrap(), "!かく\t書く\n");
+    assert_eq!(fs::metadata(&path).unwrap().ino(), before, "not replaced");
+}
+
+#[test]
+fn unhiding_in_a_missing_file_does_nothing() {
+    let path = temp_path("unhide-missing.tsv");
+
+    unhide(&path, "きしゃ", "汽車").unwrap();
+
+    assert!(!path.exists());
 }

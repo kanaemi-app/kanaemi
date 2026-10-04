@@ -102,33 +102,6 @@ pub(crate) fn fill(surface: &str, values: &[String]) -> Option<String> {
     Some(out)
 }
 
-/// Typed text with each `{}` or `{name}` of a notation made a placeholder;
-/// other braces stay as typed. `None` when there is no placeholder.
-pub(crate) fn typed_placeholders(text: &str) -> Option<String> {
-    let mut out = String::new();
-    let mut found = false;
-    let mut rest = text;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open]);
-        let inside = &rest[open + 1..];
-        match inside.find('}') {
-            Some(close) if Notation::named(&inside[..close]).is_some() => {
-                out.push(OPEN);
-                out.push_str(&inside[..close]);
-                out.push(CLOSE);
-                found = true;
-                rest = &inside[close + 1..];
-            }
-            _ => {
-                out.push('{');
-                rest = inside;
-            }
-        }
-    }
-    out.push_str(rest);
-    found.then_some(out)
-}
-
 const WIDE_DIGITS: [char; 10] = ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
 const KANJI_DIGITS: [char; 10] = ['〇', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
 const SMALL_UNITS: [&str; 4] = ["", "十", "百", "千"];
@@ -348,17 +321,6 @@ mod tests {
     #[test]
     fn a_surface_without_placeholders_stays_as_written() {
         assert_eq!(fill("{個}", &["1".to_owned()]).as_deref(), Some("{個}"));
-    }
-
-    #[test]
-    fn typed_braces_with_a_notation_s_name_are_placeholders() {
-        assert_eq!(
-            typed_placeholders("{kanji}個{x}"),
-            Some(format!("{}個{{x}}", placeholder("kanji")))
-        );
-        assert_eq!(typed_placeholders("{}"), Some(placeholder("")));
-        assert_eq!(typed_placeholders("{x}個{"), None);
-        assert_eq!(typed_placeholders("個"), None);
     }
 
     #[test]

@@ -10,6 +10,13 @@ pub(crate) fn okuri_row(kana: char) -> Option<char> {
         .map(|(row, _)| *row)
 }
 
+/// The first kana of a row, standing for the row where only the row is known.
+pub(crate) fn row_kana(row: char) -> Option<char> {
+    ROWS.iter()
+        .find(|(letter, _)| *letter == row)
+        .and_then(|(_, kanas)| kanas.chars().next())
+}
+
 /// The key a stem and an okurigana row are filed under.
 pub(crate) fn okuri_key(stem: &str, row: char) -> String {
     format!("{stem}{row}")

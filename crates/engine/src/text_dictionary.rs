@@ -109,7 +109,9 @@ pub struct TextDictionary {
 }
 
 impl TextDictionary {
-    pub(crate) fn parse(text: impl AsRef<[u8]>) -> (Self, Vec<InvalidLine>) {
+    /// A dictionary in the text format, with the lines it could not read. A
+    /// line that is not UTF-8 is one such line.
+    pub fn parse(text: impl AsRef<[u8]>) -> (Self, Vec<InvalidLine>) {
         Self::parse_bytes(text.as_ref(), false)
     }
 
@@ -155,6 +157,27 @@ impl TextDictionary {
     pub(crate) fn is_hidden(&self, reading: &str, surface: &str) -> bool {
         self.hidden
             .contains(&(reading.to_owned(), surface.to_owned()))
+    }
+
+    /// The pairs `!` lines hide from every dictionary, by reading, then
+    /// surface. A numeric pair holds its placeholders as the engine does:
+    /// [`show_placeholders`] writes it for people to read.
+    pub fn hidden(&self) -> impl Iterator<Item = (&str, &str)> {
+        let mut pairs: Vec<(&str, &str)> = self
+            .hidden
+            .iter()
+            .map(|(reading, surface)| (reading.as_str(), surface.as_str()))
+            .collect();
+        pairs.sort_unstable();
+        pairs.into_iter()
+    }
+
+    /// Whether `line` of a user custom dictionary hides (`reading`, `surface`).
+    pub(crate) fn hides(line: &str, reading: &str, surface: &str) -> bool {
+        matches!(
+            parse_line(line, true),
+            Ok(Record::Hide { reading: r, surface: s }) if r == reading && s == surface
+        )
     }
 
     /// A `*` in `reading` is literal: a hide line never marks okurigana.
@@ -221,7 +244,6 @@ impl Dictionary for TextDictionary {
 
 impl TextDictionary {
     /// Every reading with words or stems.
-    #[cfg(test)]
     pub(crate) fn readings(&self) -> impl Iterator<Item = &str> {
         self.words
             .iter()
@@ -230,7 +252,6 @@ impl TextDictionary {
     }
 
     /// Every stem and okurigana row with okurigana lines, once each.
-    #[cfg(test)]
     pub(crate) fn okuri_keys(&self) -> impl Iterator<Item = (&str, char)> {
         self.okuri_kana.iter().flat_map(|(stem, kanas)| {
             let mut rows: Vec<char> = kanas
@@ -494,6 +515,41 @@ pub(crate) fn escape(field: &str) -> String {
         .replace('\\', "\\\\")
         .replace('\t', "\\t")
         .replace('\n', "\\n")
+}
+
+/// A reading or surface the engine gave out, with a numeric item's
+/// placeholders written `{}` and `{name}` again, for people to read. A literal
+/// `{` is shown as it is, so the text cannot be given back to the engine.
+pub fn show_placeholders(text: impl AsRef<str>) -> String {
+    text.as_ref().replace(OPEN, "{").replace(CLOSE, "}")
+}
+
+/// `text` with each `{}` or `{name}` of a notation made a placeholder, as an
+/// item's reading or surface holds them; other braces stay as written.
+/// `None` when there is no placeholder. The inverse of [`show_placeholders`].
+pub fn mark_placeholders(text: impl AsRef<str>) -> Option<String> {
+    let mut out = String::new();
+    let mut found = false;
+    let mut rest = text.as_ref();
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let inside = &rest[open + 1..];
+        match inside.find('}') {
+            Some(close) if Notation::named(&inside[..close]).is_some() => {
+                out.push(OPEN);
+                out.push_str(&inside[..close]);
+                out.push(CLOSE);
+                found = true;
+                rest = &inside[close + 1..];
+            }
+            _ => {
+                out.push('{');
+                rest = inside;
+            }
+        }
+    }
+    out.push_str(rest);
+    found.then_some(out)
 }
 
 pub(crate) fn escape_surface(surface: &str) -> String {

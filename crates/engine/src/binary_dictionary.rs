@@ -10,11 +10,10 @@ use fst::raw::{CompiledAddr, Fst};
 use fst::{Map, Streamer};
 use memmap2::Mmap;
 
-use crate::{Dictionary, Entry, okuri_key};
+use crate::{Dictionary, Entry, InvalidLine, TextDictionary, okuri_key};
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
 pub(crate) mod writer;
 
 /// The first bytes of every binary dictionary file.
@@ -49,6 +48,8 @@ pub enum BinaryError {
     OutOfFile(u32),
     #[error("section {kind} is malformed: {reason}")]
     Malformed { kind: u32, reason: &'static str },
+    #[error("section {0} does not match its checksum")]
+    Checksum(u32),
 }
 
 type Bytes = Arc<dyn AsRef<[u8]> + Send + Sync>;
@@ -69,12 +70,14 @@ impl AsRef<[u8]> for Slice {
 struct Section {
     kind: u32,
     range: Range<usize>,
+    checksum: u64,
 }
 
 /// A dictionary in the binary format, read in place. Every reference in it is
 /// checked on opening, so a lookup never fails.
-pub(crate) struct BinaryDictionary {
+pub struct BinaryDictionary {
     bytes: Bytes,
+    sections: Vec<Section>,
     strings: Range<usize>,
     entries: Range<usize>,
     index: Map<Slice>,
@@ -89,7 +92,7 @@ struct Raw {
 }
 
 impl BinaryDictionary {
-    pub(crate) fn open(path: impl AsRef<Path>) -> Result<Self, BinaryError> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, BinaryError> {
         let file = File::open(path)?;
         if file.metadata()?.len() < HEADER_LEN as u64 {
             return Err(BinaryError::Magic);
@@ -104,6 +107,27 @@ impl BinaryDictionary {
     #[cfg(test)]
     pub(crate) fn from_bytes(bytes: impl Into<Vec<u8>>) -> Result<Self, BinaryError> {
         Self::parse(Arc::new(bytes.into()))
+    }
+
+    /// Checks every section against its checksum; opening does not, to stay
+    /// fast.
+    pub fn verify_checksums(&self) -> Result<(), BinaryError> {
+        let bytes = (*self.bytes).as_ref();
+        for section in &self.sections {
+            if xxhash_rust::xxh3::xxh3_64(&bytes[section.range.clone()]) != section.checksum {
+                return Err(BinaryError::Checksum(section.kind));
+            }
+        }
+        Ok(())
+    }
+
+    /// The SHA-256 of the text dictionary this one was converted from, if it
+    /// holds one.
+    pub fn source_digest(&self) -> Option<[u8; 32]> {
+        let section = self.sections.iter().find(|s| s.kind == SOURCE)?;
+        (*self.bytes).as_ref()[section.range.clone()]
+            .try_into()
+            .ok()
     }
 
     fn parse(bytes: Bytes) -> Result<Self, BinaryError> {
@@ -143,7 +167,11 @@ impl BinaryDictionary {
             {
                 return Err(BinaryError::Doubled(kind));
             }
-            sections.push(Section { kind, range });
+            sections.push(Section {
+                kind,
+                range,
+                checksum: u64_at(b, at + 24),
+            });
         }
         let find = |kind| {
             sections
@@ -174,6 +202,7 @@ impl BinaryDictionary {
         let okuri = find(OKURI).map(|range| fst(range, OKURI)).transpose()?;
         let dictionary = Self {
             bytes: bytes.clone(),
+            sections,
             strings,
             entries,
             index,
@@ -284,6 +313,22 @@ impl Dictionary for BinaryDictionary {
     fn okuri(&self, stem: &str, row: char) -> Vec<Entry> {
         self.found(self.okuri.as_ref(), &okuri_key(stem, row))
     }
+}
+
+/// Converts a text dictionary into a binary one, which remembers the
+/// [`text_digest`] of `text` so it tells whether the text changed since. The
+/// lines of `text` that could not be read are returned with it.
+pub fn convert_text(text: impl AsRef<[u8]>) -> (Vec<u8>, Vec<InvalidLine>) {
+    let text = text.as_ref();
+    let (dictionary, invalid) = TextDictionary::parse(text);
+    let bytes = writer::encode(&dictionary, Some(text_digest(text)));
+    (bytes, invalid)
+}
+
+/// The SHA-256 of a text dictionary's bytes.
+pub fn text_digest(bytes: impl AsRef<[u8]>) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes.as_ref()).into()
 }
 
 /// Whether every node below the root leads to a key; the root alone may not,

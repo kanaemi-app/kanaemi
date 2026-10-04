@@ -11,6 +11,7 @@ mod numeric;
 mod okuri;
 mod ranking;
 mod selections;
+mod skk;
 mod text_dictionary;
 mod user_custom;
 
@@ -20,6 +21,7 @@ pub use dictionary::*;
 pub use engine::*;
 pub use ranking::*;
 pub use selections::*;
+pub use skk::*;
 pub use text_dictionary::*;
 pub use user_custom::*;
 

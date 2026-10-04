@@ -1,9 +1,11 @@
 //! The engine as the input method uses it: dictionary files in, ranked
 //! candidates out, and what it learns written back.
 
+mod binary_dictionary;
 mod common;
 mod conversion;
 mod numeric;
 mod ranking;
 mod selections;
+mod skk;
 mod user_custom_file;

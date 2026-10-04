@@ -51,7 +51,7 @@ pub fn open_dictionary(
 }
 
 /// Whether the file starts as a binary dictionary does.
-fn is_binary(path: &Path) -> io::Result<bool> {
+pub fn is_binary(path: impl AsRef<Path>) -> io::Result<bool> {
     let mut head = Vec::with_capacity(BINARY_MAGIC.len());
     std::fs::File::open(path)?
         .take(BINARY_MAGIC.len() as u64)
@@ -71,7 +71,7 @@ mod tests {
             std::process::id()
         ));
         let (text, _) = TextDictionary::parse("きしゃ\t汽車");
-        std::fs::write(&path, encode(&text)).unwrap();
+        std::fs::write(&path, encode(&text, None)).unwrap();
         let (dictionary, invalid) = open_dictionary(&path).unwrap();
         assert_eq!(dictionary.lookup("きしゃ")[0].surface, "汽車");
         assert_eq!(invalid, []);

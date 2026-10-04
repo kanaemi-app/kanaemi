@@ -393,6 +393,47 @@ fn a_hide_line_hides_a_numeric_pair_with_its_placeholders() {
 }
 
 #[test]
+fn placeholders_are_shown_as_they_are_written() {
+    let reading = format!("{}こ{{", placeholder(""));
+    assert_eq!(show_placeholders(reading), "{}こ{");
+    assert_eq!(show_placeholders(placeholder("kanji")), "{kanji}");
+}
+
+#[test]
+fn braces_with_a_notation_s_name_are_marked_as_placeholders() {
+    assert_eq!(
+        mark_placeholders("{kanji}個{x}"),
+        Some(format!("{}個{{x}}", placeholder("kanji")))
+    );
+    assert_eq!(mark_placeholders("{}"), Some(placeholder("")));
+    assert_eq!(mark_placeholders("{x}個{"), None);
+    assert_eq!(mark_placeholders("個"), None);
+}
+
+#[test]
+fn marked_placeholders_are_shown_as_they_were_written() {
+    for text in ["{}こ", "{kanji}月}{daiji}", "{}がつ{"] {
+        assert_eq!(show_placeholders(mark_placeholders(text).unwrap()), text);
+    }
+}
+
+#[test]
+fn a_numeric_line_can_be_written_from_placeholders_as_people_write_them() {
+    let reading = mark_placeholders("{}こ").unwrap();
+    let surface = mark_placeholders("{kanji}個").unwrap();
+    let line = ItemLine {
+        reading: &reading,
+        surface: &surface,
+        ..ItemLine::default()
+    };
+    assert_eq!(line.to_string(), "{}こ\t{kanji}個");
+    assert_eq!(
+        parse(&line.to_string()).words(&reading),
+        [entry(&surface, 0)]
+    );
+}
+
+#[test]
 fn a_numeric_line_reads_back_as_it_was_written() {
     let reading = format!("{}がつ{{{}", placeholder(""), placeholder(""));
     let surface = format!("{}月}}{}", placeholder("kanji"), placeholder("daiji"));

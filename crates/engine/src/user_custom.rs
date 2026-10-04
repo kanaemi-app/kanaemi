@@ -126,6 +126,37 @@ impl LineSink for FileSink {
     }
 }
 
+/// Takes out every line of a user custom dictionary file that hides
+/// (`reading`, `surface`), under the same lock as [`FileSink`]. The other
+/// lines stay byte for byte, and a missing file stays missing.
+pub fn unhide(path: impl AsRef<Path>, reading: &str, surface: &str) -> io::Result<()> {
+    let path = path.as_ref();
+    let _lock = lock(path)?;
+    let bytes = match fs::read(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        bytes => bytes?,
+    };
+    let mut kept = Vec::with_capacity(bytes.len());
+    for (i, line) in bytes.split_inclusive(|&b| b == b'\n').enumerate() {
+        // The parser drops a byte order mark at the start of the file only.
+        let text = match line.strip_prefix("\u{feff}".as_bytes()) {
+            Some(rest) if i == 0 => rest,
+            _ => line,
+        };
+        let text = text.strip_suffix(b"\n").unwrap_or(text);
+        let text = text.strip_suffix(b"\r").unwrap_or(text);
+        let hides = std::str::from_utf8(text)
+            .is_ok_and(|text| TextDictionary::hides(text, reading, surface));
+        if !hides {
+            kept.extend_from_slice(line);
+        }
+    }
+    if kept.len() == bytes.len() {
+        return Ok(());
+    }
+    replace_file(path, kept)
+}
+
 /// What a line is appended to: the file, or in tests one that fails.
 trait LineFile: Write {
     fn len(&mut self) -> io::Result<u64>;

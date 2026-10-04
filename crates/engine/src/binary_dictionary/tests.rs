@@ -29,7 +29,7 @@ fn text() -> TextDictionary {
 }
 
 fn binary(text: &TextDictionary) -> BinaryDictionary {
-    BinaryDictionary::from_bytes(encode(text)).unwrap()
+    BinaryDictionary::from_bytes(encode(text, None)).unwrap()
 }
 
 #[test]
@@ -96,14 +96,14 @@ fn a_string_too_long_for_the_format_leaves_its_line_out() {
 
 #[test]
 fn converting_twice_gives_the_same_bytes() {
-    assert_eq!(encode(&text()), encode(&text()));
+    assert_eq!(encode(&text(), None), encode(&text(), None));
 }
 
 #[test]
 fn a_file_on_disk_opens() {
     let path =
         std::env::temp_dir().join(format!("kanaemi-engine-binary-{}.kdic", std::process::id()));
-    std::fs::write(&path, encode(&text())).unwrap();
+    std::fs::write(&path, encode(&text(), None)).unwrap();
     let binary = BinaryDictionary::open(&path).unwrap();
     assert_eq!(binary.words("きしゃ"), text().words("きしゃ"));
 }
@@ -167,13 +167,13 @@ fn rejects(bytes: Vec<u8>) -> bool {
 
 #[test]
 fn the_layout_follows_the_spec() {
-    let bytes = encode(&text());
+    let bytes = encode(&text(), None);
     assert_eq!(file(&sections(&bytes)), bytes);
 }
 
 #[test]
 fn an_unknown_section_is_skipped() {
-    let mut parts = sections(&encode(&text()));
+    let mut parts = sections(&encode(&text(), None));
     parts.insert(1, (99, b"later".to_vec()));
     let binary = BinaryDictionary::from_bytes(file(&parts)).unwrap();
     assert_eq!(binary.words("きしゃ"), text().words("きしゃ"));
@@ -181,7 +181,7 @@ fn an_unknown_section_is_skipped() {
 
 #[test]
 fn the_okuri_section_may_be_missing() {
-    let parts: Vec<_> = sections(&encode(&text()))
+    let parts: Vec<_> = sections(&encode(&text(), None))
         .into_iter()
         .filter(|(kind, _)| *kind != OKURI)
         .collect();
@@ -192,7 +192,7 @@ fn the_okuri_section_may_be_missing() {
 
 #[test]
 fn a_wrong_magic_or_version_is_rejected() {
-    let good = encode(&text());
+    let good = encode(&text(), None);
     let mut magic = good.clone();
     magic[0] = b'X';
     assert!(rejects(magic));
@@ -204,7 +204,7 @@ fn a_wrong_magic_or_version_is_rejected() {
 
 #[test]
 fn a_missing_or_doubled_required_section_is_rejected() {
-    let parts = sections(&encode(&text()));
+    let parts = sections(&encode(&text(), None));
     for kind in [STRINGS, INDEX, ENTRIES] {
         let without: Vec<_> = parts.iter().filter(|(k, _)| *k != kind).cloned().collect();
         assert!(rejects(file(&without)), "without {kind}");
@@ -216,13 +216,13 @@ fn a_missing_or_doubled_required_section_is_rejected() {
 
 #[test]
 fn a_section_past_the_end_is_rejected() {
-    let bytes = encode(&text());
+    let bytes = encode(&text(), None);
     assert!(rejects(bytes[..bytes.len() - 1].to_vec()));
 }
 
 #[test]
 fn broken_references_are_rejected() {
-    let parts = sections(&encode(&text()));
+    let parts = sections(&encode(&text(), None));
     let with = |kind: u32, change: &dyn Fn(&mut Vec<u8>)| {
         let mut parts = parts.clone();
         let (_, contents) = parts.iter_mut().find(|(k, _)| *k == kind).unwrap();
@@ -248,7 +248,7 @@ fn broken_references_are_rejected() {
 
 #[test]
 fn opening_does_not_check_the_checksums() {
-    let mut bytes = encode(&text());
+    let mut bytes = encode(&text(), None);
     let at = {
         let i = (0..u32_at(&bytes, 12) as usize)
             .find(|i| u32_at(&bytes, 32 + i * 32) == ENTRIES)
@@ -261,6 +261,58 @@ fn opening_does_not_check_the_checksums() {
 }
 
 #[test]
+fn a_changed_byte_fails_the_checksum_of_its_section_only_when_verified() {
+    let mut bytes = encode(&text(), None);
+    let at = {
+        let i = (0..u32_at(&bytes, 12) as usize)
+            .find(|i| u32_at(&bytes, 32 + i * 32) == ENTRIES)
+            .unwrap();
+        u64_at(&bytes, 32 + i * 32 + 8) as usize
+    };
+    // The first entry's cost.
+    bytes[at + 8] ^= 1;
+
+    let binary = BinaryDictionary::from_bytes(bytes).unwrap();
+
+    assert!(matches!(
+        binary.verify_checksums(),
+        Err(BinaryError::Checksum(ENTRIES))
+    ));
+}
+
+#[test]
+fn every_section_of_a_written_file_passes_its_checksum() {
+    let source = Some([7; 32]);
+
+    let binary = BinaryDictionary::from_bytes(encode(&text(), source)).unwrap();
+
+    assert!(binary.verify_checksums().is_ok());
+}
+
+#[test]
+fn a_source_digest_is_written_as_the_source_section() {
+    let digest = [7; 32];
+
+    let bytes = encode(&text(), Some(digest));
+
+    let parts = sections(&bytes);
+    assert_eq!(parts.last(), Some(&(SOURCE, digest.to_vec())));
+    assert_eq!(file(&parts), bytes);
+    let binary = BinaryDictionary::from_bytes(bytes).unwrap();
+    assert_eq!(binary.source_digest(), Some(digest));
+    assert_eq!(binary.words("きしゃ"), text().words("きしゃ"));
+}
+
+#[test]
+fn a_file_without_a_source_section_has_no_source_digest() {
+    let bytes = encode(&text(), None);
+
+    let binary = BinaryDictionary::from_bytes(bytes).unwrap();
+
+    assert_eq!(binary.source_digest(), None);
+}
+
+#[test]
 fn a_shared_dictionary_can_be_read_from_other_threads() {
     fn send_sync<T: Send + Sync>(_: &T) {}
     send_sync(&binary(&text()));
@@ -268,7 +320,7 @@ fn a_shared_dictionary_can_be_read_from_other_threads() {
 
 #[test]
 fn a_broken_fst_is_rejected_without_panicking() {
-    let parts = sections(&encode(&text()));
+    let parts = sections(&encode(&text(), None));
     for root in [100u64, 30, 5] {
         let mut parts = parts.clone();
         let (_, index) = parts.iter_mut().find(|(k, _)| *k == INDEX).unwrap();
@@ -311,7 +363,7 @@ fn fst_without_keys(depth: usize) -> Vec<u8> {
 
 #[test]
 fn an_fst_of_endless_paths_without_keys_is_rejected_at_once() {
-    let mut parts = sections(&encode(&text()));
+    let mut parts = sections(&encode(&text(), None));
     parts.iter_mut().find(|(k, _)| *k == INDEX).unwrap().1 = fst_without_keys(50);
     assert!(rejects_at_once(file(&parts)));
 }
@@ -329,7 +381,7 @@ fn an_okurigana_line_whose_surface_is_the_okurigana_converts() {
 fn a_numeric_item_holds_its_placeholders_as_noncharacters() {
     let (text, invalid) = TextDictionary::parse("{}こ\t{kanji}個\n\\{\t\\{}");
     assert_eq!(invalid, []);
-    let bytes = encode(&text);
+    let bytes = encode(&text, None);
     let reading = "\u{FDD0}\u{FDD1}こ";
     let surface = "\u{FDD0}kanji\u{FDD1}個";
     let binary = BinaryDictionary::from_bytes(bytes.clone()).unwrap();
@@ -347,7 +399,7 @@ fn a_numeric_item_holds_its_placeholders_as_noncharacters() {
 
 #[test]
 fn an_index_with_more_keys_than_entries_is_rejected() {
-    let parts = sections(&encode(&text()));
+    let parts = sections(&encode(&text(), None));
     let entries = parts.iter().find(|(k, _)| *k == ENTRIES).unwrap().1.len() / ENTRY_LEN;
     let mut builder = fst::MapBuilder::memory();
     for i in 0..=entries {
@@ -363,14 +415,14 @@ fn keys_sharing_entries_are_rejected() {
     let mut builder = fst::MapBuilder::memory();
     builder.insert("か", 1u64 << 32).unwrap();
     builder.insert("きしゃ", 1u64 << 32).unwrap();
-    let mut parts = sections(&encode(&text()));
+    let mut parts = sections(&encode(&text(), None));
     parts.iter_mut().find(|(k, _)| *k == INDEX).unwrap().1 = builder.into_inner().unwrap();
     assert!(rejects(file(&parts)));
 }
 
 #[test]
 fn a_source_that_is_not_a_sha_256_is_rejected() {
-    let mut parts = sections(&encode(&text()));
+    let mut parts = sections(&encode(&text(), None));
     parts.push((SOURCE, vec![0; 31]));
     assert!(rejects(file(&parts)));
 }
@@ -396,7 +448,7 @@ fn a_transition_that_does_not_point_below_its_node_is_rejected_at_once() {
     forged.extend_from_slice(&1u64.to_le_bytes());
     forged.extend_from_slice(&35u64.to_le_bytes());
     forged.extend_from_slice(&[0; 4]);
-    let mut parts = sections(&encode(&text()));
+    let mut parts = sections(&encode(&text(), None));
     parts.iter_mut().find(|(k, _)| *k == INDEX).unwrap().1 = forged;
     assert!(rejects_at_once(file(&parts)));
 }

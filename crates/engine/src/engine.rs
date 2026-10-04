@@ -1,10 +1,10 @@
 use kanaemi_core::{Candidate, Converter, Effect};
 
-use crate::numeric::{Numbers, fill, typed_placeholders};
+use crate::numeric::{Numbers, fill};
 use crate::{
     CONTEXT_CHARS, CandidateFacts, ConjugationTable, Dictionary, HISTORY_LEN, ItemLine, LineSink,
     MAX_SUFFIX_KANA, RankingInput, RankingModel, Selections, TextDictionary, UserCustom,
-    WriteError, nfc, okuri_row,
+    WriteError, mark_placeholders, nfc, okuri_row,
 };
 
 /// On a frequency scale (100 per factor of e) this ranks a built form after
@@ -363,7 +363,7 @@ fn numeric_registration(
     if okurigana.is_some() {
         return None;
     }
-    Some((Numbers::find(reading)?, typed_placeholders(surface)?))
+    Some((Numbers::find(reading)?, mark_placeholders(surface)?))
 }
 
 /// The candidates one dictionary gives for a reading, and for its `numbers`
