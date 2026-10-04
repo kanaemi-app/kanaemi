@@ -555,7 +555,7 @@ pub fn run(dir: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
             .build()
             .await
     })?;
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "kanaemi started");
+    tracing::info!(version = kanaemi_core::VERSION, "kanaemi started");
     let bus = connection.clone();
     shell.ask(move |shell| shell.connection = Some(bus));
     // Every message passes here as well; the messages end when the bus goes,

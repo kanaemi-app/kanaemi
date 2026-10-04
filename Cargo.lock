@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "kanaemi-config"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "kanaemi-core",
  "toml 0.9.12+spec-1.1.0",
@@ -2489,11 +2489,11 @@ dependencies = [
 
 [[package]]
 name = "kanaemi-core"
-version = "0.1.0"
+version = "0.0.0"
 
 [[package]]
 name = "kanaemi-engine"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "encoding_rs",
  "fst",
@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "kanaemi-ibus"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "kanaemi-config",
  "kanaemi-core",
@@ -2520,7 +2520,7 @@ dependencies = [
 
 [[package]]
 name = "kanaemi-macos"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "dispatch2",
  "kanaemi-config",
@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "kanaemi-runtime"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "kanaemi-config",
  "kanaemi-core",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "kanaemi-settings"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "dioxus",
  "kanaemi-config",
@@ -2559,7 +2559,7 @@ dependencies = [
 
 [[package]]
 name = "kanaemi-windows"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "kanaemi-config",
  "kanaemi-core",
