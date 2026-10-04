@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tells IBus about the engine; install.sh puts it where IBus looks. -->
+<component>
+  <name>org.freedesktop.IBus.Kanaemi</name>
+  <description>Kanaemi Japanese input method</description>
+  <exec>/usr/local/lib/kanaemi/kanaemi-ibus</exec>
+  <version>0.1.0</version>
+  <author>Alisue</author>
+  <license>MIT</license>
+  <homepage>https://github.com/kanaemi-app/kanaemi</homepage>
+  <textdomain>kanaemi</textdomain>
+  <engines>
+    <engine>
+      <name>kanaemi</name>
+      <language>ja</language>
+      <license>MIT</license>
+      <author>Alisue</author>
+      <icon>/usr/local/lib/kanaemi/kanaemi.svg</icon>
+      <layout>default</layout>
+      <longname>Kanaemi</longname>
+      <description>Kanaemi Japanese input method</description>
+      <!-- Shown for the engine in a panel's top bar, whatever the mode: not
+           あ or A, which would read as the input mode. -->
+      <symbol>K</symbol>
+      <rank>0</rank>
+    </engine>
+  </engines>
+</component>
