@@ -39,6 +39,11 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns -o "$settings/Contents/Resources/kanaemi.icns" "$iconset"
 plutil -insert CFBundleIconFile -string kanaemi "$settings/Contents/Info.plist"
+# The version kanaemi_core::VERSION reports, as the settings app prints it.
+version="$("$root/target/release/kanaemi-settings" --version)"
+plutil -replace CFBundleShortVersionString -string "$version" "$app/Contents/Info.plist"
+plutil -replace CFBundleShortVersionString -string "$version" "$settings/Contents/Info.plist"
+
 codesign --force --sign - "$settings"
 
 codesign --force --sign - "$app"
