@@ -24,5 +24,9 @@ lint:
 test:
     cargo test --workspace
 
+# Build the macOS input method and install it into ~/Library/Input Methods.
+install-macos:
+    apps/macos/install.sh
+
 # Everything CI runs.
 ci: fmt-check lint test

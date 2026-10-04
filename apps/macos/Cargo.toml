@@ -11,6 +11,14 @@ name = "kanaemi"
 path = "src/main.rs"
 
 [dependencies]
-kanaemi-config.workspace = true
 kanaemi-core.workspace = true
-kanaemi-engine.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+kanaemi-config.workspace = true
+kanaemi-runtime.workspace = true
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSRange", "NSAttributedString", "NSDictionary", "NSValue", "NSGeometry", "NSBundle"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSEvent", "NSResponder", "NSPanel", "NSWindow", "NSView", "NSTextField", "NSControl", "NSColor", "NSFont", "NSText", "NSGraphics", "NSAttributedString", "NSBox", "NSImage", "NSImageView", "NSMenu", "NSMenuItem", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGEvent", "CGEventTypes", "CGRemoteOperation"] }
+objc2-input-method-kit = { version = "0.3", features = ["IMKServer", "IMKInputController", "IMKCandidates", "objc2-app-kit"] }
+tracing = { version = "0.1", features = ["release_max_level_info"] }
