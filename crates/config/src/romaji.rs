@@ -1,4 +1,11 @@
+use std::fs;
+use std::io;
+use std::path::Path;
+
 use kanaemi_core::RomajiTable;
+
+use crate::ROMAJI_DIR;
+use crate::folder::stays_inside;
 
 /// A romaji table file shipped with Kanaemi, by the name the settings use.
 pub(crate) struct BundledRomajiTable {
@@ -37,6 +44,32 @@ pub(crate) const BUNDLED_ROMAJI_TABLES: &[BundledRomajiTable] = &[
 /// Full-width ASCII comes first, so the Japanese punctuation stacked above it wins.
 pub(crate) const DEFAULT_ROMAJI_TABLES: &[&str] =
     &["full-width", "hepburn", "kunrei", "input-aids", "z-symbols"];
+
+/// The names of the bundled romaji tables, in the order to list them.
+pub fn bundled_romaji_tables() -> impl Iterator<Item = &'static str> {
+    BUNDLED_ROMAJI_TABLES.iter().map(|t| t.name)
+}
+
+/// The names of the romaji tables stacked when the settings choose none, in
+/// order.
+pub fn default_romaji_tables() -> &'static [&'static str] {
+    DEFAULT_ROMAJI_TABLES
+}
+
+/// The text of the romaji table `name`: the bundled table of that name, or
+/// else the file of that name in `dir`'s romaji folder, which a
+/// name may not leave.
+pub fn read_romaji_table(dir: impl AsRef<Path>, name: impl AsRef<str>) -> io::Result<String> {
+    let name = name.as_ref();
+    match BUNDLED_ROMAJI_TABLES.iter().find(|t| t.name == name) {
+        Some(bundled) => Ok(bundled.text.to_owned()),
+        None if !stays_inside(name) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{name} is outside the romaji folder"),
+        )),
+        None => fs::read_to_string(dir.as_ref().join(ROMAJI_DIR).join(name)),
+    }
+}
 
 /// The romaji table stacked from the bundled tables in the default order.
 pub fn default_romaji_table() -> RomajiTable {
