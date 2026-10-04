@@ -3,12 +3,12 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::path::PathBuf;
 
-/// When a file last changed and how long it is; `None` when it is missing.
-type Stamp = Option<(SystemTime, u64)>;
+use kanaemi_engine::FileStamp;
+
+/// `None` when the file is missing.
+type Stamp = Option<FileStamp>;
 /// An answer with the stamps of the files it was worked out from.
 type Known<T> = (Vec<Stamp>, T);
 
@@ -29,7 +29,7 @@ impl<T: Clone> FileCache<T> {
     /// The answer for `paths`, worked out again only when one of them
     /// changed since. Only the latest answer is kept for each set of files.
     pub fn get(&self, paths: &[PathBuf], work_out: impl FnOnce() -> T) -> T {
-        let stamps: Vec<Stamp> = paths.iter().map(|p| stamp(p)).collect();
+        let stamps: Vec<Stamp> = paths.iter().map(FileStamp::of).collect();
         if let Some((known, answer)) = self.known.borrow().get(paths)
             && *known == stamps
         {
@@ -43,14 +43,10 @@ impl<T: Clone> FileCache<T> {
     }
 }
 
-fn stamp(path: &Path) -> Stamp {
-    let metadata = fs::metadata(path).ok()?;
-    Some((metadata.modified().ok()?, metadata.len()))
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::fs;
 
     use super::*;
 
@@ -74,5 +70,33 @@ mod tests {
         assert_eq!(read(), "bb");
         assert_eq!(worked.get(), 2);
         assert_eq!(cache.known.borrow().len(), 1, "the old answer is gone");
+    }
+
+    /// A clock coarser than two writes leaves a file replaced with as many
+    /// bytes at the same time, as when a dictionary is converted twice.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_replaced_within_the_same_tick_is_worked_out_again() {
+        let path = std::env::temp_dir().join(format!(
+            "kanaemi-settings-cache-tick-{}.txt",
+            std::process::id()
+        ));
+        kanaemi_engine::replace_file(&path, "a").unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        let cache = FileCache::default();
+        let read = || {
+            cache.get(std::slice::from_ref(&path), || {
+                fs::read_to_string(&path).unwrap()
+            })
+        };
+        assert_eq!(read(), "a");
+        kanaemi_engine::replace_file(&path, "b").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert_eq!(read(), "b");
     }
 }

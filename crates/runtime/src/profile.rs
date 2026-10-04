@@ -6,7 +6,6 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::SystemTime;
 
 use kanaemi_config::DictionarySource;
 use kanaemi_core::{Candidate, Config, Converter, Effect, Event, Mode};
@@ -26,7 +25,7 @@ pub struct Profile {
     /// Counts reloads of the settings, so a field knows when to rebuild its core.
     generation: u64,
     engine: SharedEngine,
-    settings_modified: Option<SystemTime>,
+    settings_stamp: Option<kanaemi_engine::FileStamp>,
     dictionary_stamp: Stamp,
     user_stamp: FileStamp,
     selections_stamp: FileStamp,
@@ -54,7 +53,7 @@ impl Profile {
             tracing::warn!(path = %dir.display(), %error, "settings folder not created");
         }
         // Stamped before reading, so a change while reading is seen next time.
-        let (settings, settings_modified) = settings::read_stamped(&dir);
+        let (settings, settings_stamp) = settings::read_stamped(&dir);
         let dictionary_stamp = dictionaries::stamp(&dir, settings.dictionaries.as_deref());
         let user_stamp = dictionaries::user_stamp(&dir);
         let engine = dictionaries::open_engine(&dir, settings.dictionaries.as_deref());
@@ -63,7 +62,7 @@ impl Profile {
             dictionaries: settings.dictionaries,
             generation: 0,
             engine: SharedEngine(Rc::new(RefCell::new(engine))),
-            settings_modified,
+            settings_stamp,
             dictionary_stamp,
             user_stamp,
             selections_stamp: None,
@@ -96,9 +95,9 @@ impl Profile {
     /// Reads again what changed on disk since it was read: the settings,
     /// the dictionaries in use, and the record of picks.
     pub(crate) fn reload_if_changed(&mut self) {
-        if settings::modified(&self.dir) != self.settings_modified {
-            let (settings, modified) = settings::read_stamped(&self.dir);
-            self.settings_modified = modified;
+        if settings::stamp(&self.dir) != self.settings_stamp {
+            let (settings, stamp) = settings::read_stamped(&self.dir);
+            self.settings_stamp = stamp;
             self.config = settings.config;
             self.dictionaries = settings.dictionaries;
             self.control_port = settings.control_port;
@@ -265,6 +264,8 @@ impl Converter for SharedEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use std::fs;
     use std::path::Path;
 
@@ -392,6 +393,23 @@ mod tests {
         age(&dir.join(FILE_NAME));
         profile.reload_if_changed();
         assert_eq!(profile.generation(), 1);
+    }
+
+    /// A clock coarser than two writes leaves a file replaced with as many
+    /// bytes at the same time, as when the settings app saves it twice.
+    #[cfg(unix)]
+    #[test]
+    fn a_settings_file_replaced_within_the_same_tick_is_read_again() {
+        let dir = temp_dir("settings-tick");
+        let path = dir.join(FILE_NAME);
+        kanaemi_engine::replace_file(&path, "mode_indicator = true \n").unwrap();
+        let mut profile = Profile::open(&dir);
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        kanaemi_engine::replace_file(&path, "mode_indicator = false\n").unwrap();
+        let file = fs::File::options().write(true).open(&path).unwrap();
+        file.set_modified(modified).unwrap();
+        profile.reload_if_changed();
+        assert!(!profile.config().mode_indicator);
     }
 
     #[test]
