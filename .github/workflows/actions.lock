@@ -6,6 +6,7 @@ workflows:
     '.github/workflows/ci.yml':
         - 'actions/checkout@v7.0.1'
         - 'cachix/install-nix-action@v31.11.1'
+        - 'nicknovitski/nix-develop@v1.2.1'
 dependencies:
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'
@@ -17,3 +18,8 @@ dependencies:
         commit: 'sha1-13d8dd58da0234aa297dedd986986ccb8e7f3e24'
         owner_id: 36824654
         repo_id: 212301524
+    'nicknovitski/nix-develop@v1.2.1':
+        ref: 'v1.2.1'
+        commit: 'sha1-9be7cfb4b10451d3390a75dc18ad0465bed4932a'
+        owner_id: 151337
+        repo_id: 706956179
