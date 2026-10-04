@@ -6,13 +6,14 @@ use std::cell::{Cell, RefCell};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 
+use dispatch2::DispatchQueue;
 use kanaemi_core::{Chord, Event, Output};
 use kanaemi_runtime::{Field, Profile};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, Bool, NSObject};
 use objc2::{
-    AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
-    sel,
+    AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class,
+    msg_send, sel,
 };
 use objc2_app_kit::{
     NSApplication, NSEvent, NSEventMask, NSEventType, NSMenu, NSMenuItem,
@@ -39,6 +40,9 @@ thread_local! {
     /// The Shift keys are one keyboard's, whichever client has the focus.
     static KEYS: RefCell<Keys> = RefCell::new(Keys::default());
     static CANDIDATES: RefCell<Option<Retained<IMKCandidates>>> = const { RefCell::new(None) };
+    /// The controller of the field with the focus, for other programs to set
+    /// the mode of.
+    static ACTIVE: RefCell<Option<Retained<KanaemiController>>> = const { RefCell::new(None) };
     /// The row the candidate panel highlights.
     static PANEL_ROW: Cell<usize> = const { Cell::new(0) };
 }
@@ -200,6 +204,7 @@ impl KanaemiController {
     }
 
     fn activate(&self, sender: Option<&AnyObject>) {
+        ACTIVE.set(Some(self.retain()));
         // macOS turns input methods off in a secure field, so a field the
         // IME sees is never a password field.
         self.dispatch(Event::FocusIn { password: false }, sender);
@@ -208,6 +213,15 @@ impl KanaemiController {
     fn deactivate(&self, sender: Option<&AnyObject>) {
         self.dispatch(Event::FocusOut, sender);
         hide_candidates();
+        // Another client may have been activated first.
+        ACTIVE.with_borrow_mut(|active| {
+            if active
+                .as_deref()
+                .is_some_and(|active| std::ptr::eq(active, self))
+            {
+                *active = None;
+            }
+        });
     }
 
     fn select(&self, candidate: Option<&NSAttributedString>) {
@@ -422,6 +436,23 @@ fn open_settings_app() {
 
 const SETTINGS_APP: &str = "KanaemiSettings.app";
 
+/// Answers the requests other programs sent, on the main thread, where the
+/// fields are; a mode to set goes to the field with the focus first.
+fn serve_control() {
+    guarded((), || {
+        for request in with_profile(Profile::take_control_requests) {
+            if let Some(mode) = request.mode_to_set()
+                && let Some(controller) = ACTIVE.with_borrow(Clone::clone)
+            {
+                let client: Option<Retained<AnyObject>> =
+                    unsafe { msg_send![&*controller, client] };
+                controller.dispatch(Event::SetMode(mode), client.as_deref());
+            }
+            with_profile(|profile| profile.answer(request));
+        }
+    });
+}
+
 pub fn run() {
     kanaemi_runtime::init_logging();
     let mtm = MainThreadMarker::new().expect("Input Method Kit servers run on the main thread");
@@ -430,6 +461,7 @@ pub fn run() {
         std::env::temp_dir().join("kanaemi")
     });
     PROFILE.set(Some(Profile::open(dir)));
+    with_profile(|profile| profile.listen(|| DispatchQueue::main().exec_async(serve_control)));
     // IMKServer looks the class up by its Info.plist name, so register it first.
     let _ = KanaemiController::class();
 
