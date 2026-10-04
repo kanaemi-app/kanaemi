@@ -9,6 +9,7 @@ use crate::{
 
 const MAX_REGISTRATION_DEPTH: usize = 3;
 
+#[derive(Clone)]
 enum State {
     Idle { pending: String },
     Reading(Word),
@@ -23,6 +24,7 @@ impl State {
     }
 }
 
+#[derive(Clone)]
 struct Selection {
     word: Word,
     /// Never empty: the reading's own forms cannot be forgotten.
@@ -53,12 +55,14 @@ impl Selection {
     }
 }
 
+#[derive(Clone)]
 struct Registration {
     word: Word,
     text: Editable,
 }
 
 /// A key bound to be held, from its press until it is let go.
+#[derive(Clone)]
 struct Held {
     pressed: Chord,
     at: u64,
@@ -76,6 +80,10 @@ enum HeldState {
 }
 
 /// The input method: events in, the state to show out.
+///
+/// A copy tries an event without changing the original, as a host that is
+/// asked whether a key will be used before it is sent needs.
+#[derive(Clone)]
 pub struct Core<C> {
     converter: C,
     config: Config,
