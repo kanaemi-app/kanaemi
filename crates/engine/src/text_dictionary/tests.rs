@@ -393,6 +393,13 @@ fn a_hide_line_hides_a_numeric_pair_with_its_placeholders() {
 }
 
 #[test]
+fn placeholders_are_shown_as_they_are_written() {
+    let reading = format!("{}こ{{", placeholder(""));
+    assert_eq!(show_placeholders(reading), "{}こ{");
+    assert_eq!(show_placeholders(placeholder("kanji")), "{kanji}");
+}
+
+#[test]
 fn a_numeric_line_reads_back_as_it_was_written() {
     let reading = format!("{}がつ{{{}", placeholder(""), placeholder(""));
     let surface = format!("{}月}}{}", placeholder("kanji"), placeholder("daiji"));

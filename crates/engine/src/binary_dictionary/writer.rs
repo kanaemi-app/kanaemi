@@ -1,5 +1,4 @@
-//! Writes a text dictionary in the binary format, so tests can open what a
-//! dictionary builder would ship.
+//! Writes a text dictionary in the binary format.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -7,15 +6,17 @@ use std::ops::Range;
 use fst::MapBuilder;
 
 use super::{
-    BINARY_MAGIC, ENTRIES, FORMAT_VERSION, HEADER_LEN, INDEX, OKURI, SECTION_ENTRY_LEN, STRINGS,
+    BINARY_MAGIC, ENTRIES, FORMAT_VERSION, HEADER_LEN, INDEX, OKURI, SECTION_ENTRY_LEN, SOURCE,
+    STRINGS,
 };
 use crate::{Dictionary, Entry, TextDictionary, okuri_key};
 
 const ALIGN: usize = 64;
 
-/// The text dictionary in the binary format. Lines the format cannot hold,
-/// such as a string over 65,535 bytes, are left out.
-pub(crate) fn encode(text: &TextDictionary) -> Vec<u8> {
+/// The text dictionary in the binary format, with the SHA-256 of the text it
+/// came from when given. Lines the format cannot hold, such as a string over
+/// 65,535 bytes, are left out.
+pub(crate) fn encode(text: &TextDictionary, source: Option<[u8; 32]>) -> Vec<u8> {
     let mut writer = Writer::default();
     let mut readings: Vec<&str> = text.readings().collect();
     readings.sort_unstable();
@@ -40,7 +41,7 @@ pub(crate) fn encode(text: &TextDictionary) -> Vec<u8> {
             (okuri_key(stem, row), range)
         })
         .collect();
-    writer.finish(&index, &okuri)
+    writer.finish(&index, &okuri, source)
 }
 
 #[derive(Default)]
@@ -92,14 +93,22 @@ impl Writer {
         at
     }
 
-    fn finish(mut self, index: &[(String, Range<u32>)], okuri: &[(String, Range<u32>)]) -> Vec<u8> {
+    fn finish(
+        mut self,
+        index: &[(String, Range<u32>)],
+        okuri: &[(String, Range<u32>)],
+        source: Option<[u8; 32]>,
+    ) -> Vec<u8> {
         self.string("");
-        let sections = [
+        let mut sections = vec![
             (STRINGS, self.strings),
             (INDEX, fst_map(index)),
             (ENTRIES, self.entries),
             (OKURI, fst_map(okuri)),
         ];
+        if let Some(digest) = source {
+            sections.push((SOURCE, digest.to_vec()));
+        }
         let mut out = Vec::new();
         out.extend_from_slice(BINARY_MAGIC);
         out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
