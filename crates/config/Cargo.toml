@@ -1,0 +1,10 @@
+[package]
+name = "kanaemi-config"
+description = "Reads the user's settings file into the core's configuration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kanaemi-core.workspace = true

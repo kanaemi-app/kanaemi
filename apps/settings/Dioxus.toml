@@ -1,0 +1,9 @@
+[application]
+name = "Kanaemi Settings"
+default_platform = "desktop"
+
+[bundle]
+identifier = "io.github.kanaemi-app.kanaemi.settings"
+publisher = "kanaemi-app"
+category = "Utility"
+short_description = "Settings for the Kanaemi input method"

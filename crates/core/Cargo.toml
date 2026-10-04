@@ -1,0 +1,9 @@
+[package]
+name = "kanaemi-core"
+description = "The input method's state machine: keys in, what to display and commit out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]

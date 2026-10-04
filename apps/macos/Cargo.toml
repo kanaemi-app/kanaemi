@@ -1,0 +1,16 @@
+[package]
+name = "kanaemi-macos"
+description = "The macOS input method, an Input Method Kit app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "kanaemi"
+path = "src/main.rs"
+
+[dependencies]
+kanaemi-config.workspace = true
+kanaemi-core.workspace = true
+kanaemi-engine.workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "kanaemi-settings"
+description = "The settings app, launched from the input method's menu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+dioxus = { workspace = true, features = ["desktop"] }
+kanaemi-config.workspace = true
+kanaemi-core.workspace = true
+kanaemi-engine.workspace = true
