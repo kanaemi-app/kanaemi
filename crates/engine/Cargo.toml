@@ -7,4 +7,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
+fst = "0.4.7"
 kanaemi-core.workspace = true
+memmap2 = "0.9.11"
+thiserror = "2.0.21"
+unicode-normalization = "0.1"
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
