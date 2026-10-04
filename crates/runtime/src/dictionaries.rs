@@ -5,6 +5,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use kanaemi_config::{
     DictionarySource, MODEL_FILE, SELECTIONS_FILE, USER_CUSTOM_FILE, dictionary_sources,
@@ -30,7 +31,7 @@ pub(crate) fn open_engine(support_dir: &Path, sources: Option<&[DictionarySource
         read_user(support_dir),
         FileSink::new(support_dir.join(USER_CUSTOM_FILE)),
     );
-    engine.set_model(read_model(support_dir));
+    engine.set_model(read_model(support_dir).map(Arc::new));
     engine
 }
 

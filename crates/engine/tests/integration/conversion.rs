@@ -467,3 +467,27 @@ fn a_write_error_does_not_carry_the_words() {
     assert_eq!(errors.len(), 1);
     assert!(!errors[0].to_string().contains("ひみつ"), "{}", errors[0]);
 }
+
+#[test]
+fn a_shared_dictionary_and_a_boxed_sink_make_an_engine() {
+    let shared = std::sync::Arc::new(TextDictionary::parse("きしゃ\t記者\n").0);
+    let lines = Lines::default();
+    let sink: Box<dyn LineSink> = Box::new(lines.clone());
+    let mut e = Engine::new(
+        [Slot::Dictionary(Box::new(shared.clone()))],
+        TextDictionary::parse_user_custom("").0,
+        sink,
+    );
+    assert_eq!(surfaces(&e, "きしゃ", None), ["記者"]);
+    e.register("きしゃ", "汽車");
+    assert_eq!(*lines.0.borrow(), ["きしゃ\t汽車"]);
+}
+
+#[test]
+fn the_user_dictionary_in_memory_carries_registrations_into_another_engine() {
+    let (mut e, _) = engine(vec![], "");
+    e.register("きしゃ", "汽車");
+    let (mut other, _) = engine(vec![], "");
+    other.replace_user(e.user_dictionary().clone());
+    assert_eq!(surfaces(&other, "きしゃ", None), ["汽車"]);
+}
