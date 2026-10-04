@@ -103,7 +103,7 @@ impl Learned {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Fake {
     pub table: HashMap<&'static str, Vec<&'static str>>,
     pub learned: Rc<RefCell<Learned>>,

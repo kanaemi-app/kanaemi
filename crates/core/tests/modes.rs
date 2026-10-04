@@ -497,3 +497,14 @@ fn a_password_field_stays_in_abc_whatever_is_set() {
     let out = t.handle(Event::SetMode(Mode::Kana));
     assert_eq!(out.mode, Mode::Abc);
 }
+
+#[test]
+fn an_event_tried_on_a_copy_leaves_the_core_as_it_was() {
+    let mut t = T::new();
+    t.kana();
+    t.ch(';');
+    t.typ("kan");
+    let tried = t.core.clone().handle(Event::Flush);
+    assert_eq!(tried.commit.as_deref(), Some("かん"));
+    assert_eq!(t.handle(Event::Flush), tried);
+}
