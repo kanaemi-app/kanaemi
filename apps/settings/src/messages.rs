@@ -30,6 +30,7 @@ pub fn describe(kind: &ProblemKind) -> String {
         }
         ProblemKind::ModifierKey => "修飾キーは、別のキーに置き換えてアプリに送れません".to_owned(),
         ProblemKind::NotAPositiveInteger => "1 以上の整数で書いてください".to_owned(),
+        ProblemKind::NotAPort => "1 から 65535 までの整数で書いてください".to_owned(),
         ProblemKind::UnknownAction(name) => {
             format!("「{name}」という機能はありません（@next のように書きます）")
         }
