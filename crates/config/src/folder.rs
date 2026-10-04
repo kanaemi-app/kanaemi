@@ -36,7 +36,9 @@ pub fn dir() -> Option<PathBuf> {
     );
     #[cfg(windows)]
     return Some(PathBuf::from(std::env::var_os("APPDATA")?).join("kanaemi"));
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    return Some(xdg_dir("XDG_CONFIG_HOME", ".config")?.join("kanaemi"));
+    #[cfg(not(any(unix, windows)))]
     return None;
 }
 
@@ -50,8 +52,39 @@ pub fn log_file() -> Option<PathBuf> {
             .join("kanaemi")
             .join("kanaemi.log"),
     );
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    return Some(
+        xdg_dir("XDG_STATE_HOME", ".local/state")?
+            .join("kanaemi")
+            .join("kanaemi.log"),
+    );
+    #[cfg(not(any(unix, windows)))]
     return None;
+}
+
+/// The XDG base directory `variable` names on this system.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn xdg_dir(variable: &str, fallback: &str) -> Option<PathBuf> {
+    xdg_base(
+        std::env::var_os(variable),
+        std::env::var_os("HOME"),
+        fallback,
+    )
+}
+
+/// An XDG base directory: `value` when it is an absolute path, as the
+/// specification asks so that a stray relative value points nowhere
+/// unexpected, or else `fallback` in the `home` folder.
+#[cfg(all(unix, any(test, not(target_os = "macos"))))]
+fn xdg_base(
+    value: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+    fallback: &str,
+) -> Option<PathBuf> {
+    value
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| Some(PathBuf::from(home?).join(fallback)))
 }
 
 /// The text of the settings file in `dir`, writing the template there first
@@ -186,4 +219,37 @@ pub(crate) fn stays_inside(name: impl AsRef<Path>) -> bool {
     name.as_ref()
         .components()
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+}
+
+// The paths are Unix paths, which Windows does not count as absolute.
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_absolute_xdg_variable_names_the_base_folder() {
+        assert_eq!(
+            xdg_base(
+                Some("/xdg/config".into()),
+                Some("/home/u".into()),
+                ".config"
+            ),
+            Some(PathBuf::from("/xdg/config"))
+        );
+    }
+
+    #[test]
+    fn a_relative_or_missing_xdg_variable_falls_back_to_the_home_folder() {
+        for value in [Some("relative/config".into()), Some("".into()), None] {
+            assert_eq!(
+                xdg_base(value, Some("/home/u".into()), ".config"),
+                Some(PathBuf::from("/home/u/.config"))
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_home_folder_only_an_absolute_xdg_variable_counts() {
+        assert_eq!(xdg_base(None, None, ".config"), None);
+    }
 }
