@@ -11,3 +11,4 @@ dioxus = { workspace = true, features = ["desktop"] }
 kanaemi-config.workspace = true
 kanaemi-core.workspace = true
 kanaemi-engine.workspace = true
+rfd = "0.17.2"
