@@ -1,5 +1,7 @@
 //! One input field's core, kept in step with the profile every field shares.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use kanaemi_core::{Core, Event, Output};
 
 use crate::Profile;
@@ -7,6 +9,8 @@ use crate::profile::SharedEngine;
 
 /// The core of one field the IME serves.
 pub struct Field {
+    /// Tells this field from the others the profile follows the focus of.
+    id: u64,
     core: Core<SharedEngine>,
     /// The settings the core was built from.
     generation: u64,
@@ -14,7 +18,9 @@ pub struct Field {
 
 impl Field {
     pub fn new(profile: &Profile) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         Self {
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
             core: Core::new(profile.converter(), profile.config().clone()),
             generation: profile.generation(),
         }
@@ -31,14 +37,20 @@ impl Field {
         if let Event::FocusIn { .. } = event {
             profile.reload_if_changed();
             if self.generation != profile.generation() {
-                *self = Self::new(profile);
+                *self = Self {
+                    id: self.id,
+                    ..Self::new(profile)
+                };
             }
         }
         let mut output = self.core.handle(event);
-        if output.mode != before && profile.config().mode_indicator {
+        // A mode another program set is shown there, not by the indicator.
+        let from_outside = matches!(event, Event::SetMode(_));
+        if output.mode != before && profile.config().mode_indicator && !from_outside {
             output.indicator = Some(output.mode);
         }
         profile.learn(&output.effects);
+        profile.follow_focus(self.id, event, output.mode);
         // The focus may not come back to any field before the IME stops.
         if let Event::FocusOut = event {
             profile.save_selections();

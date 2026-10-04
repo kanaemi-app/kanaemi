@@ -9,9 +9,10 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 use kanaemi_config::DictionarySource;
-use kanaemi_core::{Candidate, Config, Converter, Effect};
+use kanaemi_core::{Candidate, Config, Converter, Effect, Event, Mode};
 use kanaemi_engine::{Engine, Selections};
 
+use crate::control::{ControlRequest, Server, Wake};
 use crate::dictionaries::{self, FileStamp, Stamp};
 use crate::settings;
 
@@ -34,6 +35,14 @@ pub struct Profile {
     selections_read: bool,
     /// Picks a save failed to write, written at the next focus move.
     unsaved: Option<Selections>,
+    /// The port the settings name for other programs' requests.
+    control_port: Option<u16>,
+    /// How to wake the thread fields are served on; requests are taken only
+    /// once the platform gives one.
+    wake: Option<Wake>,
+    control: Option<Server>,
+    /// The field with the focus, by its id, and its mode.
+    focus: Option<(u64, Mode)>,
 }
 
 impl Profile {
@@ -60,6 +69,10 @@ impl Profile {
             selections_stamp: None,
             selections_read: false,
             unsaved: None,
+            control_port: settings.control_port,
+            wake: None,
+            control: None,
+            focus: None,
             dir,
         };
         let shared = profile.engine.0.clone();
@@ -88,6 +101,8 @@ impl Profile {
             self.settings_modified = modified;
             self.config = settings.config;
             self.dictionaries = settings.dictionaries;
+            self.control_port = settings.control_port;
+            self.listen_on_port();
             self.generation += 1;
             tracing::info!("settings read again");
         }
@@ -167,6 +182,69 @@ impl Profile {
         if let Some(selections) = read {
             engine.replace_selections(selections);
             self.unsaved = None;
+        }
+    }
+}
+
+/// Requests from other programs, on the port the settings name.
+impl Profile {
+    /// Takes requests from now on, waking the thread fields are served on
+    /// with `wake`, which may be called from any thread. The port follows
+    /// the settings as they are read again.
+    pub fn listen(&mut self, wake: impl Fn() + Send + Sync + 'static) {
+        self.wake = Some(std::sync::Arc::new(wake));
+        self.listen_on_port();
+    }
+
+    /// The requests that came in since the last call, oldest first. Answer
+    /// each with [`Profile::answer`], in order, after putting the field with
+    /// the focus in the mode it asks for.
+    pub fn take_control_requests(&mut self) -> Vec<ControlRequest> {
+        self.control.as_mut().map(Server::take).unwrap_or_default()
+    }
+
+    /// Answers `request` with what the field with the focus is in now.
+    pub fn answer(&mut self, request: ControlRequest) {
+        let watcher = request.answer(self.focus.map(|(_, mode)| mode));
+        if let (Some(watcher), Some(control)) = (watcher, self.control.as_mut()) {
+            control.watch(watcher);
+        }
+    }
+
+    /// Keeps track of the field with the focus after it handled `event`,
+    /// telling watching programs when its mode changes.
+    pub(crate) fn follow_focus(&mut self, field: u64, event: Event, mode: Mode) {
+        let ours = self.focus.is_some_and(|(id, _)| id == field);
+        match event {
+            Event::FocusIn { .. } => self.focus = Some((field, mode)),
+            // The focus may already be in another field.
+            Event::FocusOut if ours => self.focus = None,
+            _ if ours => self.focus = Some((field, mode)),
+            _ => {}
+        }
+        if let Some(control) = &mut self.control {
+            control.tell(self.focus.map(|(_, mode)| mode));
+        }
+    }
+
+    /// Listens on the port the settings name, letting go of any other.
+    fn listen_on_port(&mut self) {
+        let Some(wake) = self.wake.clone() else {
+            return;
+        };
+        if self.control.as_ref().map(Server::port) == self.control_port {
+            return;
+        }
+        self.control = None;
+        let Some(port) = self.control_port else {
+            return;
+        };
+        match Server::listen(port, wake) {
+            Ok(server) => {
+                tracing::info!(port, "listening for other programs");
+                self.control = Some(server);
+            }
+            Err(error) => tracing::warn!(port, %error, "control port not listened on"),
         }
     }
 }

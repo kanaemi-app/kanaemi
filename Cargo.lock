@@ -2307,6 +2307,7 @@ dependencies = [
  "kanaemi-config",
  "kanaemi-core",
  "kanaemi-engine",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
 ]
