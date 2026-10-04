@@ -12,6 +12,7 @@ mod okuri;
 mod ranking;
 mod selections;
 mod skk;
+mod stamp;
 mod text_dictionary;
 mod user_custom;
 
@@ -22,6 +23,7 @@ pub use engine::*;
 pub use ranking::*;
 pub use selections::*;
 pub use skk::*;
+pub use stamp::*;
 pub use text_dictionary::*;
 pub use user_custom::*;
 

@@ -5,7 +5,6 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use kanaemi_config::{
     DictionarySource, MODEL_FILE, SELECTIONS_FILE, USER_CUSTOM_FILE, dictionary_sources,
@@ -120,13 +119,11 @@ pub(crate) fn read_user(support_dir: &Path) -> TextDictionary {
     }
 }
 
-/// When a file last changed, and how long it is: an append within the
-/// clock's resolution still changes the length.
-pub(crate) type FileStamp = Option<(SystemTime, u64)>;
+/// A file as it stands, to tell when it changed; `None` when it is missing.
+pub(crate) type FileStamp = Option<kanaemi_engine::FileStamp>;
 
 fn file_stamp(path: &Path) -> FileStamp {
-    let metadata = fs::metadata(path).ok()?;
-    Some((metadata.modified().ok()?, metadata.len()))
+    kanaemi_engine::FileStamp::of(path)
 }
 
 pub(crate) fn user_stamp(support_dir: &Path) -> FileStamp {
@@ -137,30 +134,32 @@ pub(crate) fn selections_stamp(support_dir: &Path) -> FileStamp {
     file_stamp(&support_dir.join(SELECTIONS_FILE))
 }
 
-/// The dictionary files in use with when each last changed: when it changes,
-/// the dictionaries are opened again.
-pub(crate) type Stamp = Vec<(PathBuf, Option<SystemTime>)>;
+/// The dictionary files in use with the stamp of each: when it changes, the
+/// dictionaries are opened again.
+pub(crate) type Stamp = Vec<(PathBuf, FileStamp)>;
 
 pub(crate) fn stamp(support_dir: &Path, sources: Option<&[DictionarySource]>) -> Stamp {
-    let modified = |path: PathBuf| {
-        let time = fs::metadata(&path).and_then(|m| m.modified()).ok();
-        (path, time)
+    let stamped = |path: PathBuf| {
+        let stamp = file_stamp(&path);
+        (path, stamp)
     };
     dictionary_sources(support_dir, sources)
         .into_iter()
         .flat_map(|source| match source {
             // Its place counts; its own stamp tells when it changes.
             DictionarySource::UserCustom => vec![(support_dir.join(USER_CUSTOM_FILE), None)],
-            DictionarySource::File(path) => vec![modified(path)],
+            DictionarySource::File(path) => vec![stamped(path)],
             // The text one counts too: it is read when the binary one is not.
-            DictionarySource::Converted { binary, text } => vec![modified(binary), modified(text)],
+            DictionarySource::Converted { binary, text } => vec![stamped(binary), stamped(text)],
         })
-        .chain(std::iter::once(modified(support_dir.join(MODEL_FILE))))
+        .chain(std::iter::once(stamped(support_dir.join(MODEL_FILE))))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use kanaemi_config::DICTIONARY_DIR;
     use kanaemi_core::{Converter, Effect};
     use kanaemi_engine::convert_text;
@@ -310,6 +309,27 @@ mod tests {
             .unwrap();
         file.set_modified(SystemTime::UNIX_EPOCH).unwrap();
         assert_ne!(stamp(&dir, None), added, "rewritten");
+    }
+
+    /// A clock coarser than two writes leaves a file replaced with as many
+    /// bytes at the same time, as when a dictionary is converted twice.
+    #[cfg(unix)]
+    #[test]
+    fn the_stamps_change_when_a_file_is_replaced_within_the_same_tick() {
+        let dir = temp_dir("stamp-tick");
+        let dictionary = dir.join(DICTIONARY_DIR).join("a.tsv");
+        let user = dir.join(USER_CUSTOM_FILE);
+        replace_file(&dictionary, "きしゃ\t汽車\n").unwrap();
+        replace_file(&user, "きしゃ\t汽車\n").unwrap();
+        let (before, user_before) = (stamp(&dir, None), user_stamp(&dir));
+        for path in [&dictionary, &user] {
+            let modified = fs::metadata(path).unwrap().modified().unwrap();
+            replace_file(path, "きしゃ\t記者\n").unwrap();
+            let file = fs::File::options().write(true).open(path).unwrap();
+            file.set_modified(modified).unwrap();
+        }
+        assert_ne!(stamp(&dir, None), before);
+        assert_ne!(user_stamp(&dir), user_before);
     }
 
     #[test]
