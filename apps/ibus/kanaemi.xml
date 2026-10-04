@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Tells IBus about the engine; install.sh puts it where IBus looks. -->
+<!-- Tells IBus about the engine; install.sh puts it where IBus looks,
+     with the version filled in. -->
 <component>
   <name>org.freedesktop.IBus.Kanaemi</name>
   <description>Kanaemi Japanese input method</description>
   <exec>/usr/local/lib/kanaemi/kanaemi-ibus</exec>
-  <version>0.1.0</version>
+  <version></version>
   <author>Alisue</author>
   <license>MIT</license>
   <homepage>https://github.com/kanaemi-app/kanaemi</homepage>

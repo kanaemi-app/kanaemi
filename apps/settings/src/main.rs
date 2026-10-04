@@ -36,6 +36,12 @@ use store::Store;
 const STYLE: &str = include_str!("../assets/style.css");
 
 fn main() {
+    // How the install scripts learn the version to write into the bundle and
+    // the IBus component.
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("{}", kanaemi_core::VERSION);
+        return;
+    }
     let window = WindowBuilder::new()
         .with_title("かなえみの設定")
         .with_inner_size(LogicalSize::new(820.0, 620.0));
