@@ -2325,6 +2325,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanaemi-windows"
+version = "0.1.0"
+dependencies = [
+ "kanaemi-config",
+ "kanaemi-core",
+ "kanaemi-engine",
+ "kanaemi-runtime",
+ "tracing",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "keyboard-types"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
