@@ -1,0 +1,1266 @@
+use std::mem;
+
+use crate::edit::{CursorMove, Editable};
+use crate::word::Word;
+use crate::{
+    Action, Candidate, CandidateView, Chord, Config, Converter, Effect, Event, Form, Gesture, Key,
+    KeyEvent, KeyKind, Mode, Modifiers, Output, PAGE_LEN, Scene, romaji,
+};
+
+const MAX_REGISTRATION_DEPTH: usize = 3;
+
+enum State {
+    Idle { pending: String },
+    Reading(Word),
+    Candidates(Selection),
+}
+
+impl State {
+    fn idle() -> Self {
+        Self::Idle {
+            pending: String::new(),
+        }
+    }
+}
+
+struct Selection {
+    word: Word,
+    /// Never empty: the reading's own forms cannot be forgotten.
+    candidates: Vec<Candidate>,
+    /// How many candidates, from the first, came from the converter; the
+    /// rest are the reading's own forms.
+    converted: usize,
+    index: usize,
+    /// Romaji typed past the okurigana's first kana, carried to the next word.
+    rest: String,
+    /// Keys typed while choosing to finish `rest` (the `a` of `;ki;tta`),
+    /// carried with it.
+    typed: String,
+}
+
+impl Selection {
+    /// Everything typed after the okurigana's first kana.
+    fn after(&self) -> String {
+        format!("{}{}", self.rest, self.typed)
+    }
+
+    /// The word as typed, its romaji left over from the okurigana back on it.
+    /// What was typed while choosing is not part of the word, and is dropped.
+    fn into_reading(self) -> Word {
+        let mut word = self.word;
+        word.pending = self.rest;
+        word
+    }
+}
+
+struct Registration {
+    word: Word,
+    text: Editable,
+}
+
+/// A key bound to be held, from its press until it is let go.
+struct Held {
+    pressed: Chord,
+    at: u64,
+    state: HeldState,
+}
+
+#[derive(Clone, Copy)]
+enum HeldState {
+    /// Neither held nor pressed alone yet; a character typed meanwhile waits.
+    Undecided(Option<Chord>),
+    /// Each character typed acts the binding first.
+    Holding,
+    /// Already acted as pressed alone; the rest of the press is nothing.
+    Alone,
+}
+
+/// The input method: events in, the state to show out.
+pub struct Core<C> {
+    converter: C,
+    config: Config,
+    mode: Mode,
+    password: bool,
+    state: State,
+    /// Outermost first.
+    registrations: Vec<Registration>,
+    /// The modifier keys that can be tapped and are down now.
+    modifiers_held: Vec<Key>,
+    modifier_down: Option<(Key, u64)>,
+    held: Option<Held>,
+    commit: String,
+    send: Option<Chord>,
+    effects: Vec<Effect>,
+}
+
+impl<C: Converter> Core<C> {
+    pub fn new(converter: C, config: Config) -> Self {
+        Self {
+            converter,
+            config,
+            mode: Mode::Abc,
+            password: false,
+            state: State::idle(),
+            registrations: Vec::new(),
+            modifiers_held: Vec::new(),
+            modifier_down: None,
+            held: None,
+            commit: String::new(),
+            send: None,
+            effects: Vec::new(),
+        }
+    }
+
+    pub fn handle(&mut self, event: Event) -> Output {
+        let before = self.mode;
+        self.commit.clear();
+        self.send = None;
+        self.effects.clear();
+        let consumed = match event {
+            Event::Key(key) => self.key(key),
+            Event::FocusIn { password } => {
+                self.focus_in(password);
+                false
+            }
+            Event::FocusOut => {
+                self.settle_waiting();
+                self.release_modifiers();
+                self.commit_visible();
+                false
+            }
+            Event::Flush => {
+                self.settle_waiting();
+                self.commit_visible();
+                false
+            }
+            Event::Select(index) => {
+                self.select(index);
+                false
+            }
+        };
+        if !self.commit.is_empty() {
+            self.effects.push(Effect::Typed(self.commit.clone()));
+        }
+        self.output(consumed, before)
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    fn key(&mut self, event: KeyEvent) -> bool {
+        match event.kind {
+            KeyKind::Release => {
+                self.release_held(event);
+                self.modifiers_held.retain(|k| *k != event.key);
+                if let Some((key, at)) = self.modifier_down
+                    && key == event.key
+                {
+                    self.modifier_down = None;
+                    if event.time_ms.saturating_sub(at) <= self.config.tap_timeout_ms {
+                        self.tap(key);
+                    }
+                }
+                false
+            }
+            // A modifier key going down acts if its press is bound, and alone
+            // it may be a tap; it goes on to the application either way.
+            KeyKind::Press if tappable(event.key) => {
+                // A character still waiting was typed first.
+                self.settle_waiting();
+                // Another modifier key already down, even one whose flag is
+                // the same, makes neither of them a tap.
+                let first = self.modifiers_held.iter().all(|k| *k == event.key);
+                let repeated = self.modifiers_held.contains(&event.key);
+                // The flag of the key's own modifier is also set by its other
+                // side, which only the keys held tell apart.
+                let mods = self
+                    .modifiers_held
+                    .iter()
+                    .filter(|k| **k != event.key)
+                    .fold(others(event.key, event.mods), |mods, k| {
+                        let flag = flag(*k);
+                        Modifiers {
+                            shift: mods.shift || flag.shift,
+                            ctrl: mods.ctrl || flag.ctrl,
+                            cmd: mods.cmd || flag.cmd,
+                            alt: mods.alt || flag.alt,
+                        }
+                    });
+                if !repeated {
+                    self.modifiers_held.push(event.key);
+                }
+                self.modifier_down =
+                    (first && alone(event.key, event.mods)).then_some((event.key, event.time_ms));
+                let pressed = Chord {
+                    key: event.key,
+                    mods,
+                };
+                if !repeated && let Some(action) = self.bound(pressed, Gesture::Press) {
+                    self.act(action, pressed);
+                }
+                false
+            }
+            KeyKind::Press => {
+                self.modifier_down = None;
+                if let Some(consumed) = self.press_while_held(event) {
+                    return consumed;
+                }
+                let pressed = Chord {
+                    key: event.key,
+                    mods: event.mods,
+                };
+                // What the key does is known only once it is let go or
+                // another key is typed.
+                if self.bound(pressed, Gesture::Hold).is_some() {
+                    self.held = Some(Held {
+                        pressed,
+                        at: event.time_ms,
+                        state: HeldState::Undecided(None),
+                    });
+                    return true;
+                }
+                self.press(event.key, event.mods)
+            }
+        }
+    }
+
+    /// A key pressed while a key bound to be held is down; `None` when it is
+    /// left to act as it does by itself.
+    fn press_while_held(&mut self, event: KeyEvent) -> Option<bool> {
+        let held = self.held.as_mut()?;
+        // The held key repeating.
+        if event.key == held.pressed.key {
+            return Some(true);
+        }
+        let typed = Chord {
+            key: event.key,
+            mods: event.mods,
+        };
+        let character = matches!(event.key, Key::Char(_) | Key::Space)
+            && !(event.mods.ctrl || event.mods.cmd || event.mods.alt);
+        let long = event.time_ms.saturating_sub(held.at) > self.config.tap_timeout_ms;
+        let pressed = held.pressed;
+        match (held.state, character) {
+            (HeldState::Undecided(None), true) if !long => {
+                held.state = HeldState::Undecided(Some(typed));
+                Some(true)
+            }
+            // Held long, or a second character while the first waits.
+            (HeldState::Undecided(waiting), true) => {
+                held.state = HeldState::Holding;
+                if let Some(waiting) = waiting {
+                    self.hold(pressed);
+                    self.replay(waiting);
+                }
+                self.hold(pressed);
+                Some(self.press(event.key, event.mods))
+            }
+            (HeldState::Holding, true) => {
+                self.hold(pressed);
+                Some(self.press(event.key, event.mods))
+            }
+            (HeldState::Undecided(waiting), false) => {
+                held.state = HeldState::Alone;
+                self.replay(pressed);
+                if let Some(waiting) = waiting {
+                    self.replay(waiting);
+                }
+                None
+            }
+            (HeldState::Holding | HeldState::Alone, false) | (HeldState::Alone, true) => None,
+        }
+    }
+
+    /// A key let go: the key held, or a character typed while it was.
+    fn release_held(&mut self, event: KeyEvent) {
+        let Some(held) = self.held.as_mut() else {
+            return;
+        };
+        let pressed = held.pressed;
+        if event.key == pressed.key {
+            let at = held.at;
+            let state = held.state;
+            self.held = None;
+            if let HeldState::Undecided(waiting) = state {
+                let quick = event.time_ms.saturating_sub(at) <= self.config.tap_timeout_ms;
+                if waiting.is_some() || quick {
+                    self.replay(pressed);
+                }
+                if let Some(waiting) = waiting {
+                    self.replay(waiting);
+                }
+            }
+            return;
+        }
+        // Let go before the held key: the key was held for it.
+        if let HeldState::Undecided(Some(waiting)) = held.state
+            && waiting.key == event.key
+        {
+            held.state = HeldState::Holding;
+            self.hold(pressed);
+            self.replay(waiting);
+        }
+    }
+
+    /// What a held key is bound to do before a character, where it is now.
+    fn hold(&mut self, pressed: Chord) {
+        match self.bound(pressed, Gesture::Hold) {
+            // Begin in ABC mode types the key it is bound to, and a held key
+            // types nothing of its own: the character typed is all there is.
+            Some(Action::Begin) if self.mode == Mode::Abc => {}
+            Some(action) => {
+                self.act(action, pressed);
+            }
+            None => {}
+        }
+    }
+
+    /// A character waiting on the held key is typed now, after the held key
+    /// pressed alone: a key other than a character came first, or the preedit
+    /// is committed where it is.
+    fn settle_waiting(&mut self) {
+        if let Some(held) = self.held.as_mut()
+            && let HeldState::Undecided(Some(waiting)) = held.state
+        {
+            held.state = HeldState::Alone;
+            let pressed = held.pressed;
+            self.replay(pressed);
+            self.replay(waiting);
+        }
+    }
+
+    /// A key whose press was kept from the application, acting now: the held
+    /// key pressed alone, or a character typed while it was held. One to pass
+    /// on goes as the character it types.
+    fn replay(&mut self, typed: Chord) {
+        let consumed = match self.bound(typed, Gesture::Press) {
+            Some(action) => self.act(action, typed),
+            // Not sent as another key: the press is gone, and a sent key
+            // could not keep its place among the characters typed.
+            None => self.press_plain(typed.key, typed.mods),
+        };
+        if consumed {
+            return;
+        }
+        match typed.key {
+            Key::Space => self.emit(" "),
+            Key::Char(c) => self.emit(c.encode_utf8(&mut [0; 4])),
+            _ => {}
+        }
+    }
+
+    fn tap(&mut self, key: Key) {
+        let tap = Chord {
+            key,
+            mods: Modifiers::default(),
+        };
+        if let Some(action) = self.bound(tap, Gesture::Tap) {
+            self.act(action, tap);
+        }
+    }
+
+    /// A focus change can lose the releases of keys held across it.
+    fn release_modifiers(&mut self) {
+        self.modifiers_held.clear();
+        self.modifier_down = None;
+        self.held = None;
+    }
+
+    /// Where a key is pressed: what is being typed, or with nothing typed,
+    /// the input mode.
+    fn scene(&self) -> Scene {
+        if !self.composing() {
+            return match self.mode {
+                Mode::Kana => Scene::Kana,
+                Mode::Abc => Scene::Abc,
+            };
+        }
+        match &self.state {
+            State::Candidates(_) => Scene::Candidates,
+            State::Idle { .. } if !self.registrations.is_empty() => Scene::Registration,
+            _ => Scene::Reading,
+        }
+    }
+
+    /// What a key, pressed so, is bound to where it is pressed.
+    fn bound(&self, chord: Chord, gesture: Gesture) -> Option<Action> {
+        self.config
+            .bindings
+            .get(self.scene())
+            .iter()
+            .find(|b| b.from == chord && b.gesture == gesture)
+            .map(|b| b.to)
+    }
+
+    /// Whether anything is being typed: a word, unfinished romaji or a
+    /// registration.
+    fn composing(&self) -> bool {
+        !self.registrations.is_empty()
+            || !matches!(&self.state, State::Idle { pending } if pending.is_empty())
+    }
+
+    /// A key does what it is bound to, or else what it does by itself.
+    fn press(&mut self, key: Key, mods: Modifiers) -> bool {
+        let shortcut = mods.ctrl || mods.cmd || mods.alt;
+        let pressed = Chord { key, mods };
+        if let Some(action) = self.bound(pressed, Gesture::Press) {
+            return self.act(action, pressed);
+        }
+        if !self.composing() {
+            if let Some(remap) = self
+                .config
+                .bindings
+                .application
+                .iter()
+                .find(|b| b.from == pressed)
+            {
+                self.send = Some(remap.to);
+                return true;
+            }
+        } else if shortcut {
+            let pass = self.config.pass_while_composing;
+            if !((mods.cmd && pass.cmd) || (mods.ctrl && pass.ctrl) || (mods.alt && pass.alt)) {
+                return true;
+            }
+        }
+        self.press_plain(key, mods)
+    }
+
+    /// A key that is not bound.
+    fn press_plain(&mut self, key: Key, mods: Modifiers) -> bool {
+        if mods.ctrl || mods.cmd || mods.alt {
+            self.commit_visible();
+            return false;
+        }
+        if key == Key::Modifier {
+            return false;
+        }
+        if key == Key::Other {
+            // With only unfinished romaji, it is committed as for any key
+            // passed on; a reading or the text to register stays.
+            if self.registrations.is_empty()
+                && let State::Idle { pending } = &mut self.state
+            {
+                let kana = self.config.romaji.flush(pending);
+                self.emit(&kana);
+            }
+            return false;
+        }
+        match self.mode {
+            Mode::Abc => self.direct(key),
+            Mode::Kana => match mem::replace(&mut self.state, State::idle()) {
+                State::Idle { pending } => self.idle(pending, key),
+                State::Reading(word) => self.reading(word, key),
+                State::Candidates(selection) => self.candidates(selection, key),
+            },
+        }
+    }
+
+    /// An unbound key typed into the text to register.
+    fn direct(&mut self, key: Key) -> bool {
+        if self.registrations.is_empty() {
+            return false;
+        }
+        match key {
+            Key::Char(c) => self.emit(c.encode_utf8(&mut [0; 4])),
+            Key::Space => self.emit(" "),
+            // The preedit keeps a key the IME knows, so it does not reach the
+            // application under it.
+            key if named(key) => {}
+            _ => return false,
+        }
+        true
+    }
+
+    fn idle(&mut self, mut pending: String, key: Key) -> bool {
+        match key {
+            Key::Char(c) if self.config.romaji.is_input_char(c) => {
+                let kana = self.config.romaji.feed(&mut pending, c);
+                self.emit(&kana);
+                self.state = State::Idle { pending };
+            }
+            Key::Char(c) => {
+                let kana = self.config.romaji.flush(&mut pending);
+                self.emit(&kana);
+                self.emit(c.encode_utf8(&mut [0; 4]));
+            }
+            // Nothing to move between in the text to register, and unfinished
+            // romaji stays.
+            key if !self.registrations.is_empty() && named(key) && key != Key::Space => {
+                self.state = State::Idle { pending };
+            }
+            _ => {
+                let kana = self.config.romaji.flush(&mut pending);
+                self.emit(&kana);
+                return self.direct(key) || self.leave_on_esc(key);
+            }
+        }
+        true
+    }
+
+    /// Esc with nothing to cancel passes through and returns to ABC mode.
+    fn leave_on_esc(&mut self, key: Key) -> bool {
+        if key == Key::Esc {
+            self.mode = Mode::Abc;
+        }
+        false
+    }
+
+    /// An unbound key in a reading: a letter is typed into it, a key the IME
+    /// knows does nothing, and any other passes on.
+    fn reading(&mut self, mut word: Word, key: Key) -> bool {
+        match key {
+            Key::Char(c) => {
+                word.feed(c, &self.config.romaji);
+                if word.okurigana().is_some() {
+                    self.convert(word);
+                } else {
+                    self.state = State::Reading(word);
+                }
+            }
+            key => {
+                self.state = State::Reading(word);
+                return named(key);
+            }
+        }
+        true
+    }
+
+    /// The dictionary's candidates, then the reading as katakana, full-width
+    /// and half-width, and as the letters typed for it, full-width and as
+    /// typed.
+    fn convert(&mut self, mut word: Word) {
+        let rest = mem::take(&mut word.pending);
+        let reading = word.kana();
+        let candidates = self.converter.convert(&reading, word.okurigana());
+        let mut selection = Selection {
+            rest,
+            typed: String::new(),
+            word,
+            converted: candidates.len(),
+            candidates,
+            index: 0,
+        };
+        self.offer_forms(&mut selection);
+        self.state = State::Candidates(selection);
+    }
+
+    /// Adds each form of the reading that is not a candidate yet.
+    fn offer_forms(&self, selection: &mut Selection) {
+        for form in &Form::ALL[1..] {
+            let Some(surface) = word_form(&selection.word, *form, &self.config.romaji) else {
+                continue;
+            };
+            if !selection.candidates.iter().any(|c| c.surface == surface) {
+                selection.candidates.push(Candidate { surface });
+            }
+        }
+    }
+
+    /// Selects the reading in `form`, adding it after the other candidates
+    /// when it is not one of them; returns whether the reading has the form.
+    fn choose_form(&mut self, form: Form) -> bool {
+        let State::Candidates(selection) = &self.state else {
+            return false;
+        };
+        match word_form(&selection.word, form, &self.config.romaji) {
+            Some(surface) => {
+                self.choose(surface);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Selects `surface`, adding it after the other candidates when it is not
+    /// one of them.
+    fn choose(&mut self, surface: String) {
+        let State::Candidates(selection) = &mut self.state else {
+            return;
+        };
+        selection.index = match selection
+            .candidates
+            .iter()
+            .position(|c| c.surface == surface)
+        {
+            Some(index) => index,
+            None => {
+                selection.candidates.push(Candidate { surface });
+                selection.candidates.len() - 1
+            }
+        };
+    }
+
+    /// An unbound key while choosing: a character finishing the romaji left
+    /// after the okurigana is typed after the candidate, and any other
+    /// commits the selected candidate and is typed after it.
+    fn candidates(&mut self, mut selection: Selection, key: Key) -> bool {
+        match key {
+            Key::Char(c) if self.goes_on(&selection, c) => {
+                selection.typed.push(c);
+                self.state = State::Candidates(selection);
+                true
+            }
+            Key::Char(_) => {
+                let index = selection.index;
+                self.commit_selection(selection, index);
+                let pending = match mem::replace(&mut self.state, State::idle()) {
+                    State::Idle { pending } => pending,
+                    _ => String::new(),
+                };
+                self.idle(pending, key)
+            }
+            key => {
+                self.state = State::Candidates(selection);
+                named(key)
+            }
+        }
+    }
+
+    /// Whether `c` goes on with the romaji still waiting after the okurigana:
+    /// makes kana of it, or keeps it waiting for more. A key that drops it
+    /// (the `k` of `;mo;ttk`, the `.` of `;mo;tt.`) starts something else:
+    /// it types the same as it would with nothing waiting.
+    fn goes_on(&self, selection: &Selection, c: char) -> bool {
+        if !self.config.romaji.is_input_char(c) {
+            return false;
+        }
+        let (_, mut waiting) = self.after_kana(selection);
+        if waiting.is_empty() {
+            return false;
+        }
+        let mut alone = String::new();
+        let kana_alone = self.config.romaji.feed(&mut alone, c);
+        let kana = self.config.romaji.feed(&mut waiting, c);
+        (kana, waiting) != (kana_alone, alone)
+    }
+
+    /// What is typed after the okurigana: the kana it made so far, and the
+    /// romaji still waiting.
+    fn after_kana(&self, selection: &Selection) -> (String, String) {
+        let mut pending = String::new();
+        let kana = selection
+            .after()
+            .chars()
+            .map(|c| self.config.romaji.feed(&mut pending, c))
+            .collect();
+        (kana, pending)
+    }
+
+    /// What a bound key does, by where it is pressed.
+    fn act(&mut self, action: Action, pressed: Chord) -> bool {
+        match action {
+            Action::Abc => {
+                self.leave_kana();
+                return true;
+            }
+            Action::Kana => {
+                self.enter_kana();
+                return true;
+            }
+            // A reading is typed only in kana mode; in the text to register
+            // typed in ABC mode, the key types what it types.
+            Action::Begin if self.mode == Mode::Abc => {
+                return self.press_plain(pressed.key, pressed.mods);
+            }
+            _ => {}
+        }
+        if let Action::CommitForm(form) = action {
+            let used = self.act(Action::Form(form), pressed);
+            // Only the form asked for commits: a reading with no such form
+            // (no hiragana for `pdf`) keeps what was selected.
+            let chosen = match &self.state {
+                State::Candidates(selection) => {
+                    word_form(&selection.word, form, &self.config.romaji).is_some_and(|surface| {
+                        selection
+                            .candidates
+                            .get(selection.index)
+                            .is_some_and(|c| c.surface == surface)
+                    })
+                }
+                _ => false,
+            };
+            if chosen
+                && let State::Candidates(selection) = mem::replace(&mut self.state, State::idle())
+            {
+                let index = selection.index;
+                self.commit_selection(selection, index);
+            }
+            return used;
+        }
+        match mem::replace(&mut self.state, State::idle()) {
+            State::Idle { pending } => self.act_idle(pending, action, pressed.key),
+            State::Reading(word) => self.act_reading(word, action, pressed),
+            State::Candidates(selection) => self.act_candidates(selection, action),
+        }
+        .unwrap_or(true)
+    }
+
+    /// `None` when the key was used; `Some(false)` passes it on.
+    fn act_idle(&mut self, mut pending: String, action: Action, key: Key) -> Option<bool> {
+        match action {
+            Action::Begin => {
+                let kana = self.config.romaji.flush(&mut pending);
+                self.emit(&kana);
+                self.state = State::Reading(Word::default());
+                return None;
+            }
+            Action::Backspace if !pending.is_empty() => {
+                pending.pop();
+                self.state = State::Idle { pending };
+                return None;
+            }
+            // Unfinished romaji is dropped.
+            Action::Cancel if !pending.is_empty() => return None,
+            _ => {}
+        }
+        if self.registrations.is_empty() {
+            let kana = self.config.romaji.flush(&mut pending);
+            self.emit(&kana);
+            return Some(self.leave_on_esc(key));
+        }
+        let kana = self.config.romaji.flush(&mut pending);
+        self.emit(&kana);
+        match action {
+            Action::Commit => self.finish_registration(),
+            Action::Cancel => self.cancel_registration(),
+            Action::Backspace => self.erase_registration_char(),
+            Action::Delete => {
+                if let Some(registration) = self.registrations.last_mut() {
+                    registration.text.delete();
+                }
+            }
+            action => {
+                if let (Some(registration), Some(to)) =
+                    (self.registrations.last_mut(), cursor_move(action))
+                {
+                    registration.text.move_cursor(to);
+                }
+            }
+        }
+        None
+    }
+
+    fn act_reading(&mut self, mut word: Word, action: Action, pressed: Chord) -> Option<bool> {
+        match action {
+            // An empty reading is left, and a key that types a character
+            // types it; any other key does nothing more.
+            Action::Begin if word.is_empty() => {
+                let mods = pressed.mods;
+                if matches!(pressed.key, Key::Char(_)) && !(mods.ctrl || mods.cmd || mods.alt) {
+                    return Some(self.press_plain(pressed.key, mods));
+                }
+            }
+            Action::Begin => {
+                word.mark_okurigana(&self.config.romaji);
+                self.state = State::Reading(word);
+            }
+            Action::Next | Action::Previous => {
+                word.flush(&self.config.romaji);
+                if word.stem.is_empty() {
+                    self.state = State::Reading(word);
+                } else {
+                    self.convert(word);
+                    if action == Action::Previous
+                        && let State::Candidates(selection) = &mut self.state
+                    {
+                        selection.index = selection.candidates.len() - 1;
+                    }
+                }
+            }
+            Action::Commit => self.commit_word(word),
+            Action::Form(form) => {
+                word.flush(&self.config.romaji);
+                // Letters that made no kana (`pdf`) still have a form in letters.
+                let letters_only = matches!(form, Form::FullAlphanumeric | Form::Alphanumeric)
+                    && !word.letters(&self.config.romaji).is_empty();
+                if word.stem.is_empty() && !letters_only {
+                    self.state = State::Reading(word);
+                } else {
+                    self.convert(word);
+                    self.choose_form(form);
+                }
+            }
+            Action::Cancel => {}
+            Action::Backspace if !word.is_empty() => {
+                word.backspace();
+                self.state = State::Reading(word);
+            }
+            // Erasing past the start leaves the reading.
+            Action::Backspace => {}
+            // Once the okurigana is marked, the cursor stays at the end and
+            // nothing is resolved, so the pending romaji still starts it.
+            Action::Delete if word.okurigana.is_none() => {
+                word.flush(&self.config.romaji);
+                word.delete(&self.config.romaji);
+                self.state = State::Reading(word);
+            }
+            Action::Register
+                if !word.is_empty() && self.registrations.len() < MAX_REGISTRATION_DEPTH =>
+            {
+                word.flush(&self.config.romaji);
+                self.start_registration(word);
+            }
+            action => {
+                if let Some(to) = cursor_move(action)
+                    && word.okurigana.is_none()
+                {
+                    word.flush(&self.config.romaji);
+                    word.move_cursor(to, &self.config.romaji);
+                }
+                self.state = State::Reading(word);
+            }
+        }
+        None
+    }
+
+    fn act_candidates(&mut self, mut selection: Selection, action: Action) -> Option<bool> {
+        let len = selection.candidates.len();
+        let can_register = self.registrations.len() < MAX_REGISTRATION_DEPTH;
+        match action {
+            Action::Next if selection.index + 1 < len => {
+                selection.index += 1;
+                self.state = State::Candidates(selection);
+            }
+            Action::Next | Action::Register if can_register => {
+                self.start_registration(selection.into_reading());
+            }
+            // At the deepest registration, past the last is the first again.
+            Action::Next => {
+                selection.index = 0;
+                self.state = State::Candidates(selection);
+            }
+            Action::Previous => {
+                selection.index = selection.index.checked_sub(1).unwrap_or(len - 1);
+                self.state = State::Candidates(selection);
+            }
+            Action::Commit => {
+                let index = selection.index;
+                self.commit_selection(selection, index);
+            }
+            Action::Form(form) => {
+                self.state = State::Candidates(selection);
+                self.choose_form(form);
+            }
+            Action::Cancel => self.state = State::Reading(selection.into_reading()),
+            Action::Backspace if selection.typed.pop().is_some() => {
+                self.state = State::Candidates(selection);
+            }
+            Action::Backspace => {
+                let mut word = selection.into_reading();
+                word.backspace();
+                self.state = State::Reading(word);
+            }
+            Action::Forget => {
+                self.delete_selected(&mut selection);
+                self.state = State::Candidates(selection);
+            }
+            Action::Pick(place) => {
+                self.state = State::Candidates(selection);
+                self.select(usize::from(place));
+            }
+            // Romaji left over from the okurigana and still unfinished starts
+            // the next reading.
+            Action::Begin => {
+                let index = selection.index;
+                self.commit_selection(selection, index);
+                let pending = match mem::replace(&mut self.state, State::idle()) {
+                    State::Idle { pending } => pending,
+                    _ => String::new(),
+                };
+                let mut word = Word::default();
+                for c in pending.chars() {
+                    word.feed(c, &self.config.romaji);
+                }
+                self.state = State::Reading(word);
+            }
+            _ => self.state = State::Candidates(selection),
+        }
+        None
+    }
+
+    fn delete_selected(&mut self, selection: &mut Selection) {
+        // The reading's own forms come from no dictionary.
+        if selection.index >= selection.converted {
+            return;
+        }
+        let candidate = selection.candidates.remove(selection.index);
+        selection.converted -= 1;
+        self.effects.push(Effect::Forgotten {
+            reading: selection.word.kana(),
+            okurigana: selection.word.okurigana().map(str::to_owned),
+            surface: candidate.surface,
+        });
+        // A form the dictionary also gave was not added; it is now.
+        self.offer_forms(selection);
+        selection.index = selection
+            .index
+            .min(selection.candidates.len().saturating_sub(1));
+    }
+
+    /// Commits a candidate. Romaji typed past the okurigana's first kana
+    /// stays to begin the next word, however the candidate is committed.
+    fn commit_selection(&mut self, selection: Selection, index: usize) {
+        if let Some(candidate) = selection.candidates.get(index) {
+            self.effects.push(Effect::Committed {
+                reading: selection.word.kana(),
+                okurigana: selection.word.okurigana().map(str::to_owned),
+                surface: candidate.surface.clone(),
+            });
+            self.emit(&candidate.surface);
+        }
+        self.retype(&selection.after());
+    }
+
+    /// Types keys a word gave back, after it, as if they were typed now: in
+    /// ABC mode as they are.
+    fn retype(&mut self, keys: &str) {
+        if self.mode == Mode::Abc {
+            self.emit(keys);
+            self.state = State::idle();
+            return;
+        }
+        let mut pending = String::new();
+        let kana: String = keys
+            .chars()
+            .map(|c| self.config.romaji.feed(&mut pending, c))
+            .collect();
+        self.emit(&kana);
+        self.state = State::Idle { pending };
+    }
+
+    fn select(&mut self, index: usize) {
+        match mem::replace(&mut self.state, State::idle()) {
+            State::Candidates(selection)
+                if index < PAGE_LEN
+                    && page_start(selection.index) + index < selection.candidates.len() =>
+            {
+                let index = page_start(selection.index) + index;
+                self.commit_selection(selection, index);
+            }
+            state => self.state = state,
+        }
+    }
+
+    fn enter_kana(&mut self) {
+        if !self.password {
+            self.mode = Mode::Kana;
+        }
+    }
+
+    fn leave_kana(&mut self) {
+        self.commit_inner();
+        self.mode = Mode::Abc;
+    }
+
+    fn start_registration(&mut self, word: Word) {
+        self.registrations.push(Registration {
+            word,
+            text: Editable::default(),
+        });
+    }
+
+    fn finish_registration(&mut self) {
+        let Some(registration) = self.registrations.pop() else {
+            return;
+        };
+        if registration.text.is_empty() {
+            self.back_to_reading(registration.word);
+            return;
+        }
+        let mut word = registration.word;
+        let rest = mem::take(&mut word.pending);
+        let mut surface = registration.text.as_str().to_owned();
+        if let Some(okurigana) = word.okurigana()
+            && !surface.ends_with(okurigana)
+        {
+            surface.push_str(okurigana);
+        }
+        let text = self
+            .converter
+            .registered_text(&word.kana(), word.okurigana(), &surface);
+        self.effects.push(Effect::Registered {
+            reading: word.stem.as_str().to_owned(),
+            okurigana: word.okurigana().map(str::to_owned),
+            surface,
+        });
+        self.effects.push(Effect::Committed {
+            reading: word.kana(),
+            okurigana: word.okurigana().map(str::to_owned),
+            surface: text.clone(),
+        });
+        self.emit(&text);
+        // Romaji typed after the word, as after an okurigana (持っt), goes on.
+        self.retype(&rest);
+    }
+
+    fn cancel_registration(&mut self) {
+        if let Some(registration) = self.registrations.pop() {
+            self.back_to_reading(registration.word);
+        }
+    }
+
+    /// Out of a registration, the reading it was for is typed again, in kana.
+    fn back_to_reading(&mut self, word: Word) {
+        self.mode = Mode::Kana;
+        self.state = State::Reading(word);
+    }
+
+    fn erase_registration_char(&mut self) {
+        if let Some(registration) = self.registrations.last_mut() {
+            registration.text.backspace();
+        }
+    }
+
+    fn focus_in(&mut self, password: bool) {
+        self.mode = Mode::Abc;
+        self.password = password;
+        self.state = State::idle();
+        self.registrations.clear();
+        self.release_modifiers();
+        self.effects.push(Effect::FocusMoved);
+    }
+
+    /// Commits what is visible; a registration in progress gives way to its first reading.
+    fn commit_visible(&mut self) {
+        let registrations = mem::take(&mut self.registrations);
+        match registrations.into_iter().next() {
+            Some(first) => {
+                self.state = State::idle();
+                self.emit(&first.word.kana());
+            }
+            None => self.commit_inner(),
+        }
+    }
+
+    fn commit_inner(&mut self) {
+        match mem::replace(&mut self.state, State::idle()) {
+            State::Idle { mut pending } => {
+                let kana = self.config.romaji.flush(&mut pending);
+                self.emit(&kana)
+            }
+            // What is visible goes in full: romaji given back by the word is
+            // resolved like any unfinished romaji.
+            State::Reading(word) => {
+                self.commit_word(word);
+                self.commit_inner();
+            }
+            State::Candidates(selection) => {
+                let index = selection.index;
+                self.commit_selection(selection, index);
+                self.commit_inner();
+            }
+        }
+    }
+
+    /// Commits a reading as kana. Romaji the okurigana gave back stays to
+    /// begin the next word.
+    fn commit_word(&mut self, mut word: Word) {
+        word.flush(&self.config.romaji);
+        let rest = mem::take(&mut word.pending);
+        self.emit(&word.kana());
+        self.retype(&rest);
+    }
+
+    /// Committed text goes into the innermost registration, if any.
+    fn emit(&mut self, text: &str) {
+        match self.registrations.last_mut() {
+            Some(registration) => registration.text.insert(text),
+            None => self.commit.push_str(text),
+        }
+    }
+
+    fn output(&self, consumed: bool, before: Mode) -> Output {
+        let marks = &self.config.marks;
+        let mut preedit = String::new();
+        // Romaji typed straight into the text to register waits at its cursor.
+        let idle_pending = match &self.state {
+            State::Idle { pending } => pending.as_str(),
+            _ => "",
+        };
+        let last = self.registrations.len().saturating_sub(1);
+        for (i, registration) in self.registrations.iter().enumerate() {
+            preedit.push_str(&marks.candidate);
+            self.push_word(&mut preedit, &registration.word);
+            preedit.push_str(&marks.registration);
+            let pending = if i == last { idle_pending } else { "" };
+            push_with_cursor(
+                &mut preedit,
+                registration.text.split(),
+                pending,
+                &marks.cursor,
+            );
+        }
+        let mut candidates = None;
+        match &self.state {
+            State::Idle { .. } if self.registrations.is_empty() => preedit.push_str(idle_pending),
+            State::Idle { .. } => {}
+            State::Reading(word) => {
+                preedit.push_str(&marks.reading);
+                match &word.okurigana {
+                    Some(okurigana) => {
+                        preedit.push_str(word.stem.as_str());
+                        preedit.push_str(&marks.okurigana);
+                        preedit.push_str(okurigana);
+                        preedit.push_str(&word.pending);
+                    }
+                    None => push_with_cursor(
+                        &mut preedit,
+                        word.stem.split(),
+                        &word.pending,
+                        &marks.cursor,
+                    ),
+                }
+            }
+            State::Candidates(selection) => {
+                preedit.push_str(&marks.candidate);
+                if let Some(candidate) = selection.candidates.get(selection.index) {
+                    preedit.push_str(&candidate.surface);
+                }
+                let (kana, pending) = self.after_kana(selection);
+                preedit.push_str(&kana);
+                preedit.push_str(&pending);
+                if selection.candidates.len() > 1 {
+                    let start = page_start(selection.index);
+                    let end = (start + PAGE_LEN).min(selection.candidates.len());
+                    candidates = Some(CandidateView {
+                        items: selection.candidates[start..end].to_vec(),
+                        selected: selection.index - start,
+                    });
+                }
+            }
+        }
+        Output {
+            consumed,
+            commit: (!self.commit.is_empty()).then(|| self.commit.clone()),
+            cursor: preedit.chars().count(),
+            preedit,
+            candidates,
+            mode: self.mode,
+            indicator: (self.config.mode_indicator && self.mode != before).then_some(self.mode),
+            send: self.send,
+            effects: self.effects.clone(),
+        }
+    }
+
+    fn push_word(&self, preedit: &mut String, word: &Word) {
+        preedit.push_str(word.stem.as_str());
+        if let Some(okurigana) = &word.okurigana {
+            preedit.push_str(&self.config.marks.okurigana);
+            preedit.push_str(okurigana);
+        }
+    }
+}
+
+/// Text edited at a cursor, with the cursor mark where it is unless it is at
+/// the end. Applications draw their own cursor inside the preedit unreliably,
+/// so theirs always stays at the end.
+fn push_with_cursor(
+    preedit: &mut String,
+    (before, after): (&str, &str),
+    pending: &str,
+    mark: &str,
+) {
+    preedit.push_str(before);
+    preedit.push_str(pending);
+    if !after.is_empty() {
+        preedit.push_str(mark);
+        preedit.push_str(after);
+    }
+}
+
+/// A modifier key whose tap, pressed alone and let go, can be bound.
+fn tappable(key: Key) -> bool {
+    matches!(
+        key,
+        Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::CtrlLeft
+            | Key::CtrlRight
+            | Key::CmdLeft
+            | Key::CmdRight
+            | Key::AltLeft
+            | Key::AltRight
+    )
+}
+
+/// Whether no modifier but the key's own is held with it.
+fn alone(key: Key, mods: Modifiers) -> bool {
+    others(key, mods) == Modifiers::default()
+}
+
+/// The modifiers held with a modifier key, but its own.
+fn others(key: Key, mods: Modifiers) -> Modifiers {
+    let own = flag(key);
+    Modifiers {
+        shift: mods.shift && !own.shift,
+        ctrl: mods.ctrl && !own.ctrl,
+        cmd: mods.cmd && !own.cmd,
+        alt: mods.alt && !own.alt,
+    }
+}
+
+/// The modifier a modifier key sets; none for another key.
+fn flag(key: Key) -> Modifiers {
+    Modifiers {
+        shift: matches!(key, Key::ShiftLeft | Key::ShiftRight),
+        ctrl: matches!(key, Key::CtrlLeft | Key::CtrlRight),
+        cmd: matches!(key, Key::CmdLeft | Key::CmdRight),
+        alt: matches!(key, Key::AltLeft | Key::AltRight),
+    }
+}
+
+fn cursor_move(action: Action) -> Option<CursorMove> {
+    match action {
+        Action::Left => Some(CursorMove::Left),
+        Action::Right => Some(CursorMove::Right),
+        Action::Home => Some(CursorMove::Home),
+        Action::End => Some(CursorMove::End),
+        _ => None,
+    }
+}
+
+/// A key the IME knows by name. While something is being typed, it never
+/// reaches the application unbound, so the application cannot act on the
+/// text under the preedit.
+fn named(key: Key) -> bool {
+    matches!(
+        key,
+        Key::Space
+            | Key::Enter
+            | Key::Esc
+            | Key::Backspace
+            | Key::Delete
+            | Key::Left
+            | Key::Right
+            | Key::Up
+            | Key::Down
+            | Key::Home
+            | Key::End
+            | Key::F(6..=10)
+            | Key::Eisu
+            | Key::Kana
+            | Key::Henkan
+            | Key::Muhenkan
+    )
+}
+
+/// The reading in `form`, or `None` when it has no such form (no hiragana
+/// for letters that made no kana).
+fn word_form(word: &Word, form: Form, table: &romaji::RomajiTable) -> Option<String> {
+    let kana = word.kana();
+    let surface = match form {
+        Form::Hiragana => kana,
+        Form::Katakana => romaji::katakana(&kana),
+        Form::HalfKatakana => romaji::half_katakana(&kana),
+        Form::FullAlphanumeric => romaji::full_width(&word.letters(table)),
+        Form::Alphanumeric => word.letters(table),
+    };
+    Some(surface).filter(|s| !s.is_empty())
+}
+
+/// Where the page holding the candidate at `index` starts.
+fn page_start(index: usize) -> usize {
+    index / PAGE_LEN * PAGE_LEN
+}
