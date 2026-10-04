@@ -14,6 +14,7 @@ path = "src/main.rs"
 kanaemi-core.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3"
 kanaemi-config.workspace = true
 kanaemi-runtime.workspace = true
 objc2 = "0.6"

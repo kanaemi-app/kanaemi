@@ -2289,6 +2289,7 @@ dependencies = [
 name = "kanaemi-macos"
 version = "0.1.0"
 dependencies = [
+ "dispatch2",
  "kanaemi-config",
  "kanaemi-core",
  "kanaemi-runtime",
