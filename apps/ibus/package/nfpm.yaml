@@ -1,0 +1,47 @@
+# The Debian and RPM packages; apps/ibus/package.sh fills in the variables.
+name: kanaemi
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+maintainer: Alisue <lambdalisue@gmail.com>
+description: Kanaemi Japanese input method, an IBus engine
+homepage: https://github.com/kanaemi-app/kanaemi
+license: MIT
+
+# The engine talks to ibus-daemon without linking to it. The libraries the
+# binaries link to are worked out by package.sh where they are built.
+overrides:
+  deb:
+    depends:
+      - ibus
+${DEB_DEPENDS}
+  rpm:
+    depends:
+      - ibus
+${RPM_DEPENDS}
+
+contents:
+  - src: ${RELEASE}/kanaemi-ibus
+    dst: /usr/lib/kanaemi/kanaemi-ibus
+    file_info:
+      mode: 0755
+  # The engine opens the settings app from beside itself.
+  - src: ${RELEASE}/kanaemi-settings
+    dst: /usr/lib/kanaemi/kanaemi-settings
+    file_info:
+      mode: 0755
+  - src: ${ROOT}/apps/macos/assets/logo/kanaemi-icon.svg
+    dst: /usr/lib/kanaemi/kanaemi.svg
+  - src: ${COMPONENT}
+    dst: /usr/share/ibus/component/kanaemi.xml
+  - src: ${ROOT}/LICENSE
+    dst: /usr/share/doc/kanaemi/copyright
+    packager: deb
+  - src: ${ROOT}/LICENSE
+    dst: /usr/share/licenses/kanaemi/LICENSE
+    packager: rpm
+
+scripts:
+  postinstall: ${ROOT}/apps/ibus/package/refresh-cache.sh
+  postremove: ${ROOT}/apps/ibus/package/refresh-cache.sh
