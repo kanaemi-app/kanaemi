@@ -6,7 +6,8 @@ pub const CONTEXT_CHARS: usize = 16;
 pub const HISTORY_LEN: usize = 300;
 
 const MAGIC: &[u8; 8] = b"KANAEMIM";
-const FORMAT_VERSION: u32 = 3;
+/// The format version of the model files this engine reads.
+pub const MODEL_FORMAT_VERSION: u32 = 3;
 const HEADER_LEN: usize = 32;
 const BITS: std::ops::RangeInclusive<u8> = 10..=28;
 /// Joins a feature's name and values; no reading or surface holds it.
@@ -222,7 +223,7 @@ impl RankingModel {
             return Err(ModelError::Magic);
         }
         let version = u32::from_le_bytes(b[8..12].try_into().expect("four bytes"));
-        if version != FORMAT_VERSION {
+        if version != MODEL_FORMAT_VERSION {
             return Err(ModelError::Version(version));
         }
         let bits = b[12];
@@ -294,7 +295,7 @@ impl RankingModel {
         };
         let mut out = Vec::with_capacity(HEADER_LEN + body.len());
         out.extend_from_slice(MAGIC);
-        out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        out.extend_from_slice(&MODEL_FORMAT_VERSION.to_le_bytes());
         out.push(bits);
         out.push(kind);
         out.extend_from_slice(&[0, 0]);
