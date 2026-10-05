@@ -1,6 +1,6 @@
 # 辞書を並び順のある一覧として扱う
 
-状態：採用
+状態：採用（辞書の入手は `20261006-install-official-dictionaries-from-the-settings-app.md` で置き換え）
 
 ## 背景
 
