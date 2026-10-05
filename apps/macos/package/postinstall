@@ -1,0 +1,6 @@
+#!/bin/sh
+# A running instance keeps the old binary; macOS starts the new one when
+# needed.
+pkill -x kanaemi || true
+pkill -x kanaemi-settings || true
+exit 0
