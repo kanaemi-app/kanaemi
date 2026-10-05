@@ -14,6 +14,10 @@ fn git(args: &[&str]) -> Option<String> {
 
 #[test]
 fn the_version_is_the_latest_release_tag_described_without_its_v() {
+    if let Some(given) = option_env!("KANAEMI_BUILD_VERSION").filter(|v| !v.is_empty()) {
+        assert_eq!(VERSION, given);
+        return;
+    }
     // Outside this repository's own checkout, any enclosing repository's tags
     // say nothing about this crate, so only the version Cargo records counts.
     let in_own_checkout = git(&["rev-parse", "--show-prefix"]).as_deref() == Some("crates/core/");

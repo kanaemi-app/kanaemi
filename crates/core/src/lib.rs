@@ -23,5 +23,6 @@ pub use romaji::*;
 
 /// The version of this build: the latest `v` tag as `git describe` gives it,
 /// without the `v` (`0.1.0`, or `0.1.0-3-gabc1234` three commits past it).
-/// Without such a tag or a Git checkout, the version Cargo records.
+/// Without such a tag or a Git checkout, the version Cargo records. A build
+/// given `KANAEMI_BUILD_VERSION` takes that instead.
 pub const VERSION: &str = env!("KANAEMI_VERSION");
