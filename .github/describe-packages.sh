@@ -25,6 +25,12 @@ described=0
 for path in target/package/*.pkg target/package/*.msi target/package/*.deb target/package/*.rpm; do
   [ -e "$path" ] || continue
   file="$(basename "$path")"
+  # A release renames an uploaded file with other characters, and the catalog
+  # would then name a file it does not hold.
+  if [[ ! "$file" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "$file: a release would rename it; name it with letters, digits, '.', '_' and '-' only" >&2
+    exit 1
+  fi
   printf '{"file":"%s","os":"%s","arch":"%s","format":"%s","size":%s,"sha256":"%s"}\n' \
     "$file" "$os" "$arch" "${file##*.}" "$(wc -c <"$path" | tr -d ' ')" "$(sha256 "$path")" \
     >"$path.json"

@@ -28,8 +28,8 @@ version="$("$release/kanaemi-settings" --version)"
 # (0.1.0~rc.1 before 0.1.0); Debian would take a hyphen for a revision.
 package_version="$(perl -pe 's/-(\d+)-g/+$1.g/; tr/-/~/' <<<"$version")"
 case "$(uname -m)" in
-  x86_64) arch=amd64 ;;
-  aarch64) arch=arm64 ;;
+  x86_64) arch=amd64 rpm_arch=x86_64 ;;
+  aarch64) arch=arm64 rpm_arch=aarch64 ;;
   *) echo "no package architecture for $(uname -m)" >&2; exit 1 ;;
 esac
 
@@ -55,6 +55,8 @@ config="$out/nfpm.yaml"
 ROOT="$root" RELEASE="$release" COMPONENT="$component" VERSION="$package_version" ARCH="$arch" \
   DEB_DEPENDS="$deb_depends" RPM_DEPENDS="$rpm_depends" \
   perl -pe 's/\$\{(\w+)\}/$ENV{$1} \/\/ die "$1 is not set\n"/ge' "$root/apps/ibus/package/nfpm.yaml" >"$config"
-for packager in deb rpm; do
-  nfpm package --config "$config" --packager "$packager" --target "$out"
-done
+# The files are named after the version as it is, not the package version:
+# a release renames an uploaded file with a tilde, and the catalog would then
+# name a file the release does not hold.
+nfpm package --config "$config" --packager deb --target "$out/kanaemi_${version}_${arch}.deb"
+nfpm package --config "$config" --packager rpm --target "$out/kanaemi-${version}.${rpm_arch}.rpm"
