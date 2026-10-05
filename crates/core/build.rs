@@ -3,6 +3,15 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    // A build without the repository, such as Nix's, says what it is.
+    println!("cargo:rerun-if-env-changed=KANAEMI_BUILD_VERSION");
+    if let Some(version) = std::env::var("KANAEMI_BUILD_VERSION")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
+        println!("cargo:rustc-env=KANAEMI_VERSION={version}");
+        return;
+    }
     // Built from a published or vendored copy, the crate can still sit inside
     // some other repository (a home directory under Git, a project that
     // vendors its dependencies), whose tags say nothing about this crate.
