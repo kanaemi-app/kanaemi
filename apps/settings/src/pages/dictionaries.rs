@@ -67,6 +67,7 @@ pub fn Dictionaries() -> Element {
             });
         }
     }
+    let chosen_for_official = chosen.clone();
     let on_convert = {
         let folder = folder.clone();
         let listed = written.is_some().then(|| chosen.clone());
@@ -97,9 +98,175 @@ pub fn Dictionaries() -> Element {
                 on_convert,
             }
         }
+        OfficialDictionaries { chosen: chosen_for_official }
         HiddenWords { custom: custom_path }
         PickRecord { path: store_dir.join(SELECTIONS_FILE) }
     }
+}
+
+/// The official dictionaries of the latest release, looked up only when the
+/// user asks, each with a way to install it or bring it up to date.
+#[component]
+fn OfficialDictionaries(chosen: Vec<String>) -> Element {
+    let ctx = use_context::<Ctx>();
+    let dir = ctx.store.read().dir.clone();
+    let mut catalog = use_signal(|| None::<Catalog>);
+    // What is being fetched: the catalog, or a dictionary by its name.
+    let mut busy = use_signal(|| None::<Fetching>);
+    let mut error = use_signal(|| None::<String>);
+    let check = move |_| {
+        spawn(async move {
+            busy.set(Some(Fetching::Catalog));
+            match in_background(official::fetch_catalog).await {
+                Ok(fetched) => {
+                    catalog.set(Some(fetched));
+                    error.set(None);
+                }
+                Err(e) => error.set(Some(format!("目録を取れません：{e}"))),
+            }
+            busy.set(None);
+        });
+    };
+    let install = move |entry: Entry| {
+        let dir = dir.clone();
+        let chosen = chosen.clone();
+        spawn(async move {
+            busy.set(Some(Fetching::Dictionary(entry.name.clone())));
+            let result = in_background({
+                let entry = entry.clone();
+                move || entry.install(&dir, &official::fetch(&entry.archive_url())?)
+            })
+            .await;
+            match result {
+                Ok(()) => {
+                    error.set(None);
+                    // The list may have changed during the download; only an
+                    // unwritten one falls back to what was read before it.
+                    let list =
+                        official::placed(written_dictionaries(ctx).unwrap_or(chosen), &entry);
+                    ctx.change(&["dictionaries"], Some(list.into_iter().collect()));
+                }
+                Err(e) => error.set(Some(format!("{} を入れられません：{e}", entry.label))),
+            }
+            busy.set(None);
+        });
+    };
+    let dir = ctx.store.read().dir.clone();
+    rsx! {
+        Group {
+            title: "公式の辞書",
+            note: "かなえみの公式の辞書（kanaemi-dict）を落として入れます。基本辞書は、組になった並べ替えのモデル（ranking.model）と一緒に入れます。追加辞書は、基本辞書に足して使う分野ごとの辞書です。通信するのは、ボタンを押したときだけです。",
+            footer: rsx! {
+                button { disabled: busy().is_some(), onclick: check,
+                    if busy() == Some(Fetching::Catalog) {
+                        "確かめています…"
+                    } else {
+                        "最新の版を確かめる"
+                    }
+                }
+            },
+            match catalog() {
+                None => rsx! {
+                    div { class: "row",
+                        div { class: "row-main",
+                            span { class: "description", "「最新の版を確かめる」を押すと、入れられる辞書が出ます。" }
+                        }
+                    }
+                },
+                Some(catalog) => rsx! {
+                    for entry in catalog.dictionaries {
+                        OfficialRow {
+                            key: "{entry.name}",
+                            status: entry.status(&dir),
+                            installing: busy() == Some(Fetching::Dictionary(entry.name.clone())),
+                            idle: busy().is_none(),
+                            entry,
+                            on_install: install.clone(),
+                        }
+                    }
+                },
+            }
+            if let Some(error) = error() {
+                p { class: "error", "{error}" }
+            }
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
+enum Fetching {
+    Catalog,
+    Dictionary(String),
+}
+
+#[component]
+fn OfficialRow(
+    entry: Entry,
+    status: Status,
+    installing: bool,
+    idle: bool,
+    on_install: EventHandler<Entry>,
+) -> Element {
+    let refusal = entry.refusal();
+    let (state, action) = match status {
+        Status::Missing => ("入れていません", Some("入れる")),
+        Status::Outdated => ("新しい版があります", Some("新しくする")),
+        Status::Current => ("最新です", None),
+    };
+    let kind = if entry.base {
+        "基本辞書"
+    } else {
+        "追加辞書"
+    };
+    let description = refusal
+        .clone()
+        .unwrap_or_else(|| format!("{kind}・{state}"));
+    rsx! {
+        div { class: "row",
+            div { class: "row-main",
+                div { class: "row-text",
+                    span { class: "label", "{entry.label}" }
+                    span { class: "description", "{description}" }
+                }
+                span { class: "meta", {size_text(entry.dictionary.size)} }
+                div { class: "control",
+                    if let Some(action) = action {
+                        button {
+                            disabled: !idle || refusal.is_some(),
+                            onclick: move |_| on_install.call(entry.clone()),
+                            if installing {
+                                "入れています…"
+                            } else {
+                                "{action}"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The dictionary list the settings file holds now, by name, if it has one.
+fn written_dictionaries(ctx: Ctx) -> Option<Vec<String>> {
+    let store = ctx.store.read();
+    let folder = store.dir.join(DICTIONARY_DIR);
+    let sources = store.state.as_ref().ok()?.settings.dictionaries.as_ref()?;
+    Some(sources.iter().map(|s| source_name(&folder, s)).collect())
+}
+
+/// Runs `work` off the window's thread, so the window keeps answering while
+/// it waits on the network.
+async fn in_background<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver
+        .await
+        .unwrap_or_else(|_| Err("途中で止まりました".to_owned()))
 }
 
 /// The candidates hidden with the forget key, each with a way back.

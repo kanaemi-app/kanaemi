@@ -26,6 +26,7 @@ mod intents;
 mod keys;
 mod logs;
 mod messages;
+mod official;
 mod pages;
 mod reorder;
 mod store;

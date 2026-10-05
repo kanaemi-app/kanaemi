@@ -23,6 +23,7 @@ use crate::controls::{Group, KeyToggle, ListItem, OrderedList, ResetLine, Row};
 use crate::convert::{Conversion, conversion, convert, import_skk, is_binary};
 use crate::icons::{self, Icon};
 use crate::logs;
+use crate::official::{self, Catalog, Entry, Status};
 use crate::{Ctx, open_folder, open_url};
 
 pub use about::*;
@@ -108,14 +109,19 @@ fn default_dictionaries(dir: &Path) -> Vec<String> {
 
 /// A file's size the way a person reads it.
 fn file_size(path: &Path) -> Option<String> {
-    let bytes = fs::metadata(path).ok()?.len() as f64;
-    Some(if bytes < 1024.0 {
+    Some(size_text(fs::metadata(path).ok()?.len()))
+}
+
+/// A number of bytes the way a person reads it.
+fn size_text(bytes: u64) -> String {
+    let bytes = bytes as f64;
+    if bytes < 1024.0 {
         format!("{bytes} B")
     } else if bytes < 1024.0 * 1024.0 {
         format!("{:.1} KB", bytes / 1024.0)
     } else {
         format!("{:.1} MB", bytes / 1024.0 / 1024.0)
-    })
+    }
 }
 
 #[cfg(test)]

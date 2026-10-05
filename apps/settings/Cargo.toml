@@ -8,7 +8,15 @@ publish = false
 
 [dependencies]
 dioxus = { workspace = true, features = ["desktop"] }
+futures-channel = "0.3.34"
 kanaemi-config.workspace = true
 kanaemi-core.workspace = true
 kanaemi-engine.workspace = true
 rfd = "0.17.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+ureq = "3.4.2"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
+
+[dev-dependencies]
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
