@@ -78,23 +78,9 @@ pub struct Engine {
 /// A candidate as it is gathered: what ranking knows of it.
 struct Found {
     facts: CandidateFacts,
-    /// The reading and surface of the numeric item it was filled from.
-    numeric: Option<(String, String)>,
     /// Split where the user marked the okurigana: made from an okurigana
     /// word, or from a conjugating stem reaching the mark.
     okuri: bool,
-}
-
-impl Found {
-    /// The (reading, surface) the history, the picks and hide lines know it
-    /// by: a numeric item's own, so what is learned with one number holds
-    /// for every number.
-    fn recorded<'a>(&'a self, reading: &'a str) -> (&'a str, &'a str) {
-        match &self.numeric {
-            Some((reading, surface)) => (reading, surface),
-            None => (reading, &self.facts.surface),
-        }
-    }
 }
 
 impl Engine {
@@ -122,6 +108,20 @@ impl Engine {
     /// engines of one process may share it.
     pub fn set_model(&mut self, model: Option<Arc<RankingModel>>) {
         self.model = model;
+    }
+
+    /// Every candidate with what the ranking model knows of it, in no order:
+    /// what training ranks.
+    pub fn candidate_facts(
+        &self,
+        reading: impl AsRef<str>,
+        okurigana: Option<&str>,
+    ) -> Vec<CandidateFacts> {
+        let okurigana = okurigana.map(nfc);
+        self.found(&nfc(reading.as_ref()), okurigana.as_deref())
+            .into_iter()
+            .map(|f| f.facts)
+            .collect()
     }
 
     /// Puts the record of picks read from where it is kept in place.
@@ -204,7 +204,7 @@ impl Engine {
         self.found(&reading, None)
             .into_iter()
             .find(|f| f.facts.surface == surface)
-            .and_then(|f| f.numeric)
+            .and_then(|f| f.facts.numeric)
             .unwrap_or((reading, surface))
     }
 
@@ -283,7 +283,7 @@ impl Engine {
             return scored.into_iter().map(|(_, f)| f).collect();
         }
         let group = |f: &Found| {
-            let (reading, surface) = f.recorded(reading);
+            let (reading, surface) = f.facts.recorded(reading);
             if self.field.last(reading) == Some(surface) {
                 0
             } else if self.field.history.iter().any(|(_, s)| s == surface) {
@@ -317,13 +317,17 @@ impl Engine {
     /// there is not overturned.
     fn favor(&self, reading: &str, ranked: Vec<Found>) -> Vec<Found> {
         let committed = |reading: &str| self.field.last(reading).is_some();
-        if committed(reading) || ranked.iter().any(|f| committed(f.recorded(reading).0)) {
+        if committed(reading)
+            || ranked
+                .iter()
+                .any(|f| committed(f.facts.recorded(reading).0))
+        {
             return ranked;
         }
         let mut weighed: Vec<(f64, Found)> = ranked
             .into_iter()
             .map(|f| {
-                let (recorded_reading, surface) = f.recorded(reading);
+                let (recorded_reading, surface) = f.facts.recorded(reading);
                 let weight = self.selections.weight(recorded_reading, surface);
                 (
                     if weight >= Selections::FAVORITE {
@@ -405,7 +409,7 @@ fn found_in(
                 if cost < f.facts.cost {
                     f.facts.cost = cost;
                     f.facts.built = built;
-                    f.numeric = numeric;
+                    f.facts.numeric = numeric;
                 }
             }
             None => found.push(Found {
@@ -414,8 +418,8 @@ fn found_in(
                     dictionary: 0,
                     cost,
                     built,
+                    numeric,
                 },
-                numeric,
                 okuri,
             }),
         }

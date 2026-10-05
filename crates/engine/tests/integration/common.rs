@@ -107,7 +107,7 @@ pub fn model(bits: u8, weights: &[(&str, f32)]) -> Arc<RankingModel> {
     let body: Vec<u8> = all.iter().flat_map(|w| w.to_le_bytes()).collect();
     let mut file = Vec::new();
     file.extend_from_slice(b"KANAEMIM");
-    file.extend_from_slice(&2u32.to_le_bytes());
+    file.extend_from_slice(&3u32.to_le_bytes());
     file.extend_from_slice(&[bits, 0, 0, 0]);
     file.extend_from_slice(&1.0f32.to_le_bytes());
     file.extend_from_slice(&[0; 4]);

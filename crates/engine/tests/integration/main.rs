@@ -8,4 +8,5 @@ mod numeric;
 mod ranking;
 mod selections;
 mod skk;
+mod training;
 mod user_custom_file;

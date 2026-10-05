@@ -49,6 +49,15 @@ fn with_a_model_the_history_counts_only_through_its_weights() {
 }
 
 #[test]
+fn with_a_model_a_number_committed_counts_for_every_number_of_its_item() {
+    let mut e = engine("{}こ\t{kanji}個\n{}こ\t{}個\n");
+    e.set_model(Some(model(16, &[("hl\u{1f}1", 5.0)])));
+    assert_eq!(surfaces(&e, "5こ")[0], "5個");
+    e.commit("3こ", "三個");
+    assert_eq!(surfaces(&e, "5こ")[0], "五個");
+}
+
+#[test]
 fn the_committed_text_is_the_context_until_the_focus_moves() {
     let mut e = engine(KISHA);
     e.set_model(Some(model(16, &[("a\u{1f}の\u{1f}汽車", 5.0)])));

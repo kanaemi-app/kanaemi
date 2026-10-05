@@ -1,19 +1,20 @@
 use std::path::Path;
 
 /// How much of the field's committed text a conversion looks back on.
-pub(crate) const CONTEXT_CHARS: usize = 16;
+pub const CONTEXT_CHARS: usize = 16;
 /// How many commits the history keeps, and the model counts within.
-pub(crate) const HISTORY_LEN: usize = 300;
+pub const HISTORY_LEN: usize = 300;
 
 const MAGIC: &[u8; 8] = b"KANAEMIM";
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
 const HEADER_LEN: usize = 32;
 const BITS: std::ops::RangeInclusive<u8> = 10..=28;
 /// Joins a feature's name and values; no reading or surface holds it.
 const SEPARATOR: char = '\u{1f}';
 
 /// What one conversion is ranked against.
-pub(crate) struct RankingInput<'a> {
+#[derive(Clone, Copy, Debug)]
+pub struct RankingInput<'a> {
     pub reading: &'a str,
     /// The field's commits, oldest first, at most [`HISTORY_LEN`].
     pub history: &'a [(String, String)],
@@ -23,13 +24,27 @@ pub(crate) struct RankingInput<'a> {
 
 /// A candidate with what the model knows of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CandidateFacts {
+pub struct CandidateFacts {
     pub surface: String,
     /// The place of its dictionary in the list, from 0.
     pub dictionary: usize,
     pub cost: u32,
     /// Built from a conjugating stem rather than found whole.
     pub built: bool,
+    /// The reading and surface of the numeric item it was filled from.
+    pub numeric: Option<(String, String)>,
+}
+
+impl CandidateFacts {
+    /// The (reading, surface) the history, the picks and hide lines know it
+    /// by, `reading` being what was converted: a numeric item's own, so what
+    /// is learned with one number holds for every number.
+    pub fn recorded<'a>(&'a self, reading: &'a str) -> (&'a str, &'a str) {
+        match &self.numeric {
+            Some((reading, surface)) => (reading, surface),
+            None => (reading, &self.surface),
+        }
+    }
 }
 
 /// One part of a feature: its name or one of its values.
@@ -52,10 +67,16 @@ impl Part<'_> {
     }
 }
 
-/// Where the weights of a candidate's features are: what scoring and training
-/// both call for every candidate, so the model sees the features it learned
-/// from. A feature is its name and values joined by U+001F (`s\u{1f}記者`).
-fn feature_indices(input: &RankingInput, candidate: &CandidateFacts, bits: u8) -> Vec<usize> {
+/// Where the weights of a candidate's features are, among `2^bits`: what
+/// scoring and training both call for every candidate, so the model sees the
+/// features it learned from. A feature is its name and values joined by
+/// U+001F (`s\u{1f}記者`).
+///
+/// # Panics
+///
+/// When `bits` is out of the range a model may have.
+pub fn feature_indices(input: &RankingInput, candidate: &CandidateFacts, bits: u8) -> Vec<usize> {
+    assert!(BITS.contains(&bits), "the hash bits are out of range");
     let mut out = Vec::new();
     let mut bytes = Vec::new();
     each_feature(input, candidate, |parts| {
@@ -86,13 +107,15 @@ fn join(parts: &[Part], out: &mut Vec<u8>) {
     }
 }
 
-/// The one definition of the features: each goes to `emit` as its parts.
+/// The one definition of the features: each goes to `emit` as its parts. A
+/// candidate is known by its [recorded](CandidateFacts::recorded) pair, the
+/// form the history holds, so a number's features are its numeric item's.
 fn each_feature(input: &RankingInput, candidate: &CandidateFacts, mut emit: impl FnMut(&[Part])) {
     use Part::{Char, Number, Text};
-    let s = candidate.surface.as_str();
+    let (reading, s) = candidate.recorded(input.reading);
     let cost = band(candidate.cost as usize);
     emit(&[Text("s"), Text(s)]);
-    emit(&[Text("rs"), Text(input.reading), Text(s)]);
+    emit(&[Text("rs"), Text(reading), Text(s)]);
     emit(&[Text("c"), Number(cost)]);
     emit(&[Text("dc"), Number(candidate.dictionary), Number(cost)]);
     emit(&[Text("x"), Text(flag(candidate.built))]);
@@ -101,7 +124,7 @@ fn each_feature(input: &RankingInput, candidate: &CandidateFacts, mut emit: impl
     let last = history
         .iter()
         .rev()
-        .find(|(r, _)| r == input.reading)
+        .find(|(r, _)| r == reading)
         .is_some_and(|(_, previous)| previous == s);
     let count_within = |n: usize| {
         history
@@ -320,6 +343,7 @@ mod tests {
             dictionary,
             cost,
             built,
+            numeric: None,
         }
     }
 
@@ -387,6 +411,34 @@ mod tests {
         }
         let g = got.iter().filter(|f| f.starts_with("g|")).count();
         assert_eq!(g, 6, "each distinct character of the last eight once");
+    }
+
+    #[test]
+    fn a_number_is_known_by_its_numeric_item_as_the_history_records_it() {
+        let history = history(&[("{}こ", "{kanji}個")]);
+        let input = RankingInput {
+            reading: "5こ",
+            history: &history,
+            context: "箱が",
+        };
+        let candidate = CandidateFacts {
+            numeric: Some(("{}こ".to_owned(), "{kanji}個".to_owned())),
+            ..facts("五個", 0, 0, false)
+        };
+        let got = names(&features(&input, &candidate));
+        for expected in [
+            "s|{kanji}個",
+            "rs|{}こ|{kanji}個",
+            "hl|1",
+            "hr|1",
+            "hd|0",
+            "hc|1|{kanji}個",
+            "p|{kanji}個|{kanji}個",
+            "a|が|{kanji}個",
+            "g|箱|{kanji}個",
+        ] {
+            assert!(got.contains(&expected.to_owned()), "{expected} in {got:?}");
+        }
     }
 
     #[test]
@@ -515,7 +567,7 @@ mod tests {
         let mut old = RankingModel::new(10, Weights::F32(vec![0.0; 1 << 10]))
             .unwrap()
             .to_bytes();
-        old[8..12].copy_from_slice(&1u32.to_le_bytes());
+        old[8..12].copy_from_slice(&2u32.to_le_bytes());
         assert!(RankingModel::from_bytes(old).is_err());
     }
 }
