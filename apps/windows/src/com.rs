@@ -22,6 +22,13 @@ pub const PROFILE_KANAEMI: GUID = GUID::from_u128(0x33dc0029_2833_47af_b58e_3507
 /// What the candidate list is, to an application that draws it itself.
 pub const CANDIDATE_LIST_ELEMENT: GUID = GUID::from_u128(0x1915853b_4879_4e18_b9b3_465bbd7da083);
 const LANGID_JAPANESE: u16 = 0x0411;
+/// What the text service is: a keyboard, and one that works in immersive
+/// applications and shows in the system tray.
+const CATEGORIES: [GUID; 3] = [
+    GUID_TFCAT_TIP_KEYBOARD,
+    GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
+    GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+];
 const NAME: &str = "かなえみ";
 
 static MODULE: AtomicIsize = AtomicIsize::new(0);
@@ -93,13 +100,21 @@ extern "system" fn DllRegisterServer() -> HRESULT {
 extern "system" fn DllUnregisterServer() -> HRESULT {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        if let Ok(profiles) = CoCreateInstance::<_, ITfInputProcessorProfileMgr>(
+        if let Ok(categories) =
+            CoCreateInstance::<_, ITfCategoryMgr>(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER)
+        {
+            for category in CATEGORIES {
+                let _ = categories.UnregisterCategory(&CLSID_KANAEMI, &category, &CLSID_KANAEMI);
+            }
+        }
+        // Takes the profiles with it, and what is left of the text service
+        // under the TIP key.
+        if let Ok(profiles) = CoCreateInstance::<_, ITfInputProcessorProfiles>(
             &CLSID_TF_InputProcessorProfiles,
             None,
             CLSCTX_INPROC_SERVER,
         ) {
-            let _ =
-                profiles.UnregisterProfile(&CLSID_KANAEMI, LANGID_JAPANESE, &PROFILE_KANAEMI, 0);
+            let _ = profiles.Unregister(&CLSID_KANAEMI);
         }
         let _ = RegDeleteTreeW(HKEY_LOCAL_MACHINE, &HSTRING::from(clsid_key()));
     }
@@ -174,11 +189,7 @@ fn register() -> Result<()> {
         )?;
         let categories: ITfCategoryMgr =
             CoCreateInstance(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER)?;
-        for category in [
-            GUID_TFCAT_TIP_KEYBOARD,
-            GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
-            GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
-        ] {
+        for category in CATEGORIES {
             categories.RegisterCategory(&CLSID_KANAEMI, &category, &CLSID_KANAEMI)?;
         }
     }
