@@ -5,9 +5,9 @@
 	<key>CFBundleIdentifier</key>
 	<string>io.github.kanaemi-app.kanaemi.settings</string>
 	<key>CFBundleName</key>
-	<string>かなえみの設定</string>
+	<string>かなえみ設定</string>
 	<key>CFBundleDisplayName</key>
-	<string>かなえみの設定</string>
+	<string>かなえみ設定</string>
 	<key>CFBundleExecutable</key>
 	<string>kanaemi-settings</string>
 	<key>CFBundlePackageType</key>

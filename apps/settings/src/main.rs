@@ -44,7 +44,7 @@ fn main() {
         return;
     }
     let window = WindowBuilder::new()
-        .with_title("かなえみの設定")
+        .with_title("かなえみ設定")
         .with_inner_size(LogicalSize::new(820.0, 620.0));
     dioxus::LaunchBuilder::desktop()
         .with_cfg(Config::new().with_window(window).with_menu(None))

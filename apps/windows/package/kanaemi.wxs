@@ -6,7 +6,9 @@
     Manufacturer="Alisue"
     Version="$(Version)"
     UpgradeCode="68F4D454-B86D-47F9-BB8B-07D06CC3A06A"
-    Scope="perMachine">
+    Scope="perMachine"
+    Codepage="932">
+    <!-- The code page holds the Japanese of the shortcut's name. -->
     <!-- A build past a tag carries the tag's version, so the same version
          replaces the one installed. -->
     <MajorUpgrade
@@ -23,7 +25,7 @@
         <!-- It opens from the Start menu too, not only from the input
              method's options in the Windows settings. -->
         <File Id="Settings" Source="$(Release)\kanaemi-settings.exe">
-          <Shortcut Id="SettingsShortcut" Directory="ProgramMenuFolder" Name="Kanaemi Settings" />
+          <Shortcut Id="SettingsShortcut" Directory="ProgramMenuFolder" Name="かなえみ設定" />
         </File>
         <!-- A 32-bit application loads the x86 DLL. -->
         <Directory Id="X86FOLDER" Name="x86">
