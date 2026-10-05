@@ -39,3 +39,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
+
+  # The site lists what this release ships, so it is built again once the
+  # release holds everything. This repository's token cannot run another
+  # repository's workflows, so a token that may run the site's is kept as a
+  # secret.
+  site:
+    needs: upload
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: gh workflow run deploy.yml --repo kanaemi-app/kanaemi-app.github.io --ref main
+        env:
+          GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
