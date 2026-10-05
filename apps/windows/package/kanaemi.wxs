@@ -1,0 +1,104 @@
+<!-- The Windows Installer package; apps/windows/package.ps1 builds it with
+     the variables set. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Kanaemi"
+    Manufacturer="Alisue"
+    Version="$(Version)"
+    UpgradeCode="68F4D454-B86D-47F9-BB8B-07D06CC3A06A"
+    Scope="perMachine">
+    <!-- A build past a tag carries the tag's version, so the same version
+         replaces the one installed. -->
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of Kanaemi is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Processes in an AppContainer, such as the Start menu's search box,
+         can read the DLL only under Program Files. -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Kanaemi">
+        <File Id="Dll" Source="$(Release)\kanaemi.dll" />
+        <File Id="Server" Source="$(Release)\kanaemi-server.exe" />
+        <!-- It opens from the Start menu too, not only from the input
+             method's options in the Windows settings. -->
+        <File Id="Settings" Source="$(Release)\kanaemi-settings.exe">
+          <Shortcut Id="SettingsShortcut" Directory="ProgramMenuFolder" Name="Kanaemi Settings" />
+        </File>
+        <!-- A 32-bit application loads the x86 DLL. -->
+        <Directory Id="X86FOLDER" Name="x86">
+          <File Id="DllX86" Source="$(ReleaseX86)\kanaemi.dll" />
+        </Directory>
+        <!-- The server writes for text services in AppContainers; it starts
+             at every sign-in. -->
+        <Component Id="RunServer">
+          <RegistryValue
+            Root="HKLM"
+            Key="Software\Microsoft\Windows\CurrentVersion\Run"
+            Name="Kanaemi"
+            Type="string"
+            Value="&quot;[#Server]&quot;"
+            KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Each DLL registers its text service through the regsvr32 of its own
+         bitness; SystemFolder is the 32-bit one in a 64-bit package. -->
+    <CustomAction
+      Id="RegisterDll"
+      Directory="INSTALLFOLDER"
+      ExeCommand="&quot;[System64Folder]regsvr32.exe&quot; /s &quot;[#Dll]&quot;"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+    <CustomAction
+      Id="RegisterDllX86"
+      Directory="INSTALLFOLDER"
+      ExeCommand="&quot;[SystemFolder]regsvr32.exe&quot; /s &quot;[#DllX86]&quot;"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+    <!-- [#Dll] is blank once its component is being removed, so the
+         unregistering names the file by its folder. -->
+    <CustomAction
+      Id="UnregisterDll"
+      Directory="INSTALLFOLDER"
+      ExeCommand="&quot;[System64Folder]regsvr32.exe&quot; /s /u &quot;[INSTALLFOLDER]kanaemi.dll&quot;"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+    <CustomAction
+      Id="UnregisterDllX86"
+      Directory="INSTALLFOLDER"
+      ExeCommand="&quot;[SystemFolder]regsvr32.exe&quot; /s /u &quot;[X86FOLDER]kanaemi.dll&quot;"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+    <!-- Running programs keep their files. -->
+    <CustomAction
+      Id="StopPrograms"
+      Directory="INSTALLFOLDER"
+      ExeCommand="&quot;[System64Folder]taskkill.exe&quot; /f /im kanaemi-server.exe /im kanaemi-settings.exe"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+    <!-- Started by the shell, so it runs as the user signed in to the desktop
+         and not elevated: the pipe and folder it serves are that user's. -->
+    <CustomAction
+      Id="StartServer"
+      Directory="INSTALLFOLDER"
+      ExeCommand="&quot;[WindowsFolder]explorer.exe&quot; &quot;[#Server]&quot;"
+      Execute="immediate"
+      Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="StopPrograms" Before="RemoveFiles" />
+      <Custom Action="UnregisterDll" Before="StopPrograms" Condition="REMOVE=&quot;ALL&quot;" />
+      <Custom Action="UnregisterDllX86" Before="StopPrograms" Condition="REMOVE=&quot;ALL&quot;" />
+      <Custom Action="RegisterDll" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="RegisterDllX86" After="RegisterDll" Condition="NOT REMOVE" />
+      <Custom Action="StartServer" After="InstallFinalize" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>
