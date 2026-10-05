@@ -49,8 +49,20 @@ fn main() {
     let window = WindowBuilder::new()
         .with_title("かなえみ設定")
         .with_inner_size(LogicalSize::new(820.0, 620.0));
+    let config = Config::new().with_window(window).with_menu(None);
+    // The logo build.rs compiled in, which the shell shows for the program;
+    // Dioxus's own icon otherwise.
+    #[cfg(windows)]
+    let config = {
+        use dioxus::desktop::tao::platform::windows::IconExtWindows;
+        use dioxus::desktop::tao::window::Icon;
+        match Icon::from_resource(1, None) {
+            Ok(icon) => config.with_icon(icon),
+            Err(_) => config,
+        }
+    };
     dioxus::LaunchBuilder::desktop()
-        .with_cfg(Config::new().with_window(window).with_menu(None))
+        .with_cfg(config)
         .launch(App);
 }
 

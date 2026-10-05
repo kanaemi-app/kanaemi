@@ -1,0 +1,24 @@
+// The program's resources on Windows; build.rs compiles them in with the
+// icon it draws from the logo.
+#pragma code_page(65001)
+
+// The first icon is the one the shell shows for the program and its
+// shortcuts; main.rs loads it by this number for the window too.
+1 ICON ICON_PATH
+
+// Task Manager and the taskbar name the program by its description.
+1 VERSIONINFO
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "041104B0"
+    BEGIN
+      VALUE "FileDescription", "かなえみ設定"
+      VALUE "ProductName", "かなえみ"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0411, 1200
+  END
+END

@@ -20,3 +20,9 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2
 
 [dev-dependencies]
 xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+
+# The icon Windows shows for the program is drawn from the logo as it builds.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3.0.11"
+ico = "0.5.0"
+resvg = { version = "0.48.1", default-features = false }
