@@ -7,6 +7,9 @@
 //! On Windows the input method also runs inside other applications'
 //! processes, where it cannot open windows of its own.
 
+// No console window opens beside the app on Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
