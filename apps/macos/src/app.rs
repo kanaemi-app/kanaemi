@@ -30,7 +30,7 @@ use objc2_input_method_kit::{
 };
 
 use crate::keys::{Keys, POSTED_MARK, RawEvent, RawKind, key_to_send, utf16_offset};
-use crate::{candidates, indicator};
+use crate::{candidates, indicator, secure_input};
 
 const CONNECTION_NAME: &str = "io.github.kanaemi-app.inputmethod.Kanaemi_Connection";
 
@@ -94,6 +94,19 @@ define_class!(
         fn menu(&self) -> Retained<NSMenu> {
             let mtm = MainThreadMarker::new().expect("Input Method Kit calls on the main thread");
             let menu = NSMenu::new(mtm);
+            if let Some(holder) = secure_input::check() {
+                let warning = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &NSString::from_str(&holder.label()),
+                        None,
+                        &NSString::from_str(""),
+                    )
+                };
+                warning.setEnabled(false);
+                menu.addItem(&warning);
+                menu.addItem(&NSMenuItem::separatorItem(mtm));
+            }
             let item = unsafe {
                 NSMenuItem::initWithTitle_action_keyEquivalent(
                     NSMenuItem::alloc(mtm),
@@ -205,6 +218,7 @@ impl KanaemiController {
 
     fn activate(&self, sender: Option<&AnyObject>) {
         ACTIVE.set(Some(self.retain()));
+        secure_input::check();
         // macOS turns input methods off in a secure field, so a field the
         // IME sees is never a password field.
         self.dispatch(Event::FocusIn { password: false }, sender);

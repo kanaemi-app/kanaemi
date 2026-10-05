@@ -13,6 +13,8 @@ mod candidates;
 #[cfg(target_os = "macos")]
 mod indicator;
 mod keys;
+#[cfg(target_os = "macos")]
+mod secure_input;
 
 #[cfg(target_os = "macos")]
 fn main() {
