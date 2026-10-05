@@ -3,4 +3,16 @@
 # needed.
 pkill -x kanaemi || true
 pkill -x kanaemi-settings || true
+
+# System Settings lists input sources from a cache that does not notice a
+# newly installed one. With the cache gone, System Settings rebuilds it when
+# it opens next; quitting it first keeps it from writing the old list back.
+osascript \
+  -e 'if application "System Settings" is running then' \
+  -e 'tell application "System Settings" to quit' \
+  -e 'end if' >/dev/null 2>&1 || true
+cache="$(getconf DARWIN_USER_CACHE_DIR)"
+if [ -n "$cache" ]; then
+  rm -f "$cache"com.apple.IntlDataCache.le*
+fi
 exit 0

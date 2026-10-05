@@ -9,6 +9,8 @@ macOS の入力方式を作るときに知っておく、InputMethodKit とシ�
 - `.app` をアドホック署名して `~/Library/Input Methods` に置く。動いているプロセスを止めると、システムが必要なときに起動し直す。
 - 入力ソースを有効にするには、利用者がシステム設定で足す必要がある。`TISEnableInputSource` は成功を返すが、有効にはならない。
 - `~/Library/Input Methods` に置いた直後は、システム設定の入力ソースの一覧に出ない。消した入力ソースは空の行として残る。システム設定を終了し、`getconf DARWIN_USER_CACHE_DIR` の下の `com.apple.IntlDataCache.le*` を消すと、開き直したときに一覧に出る。管理者の権限もログアウトも要らない。
+- 同じバンドル ID の `.app` が `/Library/Input Methods` と `~/Library/Input Methods` の両方にあると、macOS は `~/Library` 側を動かす。
+- インストーラーのパッケージは、Distribution の `domains` で `enable_currentUserHome` だけを許すと、ペイロードを利用者のホームの下に置く。管理者の権限は求めず、`postinstall` もその利用者として動く。
 
 ## キー
 

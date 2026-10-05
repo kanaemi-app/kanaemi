@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build Kanaemi.app and package it as an installer package into
-# target/package, which installs it into /Library/Input Methods.
+# target/package, which installs it into ~/Library/Input Methods of the user
+# who runs it.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -26,7 +27,7 @@ mkdir -p "$work/root/Library/Input Methods" "$out"
 cp -R "$app" "$work/root/Library/Input Methods/"
 
 # The installer would otherwise put the app where it finds another copy of
-# the same bundle, such as one in target or in ~/Library/Input Methods.
+# the same bundle, such as one in target.
 pkgbuild --analyze --root "$work/root" "$work/components.plist" >/dev/null
 plutil -replace 0.BundleIsRelocatable -bool NO "$work/components.plist"
 
@@ -37,4 +38,28 @@ pkgbuild \
   --identifier io.github.kanaemi-app.kanaemi \
   --version "$version" \
   --install-location / \
+  "$work/kanaemi.pkg"
+
+# Only the user's home is offered: an input method needs nothing outside it,
+# so the installer asks for no administrator and runs the scripts as the user.
+# A copy under /Library as well would be shadowed by the one in the home.
+cat >"$work/distribution.xml" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Kanaemi</title>
+    <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>
+    <options customize="never" require-scripts="false" hostArchitectures="$(uname -m)"/>
+    <choices-outline>
+        <line choice="kanaemi"/>
+    </choices-outline>
+    <choice id="kanaemi" visible="false">
+        <pkg-ref id="io.github.kanaemi-app.kanaemi"/>
+    </choice>
+    <pkg-ref id="io.github.kanaemi-app.kanaemi" version="$version" onConclusion="none">kanaemi.pkg</pkg-ref>
+</installer-gui-script>
+XML
+
+productbuild \
+  --distribution "$work/distribution.xml" \
+  --package-path "$work" \
   "$out/Kanaemi-$version.pkg"
