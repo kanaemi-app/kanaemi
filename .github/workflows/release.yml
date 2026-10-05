@@ -3,7 +3,7 @@
 name: Release
 
 # Publishing a release makes the installers for each OS from its tag and
-# attaches them to it.
+# attaches them to it, with the catalog of them (index.json).
 on:
   release:
     types: [published]
@@ -26,8 +26,16 @@ jobs:
           path: packages
           pattern: package-*
           merge-multiple: true
+      - name: Gather the descriptions into the catalog
+        run: |
+          jq -s --arg version "$TAG" \
+            '{format: 1, version: $version, packages: sort_by(.os, .arch, .format)}' \
+            packages/*.json >index.json
+          rm packages/*.json
+        env:
+          TAG: ${{ github.event.release.tag_name }}
       # --clobber lets a rerun replace what an earlier attempt attached.
-      - run: gh release upload "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --clobber
+      - run: gh release upload "$TAG" packages/* index.json --repo "$GITHUB_REPOSITORY" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}

@@ -2,8 +2,9 @@
 
 name: Package
 
-# Makes the installers for each OS from the checked-out commit and keeps them
-# as workflow artifacts named package-*, for the caller to use or discard.
+# Makes the installers for each OS from the checked-out commit and keeps them,
+# each with a description of it (FILE.json), as workflow artifacts named
+# package-*, for the caller to use or discard.
 on:
   workflow_call:
 
@@ -36,12 +37,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nfpm
       - run: apps/ibus/package.sh
+      - run: .github/describe-packages.sh linux
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: package-linux-${{ matrix.os }}
           path: |
             target/package/*.deb
             target/package/*.rpm
+            target/package/*.json
           if-no-files-found: error
 
   macos:
@@ -54,10 +57,13 @@ jobs:
       - run: brew install librsvg
       - run: rustup toolchain install
       - run: apps/macos/package.sh
+      - run: .github/describe-packages.sh macos
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: package-macos
-          path: target/package/*.pkg
+          path: |
+            target/package/*.pkg
+            target/package/*.json
           if-no-files-found: error
 
   windows:
@@ -75,8 +81,12 @@ jobs:
       - run: dotnet tool install --global wix --version 5.0.2
       - run: apps/windows/package.ps1
         shell: pwsh
+      - run: .github/describe-packages.sh windows
+        shell: bash
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: package-windows-${{ matrix.os }}
-          path: target/package/*.msi
+          path: |
+            target/package/*.msi
+            target/package/*.json
           if-no-files-found: error
