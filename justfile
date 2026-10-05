@@ -36,5 +36,17 @@ install-ibus:
 install-windows:
     powershell -NoProfile -ExecutionPolicy Bypass -File apps/windows/install.ps1
 
+# Make the macOS installer package in target/package; run outside the Nix shell.
+package-macos:
+    apps/macos/package.sh
+
+# Make the Debian and RPM packages in target/package; run outside the Nix shell, with nfpm.
+package-ibus:
+    apps/ibus/package.sh
+
+# Make the Windows Installer package in target/package; needs the WiX toolset.
+package-windows:
+    powershell -NoProfile -ExecutionPolicy Bypass -File apps/windows/package.ps1
+
 # Everything CI runs.
 ci: fmt-check lint test
