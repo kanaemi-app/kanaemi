@@ -16,7 +16,7 @@ sudo install -m 644 "$root/apps/macos/assets/logo/kanaemi-icon.svg" "$lib/kanaem
 # The version kanaemi_core::VERSION reports, as the settings app prints it.
 version="$("$root/target/release/kanaemi-settings" --version)"
 component="$(mktemp)"
-perl -pe "s|<version></version>|<version>$version</version>|" "$root/apps/ibus/kanaemi.xml" >"$component"
+perl -pe "s|\@LIBDIR\@|$lib|g; s|\@VERSION\@|$version|g" "$root/apps/ibus/kanaemi.xml" >"$component"
 sudo install -m 644 "$component" /usr/share/ibus/component/kanaemi.xml
 rm -f "$component"
 
