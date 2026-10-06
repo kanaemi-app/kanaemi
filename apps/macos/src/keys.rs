@@ -64,10 +64,29 @@ pub struct Keys {
     down: [bool; 8],
     /// The last `flagsChanged`: its key code, flags and time.
     last_flags: Option<(u16, usize, u64)>,
-    /// Each key down, by key code: the modifiers held as it is let go may
-    /// make it read as another character.
-    typed: Vec<(u16, Key)>,
+    /// Each key down, by key code, with the time it went down: the modifiers
+    /// held as it is let go may make it read as another character.
+    typed: Vec<(u16, Key, u64)>,
+    /// Presses an event tap saw that have not reached the IME yet, by key
+    /// code and time.
+    tapped_downs: Vec<(u16, u64)>,
+    /// Releases an event tap saw, in the order let go, not yet passed on.
+    tapped_ups: Vec<(u16, u64)>,
+    /// Presses that reached the IME before the tap told of them, by key code
+    /// and time, kept for [`TAP_GRACE_MS`]: the tap's word on them comes late.
+    untapped_downs: Vec<(u16, u64)>,
+    /// The time of the last key the IME had. Keys reach it in the order
+    /// they were typed, so a press the tap saw before this never comes.
+    ime_seen_ms: u64,
 }
+
+/// How long the tap may tell of a press after the IME had it, and a key may
+/// stay down with no release from the tap before the keyboard is asked.
+pub const TAP_GRACE_MS: u64 = 300;
+
+/// How long a release waits on a press the tap saw while the IME has no key
+/// after it to say the press will never come.
+pub const TAP_GIVE_UP_MS: u64 = 1000;
 
 /// Some applications, such as Slack, deliver each `flagsChanged` twice a few
 /// milliseconds apart. No finger presses and releases a key this fast, so a
@@ -86,7 +105,7 @@ impl Keys {
     /// and left out, as the core reads only the key of a release.
     pub fn lifted(&mut self, down: impl Fn(u16) -> bool, time_ms: u64) -> Vec<KeyEvent> {
         let mut lifted = Vec::new();
-        self.typed.retain(|(code, key)| {
+        self.typed.retain(|(code, key, _)| {
             let still = down(*code);
             if !still {
                 lifted.push(KeyEvent {
@@ -101,6 +120,86 @@ impl Keys {
         lifted
     }
 
+    /// A key pressed or let go, as an event tap saw it. The tap sees the
+    /// keyboard ahead of Input Method Kit, so what it saw is held until the
+    /// IME has the presses that came first.
+    pub fn tapped(&mut self, code: u16, down: bool, time_ms: u64) {
+        if down {
+            // The IME had it first: it is no press to wait for.
+            if let Some(index) = same_event(&self.untapped_downs, code, time_ms) {
+                self.untapped_downs.remove(index);
+                return;
+            }
+            self.tapped_downs.push((code, time_ms));
+        } else if !self
+            .untapped_downs
+            .iter()
+            .any(|&(seen, time)| seen == code && time > time_ms)
+        {
+            // Dropped when the IME already had the key pressed again: that
+            // press let this one go, and the release would take the new one.
+            self.tapped_ups.push((code, time_ms));
+        }
+    }
+
+    /// Whether the tap saw something not yet settled.
+    pub fn waiting(&self) -> bool {
+        !self.tapped_downs.is_empty() || !self.tapped_ups.is_empty()
+    }
+
+    /// Releases the keys the tap saw let go, at the times they were let go
+    /// and in that order, as far as the IME has every press before them. A
+    /// press the IME went past, or one waited on past [`TAP_GIVE_UP_MS`], is
+    /// for a key this IME never has, such as one an application took first,
+    /// and is dropped. A busy main thread delays the IME's presses as much as
+    /// the tap's releases, so they are waited for by order, not by the clock.
+    pub fn tapped_releases(&mut self, now_ms: u64) -> Vec<KeyEvent> {
+        let seen = self.ime_seen_ms;
+        self.tapped_downs
+            .retain(|&(_, time)| time >= seen && time + TAP_GIVE_UP_MS >= now_ms);
+        let mut released = Vec::new();
+        while let Some(&(code, time)) = self.tapped_ups.first() {
+            if self.tapped_downs.iter().any(|&(_, down)| down <= time) {
+                break;
+            }
+            // A key not down here was pressed before the focus came, or in
+            // another application: nothing waits on it.
+            if let Some(index) = self.typed.iter().position(|(typed, ..)| *typed == code) {
+                released.push(KeyEvent {
+                    key: self.typed.remove(index).1,
+                    mods: Modifiers::default(),
+                    kind: KeyKind::Release,
+                    time_ms: time,
+                });
+            }
+            self.tapped_ups.remove(0);
+        }
+        released
+    }
+
+    /// Releases the keys down past [`TAP_GRACE_MS`] that `down` says are up
+    /// and whose release the tap has not told of, as of `now_ms`: the tap
+    /// lost them, as when macOS turned it off for a while.
+    pub fn lost(&mut self, down: impl Fn(u16) -> bool, now_ms: u64) -> Vec<KeyEvent> {
+        let mut lost = Vec::new();
+        let told = &self.tapped_ups;
+        self.typed.retain(|&(code, key, at)| {
+            let gone = at + TAP_GRACE_MS < now_ms
+                && !told.iter().any(|&(up, _)| up == code)
+                && !down(code);
+            if gone {
+                lost.push(KeyEvent {
+                    key,
+                    mods: Modifiers::default(),
+                    kind: KeyKind::Release,
+                    time_ms: now_ms,
+                });
+            }
+            !gone
+        });
+        lost
+    }
+
     /// The release of a key pressed anew while its last press was never seen
     /// let go: let go and pressed again between two looks at the keyboard,
     /// or across a focus change. Without it the new press reads as a repeat
@@ -112,7 +211,7 @@ impl Keys {
         let index = self
             .typed
             .iter()
-            .position(|(code, _)| *code == raw.key_code)?;
+            .position(|(code, ..)| *code == raw.key_code)?;
         Some(KeyEvent {
             // Kept in the order pressed, which `lifted` lets go in.
             key: self.typed.remove(index).1,
@@ -178,30 +277,51 @@ impl Keys {
                 Some(event(key, kind))
             }
             RawKind::KeyUp => {
+                // Passed on here, the release the tap saw is not to be again.
+                if let Some(index) = same_event(&self.tapped_ups, raw.key_code, raw.time_ms) {
+                    self.tapped_ups.remove(index);
+                }
                 let key = match self
                     .typed
                     .iter()
-                    .position(|(code, _)| *code == raw.key_code)
+                    .position(|(code, ..)| *code == raw.key_code)
                 {
-                    Some(index) => self.typed.swap_remove(index).1,
+                    // Kept in the order pressed, which the rest are let go in.
+                    Some(index) => self.typed.remove(index).1,
                     None => key(raw),
                 };
                 Some(event(key, KeyKind::Release))
             }
             RawKind::KeyDown => {
+                self.ime_seen_ms = self.ime_seen_ms.max(raw.time_ms);
+                // The same event as the tap saw, on the same clock.
+                match same_event(&self.tapped_downs, raw.key_code, raw.time_ms) {
+                    Some(index) => {
+                        self.tapped_downs.remove(index);
+                    }
+                    None => {
+                        self.untapped_downs
+                            .retain(|&(_, time)| time + TAP_GRACE_MS >= raw.time_ms);
+                        self.untapped_downs.push((raw.key_code, raw.time_ms));
+                    }
+                }
                 // A key repeating stays the key first pressed, whatever
                 // modifier went down since. A new press replaces what a
                 // release lost across a focus change left behind.
                 let first = self
                     .typed
                     .iter()
-                    .position(|(code, _)| *code == raw.key_code);
+                    .position(|(code, ..)| *code == raw.key_code);
                 let key = match first {
                     Some(index) if raw.repeat => self.typed[index].1,
                     _ => {
                         let key = key(raw);
-                        self.typed.retain(|(code, _)| *code != raw.key_code);
-                        self.typed.push((raw.key_code, key));
+                        self.typed.retain(|(code, ..)| *code != raw.key_code);
+                        // A release the tap saw before this press was of the
+                        // last one, which this press let go.
+                        self.tapped_ups
+                            .retain(|&(code, time)| code != raw.key_code || time > raw.time_ms);
+                        self.typed.push((raw.key_code, key, raw.time_ms));
                         key
                     }
                 };
@@ -239,6 +359,13 @@ impl Keys {
         self.down[index] = pressed;
         pressed
     }
+}
+
+/// Where in `seen` the tap's and Input Method Kit's word on one event is:
+/// the same key at the same time, on the same clock.
+fn same_event(seen: &[(u16, u64)], code: u16, time_ms: u64) -> Option<usize> {
+    seen.iter()
+        .position(|&(seen, time)| seen == code && time.abs_diff(time_ms) <= 1)
 }
 
 fn key(raw: RawEvent) -> Key {
@@ -439,6 +566,212 @@ mod tests {
         );
         assert!(!keys.watching());
         assert_eq!(keys.lifted(|_| false, 50), []);
+    }
+
+    fn at(raw: RawEvent<'_>, time_ms: u64) -> RawEvent<'_> {
+        RawEvent { time_ms, ..raw }
+    }
+
+    fn released(keys: &mut Keys, now_ms: u64) -> Vec<(Key, u64)> {
+        keys.tapped_releases(now_ms)
+            .into_iter()
+            .map(|e| {
+                assert_eq!(e.kind, KeyKind::Release);
+                (e.key, e.time_ms)
+            })
+            .collect()
+    }
+
+    /// The tap and Input Method Kit both see the press.
+    fn press(keys: &mut Keys, raw: RawEvent<'_>) {
+        keys.tapped(raw.key_code, true, raw.time_ms);
+        keys.translate(raw);
+    }
+
+    #[test]
+    fn keys_let_go_go_in_the_order_the_tap_saw_them() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        press(&mut keys, at(down(40, 0, "k"), 50));
+        keys.tapped(40, false, 80);
+        keys.tapped(49, false, 85);
+        assert_eq!(
+            released(&mut keys, 90),
+            [(Key::Char('k'), 80), (Key::Space, 85)]
+        );
+        assert_eq!(released(&mut keys, 95), []);
+    }
+
+    #[test]
+    fn a_key_let_go_waits_for_its_press() {
+        let mut keys = Keys::default();
+        keys.tapped(40, true, 10);
+        keys.tapped(40, false, 20);
+        assert_eq!(released(&mut keys, 25), []);
+        keys.translate(at(down(40, 0, "k"), 10));
+        assert_eq!(released(&mut keys, 26), [(Key::Char('k'), 20)]);
+    }
+
+    #[test]
+    fn a_key_let_go_waits_for_the_keys_pressed_before_it() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        keys.tapped(38, true, 30);
+        keys.tapped(49, false, 40);
+        assert_eq!(released(&mut keys, 45), [], "j was pressed first");
+        keys.translate(at(down(38, 0, "j"), 30));
+        assert_eq!(released(&mut keys, 46), [(Key::Space, 40)]);
+    }
+
+    #[test]
+    fn a_press_the_ime_had_before_the_tap_holds_nothing_up() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        keys.translate(at(down(40, 0, "k"), 30));
+        keys.tapped(40, true, 30);
+        keys.tapped(49, false, 40);
+        assert_eq!(released(&mut keys, 45), [(Key::Space, 40)]);
+    }
+
+    #[test]
+    fn a_release_the_ime_had_is_not_passed_on_again() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(40, 0, "k"), 0));
+        press(&mut keys, at(down(49, 0, " "), 10));
+        keys.tapped(40, false, 20);
+        keys.translate(RawEvent {
+            kind: RawKind::KeyUp,
+            ..at(down(40, 0, "k"), 20)
+        });
+        keys.tapped(49, false, 30);
+        assert_eq!(released(&mut keys, 35), [(Key::Space, 30)]);
+    }
+
+    #[test]
+    fn a_release_the_tap_tells_of_after_the_next_press_keeps_that_press() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(40, 0, "k"), 0));
+        let again = at(down(40, 0, "k"), 30);
+        assert!(keys.pressed_again(again).is_some());
+        keys.translate(again);
+        keys.tapped(40, false, 20);
+        keys.tapped(40, true, 30);
+        assert_eq!(released(&mut keys, 35), []);
+        keys.tapped(40, false, 50);
+        assert_eq!(released(&mut keys, 55), [(Key::Char('k'), 50)]);
+    }
+
+    #[test]
+    fn a_release_held_back_is_dropped_by_the_next_press_of_its_key() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(40, 0, "k"), 0));
+        // A press the IME has yet to see holds the release back.
+        keys.tapped(38, true, 10);
+        keys.tapped(40, false, 20);
+        keys.tapped(40, true, 30);
+        let again = at(down(40, 0, "k"), 30);
+        assert!(keys.pressed_again(again).is_some());
+        keys.translate(again);
+        keys.translate(at(down(38, 0, "j"), 10));
+        assert_eq!(released(&mut keys, 35), []);
+    }
+
+    #[test]
+    fn a_key_let_go_that_was_never_pressed_here_holds_nothing_up() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        // Pressed before the focus came here.
+        keys.tapped(7, false, 5);
+        keys.tapped(49, false, 10);
+        assert_eq!(released(&mut keys, 11), [(Key::Space, 10)]);
+        assert!(!keys.waiting());
+    }
+
+    #[test]
+    fn a_key_the_tap_lost_is_let_go_once_the_keyboard_says_so() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        let lost = |keys: &mut Keys, down: bool, now: u64| {
+            keys.lost(|_| down, now)
+                .into_iter()
+                .map(|e| (e.key, e.kind, e.time_ms))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(lost(&mut keys, false, 100), [], "the tap may yet tell");
+        assert_eq!(lost(&mut keys, true, 400), [], "still down");
+        assert_eq!(
+            lost(&mut keys, false, 400),
+            [(Key::Space, KeyKind::Release, 400)]
+        );
+        assert!(!keys.watching());
+    }
+
+    #[test]
+    fn a_key_let_go_the_tap_told_of_is_not_lost() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        // Its release waits on a press the IME has not had yet.
+        keys.tapped(40, true, 380);
+        keys.tapped(49, false, 390);
+        assert_eq!(keys.lost(|_| false, 400), []);
+    }
+
+    #[test]
+    fn keys_let_go_directly_keep_the_others_in_the_order_pressed() {
+        let mut keys = Keys::default();
+        for (code, c, time) in [(49, " ", 0), (40, "k", 10), (38, "j", 20)] {
+            press(&mut keys, at(down(code, 0, c), time));
+        }
+        keys.translate(at(up(49, 0, " "), 30));
+        keys.tapped(40, false, 40);
+        keys.tapped(38, false, 40);
+        assert_eq!(
+            released(&mut keys, 50),
+            [(Key::Char('k'), 40), (Key::Char('j'), 40)]
+        );
+    }
+
+    #[test]
+    fn a_press_that_never_comes_holds_nothing_up_for_long() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        // Typed into another application, or posted by another program.
+        keys.tapped(0, true, 5);
+        keys.tapped(7, false, 6);
+        keys.tapped(49, false, 10);
+        assert_eq!(released(&mut keys, 20), []);
+        assert_eq!(
+            released(&mut keys, 5 + TAP_GIVE_UP_MS + 1),
+            [(Key::Space, 10)]
+        );
+        assert!(!keys.waiting());
+    }
+
+    #[test]
+    fn a_press_the_ime_went_past_is_not_waited_for() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        // An application took it before the IME, as a menu shortcut.
+        keys.tapped(8, true, 5);
+        press(&mut keys, at(down(40, 0, "k"), 10));
+        keys.tapped(49, false, 20);
+        assert_eq!(released(&mut keys, 21), [(Key::Space, 20)]);
+    }
+
+    #[test]
+    fn a_press_late_to_the_ime_is_waited_for() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        keys.tapped(40, true, 5);
+        keys.tapped(40, false, 20);
+        keys.tapped(49, false, 30);
+        // The main thread was busy past the grace.
+        assert_eq!(released(&mut keys, 400), []);
+        keys.translate(at(down(40, 0, "k"), 5));
+        assert_eq!(
+            released(&mut keys, 401),
+            [(Key::Char('k'), 20), (Key::Space, 30)]
+        );
     }
 
     #[test]
@@ -660,10 +993,6 @@ mod tests {
         assert_eq!(utf16_offset("›かんじ", 2), 2);
         assert_eq!(utf16_offset("𝄞あ", 1), 2);
         assert_eq!(utf16_offset("あ", 5), 1);
-    }
-
-    fn at(raw: RawEvent<'static>, time_ms: u64) -> RawEvent<'static> {
-        RawEvent { time_ms, ..raw }
     }
 
     #[test]

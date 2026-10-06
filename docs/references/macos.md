@@ -23,7 +23,8 @@ macOS の入力方式を作るときに知っておく、InputMethodKit とシ�
 - Ctrl を押していると `characters` は制御文字に、Option を押していると別の文字になる。どちらのときも、押したキーの文字は `charactersIgnoringModifiers` で取る。
 - パスワードの入力欄では、OS が入力方式を切る。
 - 合成したキーを `CGEventPost` で送るには、アクセシビリティの許可が要る。
-- `recognizedEvents` に `keyUp` を入れても、Input Method Kit は文字のキーを離したイベントを渡さない。離したことは `CGEventSourceKeyState`（`kCGEventSourceStateHIDSystemState`）を見て知る。
+- `recognizedEvents` に `keyUp` を入れても、Input Method Kit は文字のキーを離したイベントを渡さない。離したことは、聞くだけのイベントタップで、起きた時刻とともに知る。イベントタップは Input Method Kit より先にキーを見ることがあり、逆のこともあるので、押したことが IME に届いてから順に渡す。イベントタップが使えないときや取りこぼしたときは、`CGEventSourceKeyState`（`kCGEventSourceStateHIDSystemState`）でキーボードの状態を見る。ただし、短い間隔で見ても、続けて離した 2 つのキーの順は分からない。
+- イベントタップのイベントの時刻（`CGEventGetTimestamp`）は起動からの時間だが、単位が `mach_absolute_time` の目盛りかナノ秒かは確かめていない。Apple シリコンでは両者が大きく違うので、今の時刻に近い読み方を採る。`NSEvent` の時刻とは、`mach_absolute_time` を秒にしたものが一致する。
 - 入力監視の許可がないプロセスには、`CGEventSourceKeyState` は文字を打つキー（Space を含む）をいつも離しているものとして返す。Backspace や修飾キーは許可がなくても読める。許可は `CGPreflightListenEventAccess` で確かめる。アドホック署名の入力方式からは、`CGRequestListenEventAccess`・`IOHIDRequestAccess`・聞くだけのイベントタップのどれでも、ふつうのアプリとして起動しても `LSUIElement` にしても、確かめる画面は出ず、入力監視の一覧にも載らない。利用者が一覧に `.app` を足してオンにする。アドホック署名の `.app` は、組み直すと許可が外れる。
 - `CGEventSourceKeyState` に `kCGEventSourceStatePrivate` を渡すと戻ってこない。入力方式のメインスレッドが止まり、入力先のアプリも固まる。
 

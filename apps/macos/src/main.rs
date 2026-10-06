@@ -14,6 +14,8 @@ mod candidates;
 mod indicator;
 #[cfg(target_os = "macos")]
 mod input_monitoring;
+#[cfg(target_os = "macos")]
+mod key_tap;
 mod keys;
 #[cfg(target_os = "macos")]
 mod secure_input;

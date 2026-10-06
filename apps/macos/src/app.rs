@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use dispatch2::{DispatchQueue, DispatchTime};
-use kanaemi_core::{Chord, Event, Output};
+use kanaemi_core::{Chord, Event, KeyEvent, Output};
 use kanaemi_runtime::{Field, Profile};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, Bool, NSObject};
@@ -34,7 +34,7 @@ use objc2_input_method_kit::{
 };
 
 use crate::keys::{Keys, POSTED_MARK, RawEvent, RawKind, key_to_send, utf16_offset};
-use crate::{candidates, indicator, input_monitoring, secure_input};
+use crate::{candidates, indicator, input_monitoring, key_tap, secure_input};
 
 const CONNECTION_NAME: &str = "io.github.kanaemi-app.inputmethod.Kanaemi_Connection";
 
@@ -81,9 +81,27 @@ fn hold_bound() -> bool {
     with_profile(|profile| profile.config().bindings.hold_a_key())
 }
 
-/// Looks at the keys down again soon, and on until each is let go.
+/// The keys let go: as the tap saw them, with those it lost; or without
+/// it, those the keyboard says are up now, as of `time_ms`.
+fn lifted_keys(time_ms: u64) -> Vec<KeyEvent> {
+    KEYS.with_borrow_mut(|keys| {
+        if key_tap::running() {
+            let now = now_ms();
+            let mut lifted = keys.tapped_releases(now);
+            lifted.extend(keys.lost(key_down, now));
+            lifted
+        } else {
+            keys.lifted(key_down, time_ms)
+        }
+    })
+}
+
+/// Looks at the keys again soon, and on until each is let go: to find them
+/// up, and with the tap, to drop what never reaches the IME.
 fn watch_keys() {
-    if WATCHING.get() || !KEYS.with_borrow(Keys::watching) || !hold_bound() {
+    let pending =
+        KEYS.with_borrow(|keys| keys.watching() || (key_tap::running() && keys.waiting()));
+    if WATCHING.get() || !pending || !hold_bound() {
         return;
     }
     let Ok(when) = DispatchTime::try_from(LIFT_POLL) else {
@@ -95,17 +113,49 @@ fn watch_keys() {
 
 fn look_at_keys() {
     WATCHING.set(false);
-    guarded((), || match ACTIVE.with_borrow(Clone::clone) {
+    guarded((), release_keys);
+    watch_keys();
+}
+
+/// What the tap saw, kept; it is passed on from the main queue, not from
+/// the tap, which macOS turns off when it takes long.
+fn tapped(code: u16, down: bool, time_ms: u64) {
+    guarded((), || {
+        KEYS.with_borrow_mut(|keys| keys.tapped(code, down, time_ms));
+        DispatchQueue::main().exec_async(|| {
+            guarded((), || {
+                if hold_bound() {
+                    release_keys();
+                    watch_keys();
+                }
+            });
+        });
+    });
+}
+
+/// Turns the tap on or off as a key is bound to be held or not, starting it
+/// once the permission is there: the next field after it is granted picks
+/// it up.
+fn follow_hold() {
+    let hold = hold_bound();
+    key_tap::want(hold);
+    if hold && !key_tap::running() && key_tap::start(tapped) {
+        tracing::info!("watching keys let go with an event tap");
+    }
+}
+
+/// Feeds the field with the focus the keys let go.
+fn release_keys() {
+    match ACTIVE.with_borrow(Clone::clone) {
         Some(controller) => {
             let client: Option<Retained<AnyObject>> = unsafe { msg_send![&*controller, client] };
             controller.release_lifted(client.as_deref(), now_ms());
         }
         // No field has the focus to tell: the keys are only forgotten.
         None => {
-            KEYS.with_borrow_mut(|keys| keys.lifted(key_down, now_ms()));
+            lifted_keys(now_ms());
         }
-    });
-    watch_keys();
+    }
 }
 
 fn new_field() -> Field {
@@ -315,20 +365,25 @@ impl KanaemiController {
             Some(key) => self.dispatch(Event::Key(key), sender),
             None => false,
         };
+        // The tap may have seen keys let go after this one was pressed.
+        if hold && key_tap::running() {
+            self.release_lifted(sender, now_ms());
+        }
         watch_keys();
         Bool::new(consumed)
     }
 
     /// Feeds the core the release of each key let go since the keys were
-    /// last looked at, as of `time_ms`.
+    /// last looked at.
     fn release_lifted(&self, client: Option<&AnyObject>, time_ms: u64) {
-        for event in KEYS.with_borrow_mut(|keys| keys.lifted(key_down, time_ms)) {
+        for event in lifted_keys(time_ms) {
             self.dispatch(Event::Key(event), client);
         }
     }
 
     fn make_active(&self) {
         ACTIVE.set(Some(self.retain()));
+        follow_hold();
     }
 
     fn activate(&self, sender: Option<&AnyObject>) {
@@ -337,6 +392,8 @@ impl KanaemiController {
         // macOS turns input methods off in a secure field, so a field the
         // IME sees is never a password field.
         self.dispatch(Event::FocusIn { password: false }, sender);
+        // The settings are read again as the focus comes in.
+        follow_hold();
     }
 
     fn deactivate(&self, sender: Option<&AnyObject>) {
@@ -349,6 +406,7 @@ impl KanaemiController {
                 .is_some_and(|active| std::ptr::eq(active, self))
             {
                 *active = None;
+                key_tap::want(false);
             }
         });
     }
