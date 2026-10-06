@@ -48,7 +48,10 @@ fn main() {
     }
     let window = WindowBuilder::new()
         .with_title("かなえみ設定")
-        .with_inner_size(LogicalSize::new(820.0, 620.0));
+        // Wide enough that a key binding row keeps its keys beside what they
+        // do, and short enough for a laptop screen of 900 points.
+        .with_inner_size(LogicalSize::new(1080.0, 780.0))
+        .with_min_inner_size(LogicalSize::new(720.0, 480.0));
     let config = Config::new().with_window(window).with_menu(None);
     // The logo build.rs compiled in, which the shell shows for the program;
     // Dioxus's own icon otherwise.
