@@ -15,6 +15,8 @@ pub const ARROW_RIGHT: &str =
 pub const PLUS: &str = r#"<path d="M12 5l0 14"/><path d="M5 12l14 0"/>"#;
 pub const X: &str = r#"<path d="M18 6l-12 12"/><path d="M6 6l12 12"/>"#;
 pub const FOLDER_OPEN: &str = r#"<path d="M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.307a1 1 0 0 1 .986 1.164l-.996 5.211a2 2 0 0 1 -1.964 1.625h-14.026a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2"/>"#;
+pub const CODE: &str =
+    r#"<path d="M7 8l-4 4l4 4"/><path d="M17 8l4 4l-4 4"/><path d="M14 4l-4 16"/>"#;
 pub const LIST_SEARCH: &str = r#"<path d="M11 15a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M18.5 18.5l2.5 2.5"/><path d="M4 6h16"/><path d="M4 12h4"/><path d="M4 18h4"/>"#;
 
 /// One of the icons above.

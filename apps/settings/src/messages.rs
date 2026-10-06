@@ -35,6 +35,9 @@ pub fn describe(kind: &ProblemKind) -> String {
             format!("「{name}」という機能はありません（@next のように書きます）")
         }
         ProblemKind::ActionNotHere(name) => format!("「{name}」はこの場面では使えません"),
+        ProblemKind::UnknownBuiltinDictionary(name) => {
+            format!("「{name}」という組み込みの辞書はありません")
+        }
         ProblemKind::NotSendable => {
             "アプリに送れるのは、Backspace や矢印のような名前のあるキーだけです".to_owned()
         }

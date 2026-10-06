@@ -2,7 +2,7 @@
 
 use encoding_rs::Encoding;
 
-use crate::numeric::{CLOSE, OPEN};
+use crate::placeholder::{CLOSE, OPEN};
 use crate::{ItemLine, row_kana};
 
 /// Converts an SKK dictionary into the text dictionary format. Each candidate

@@ -98,7 +98,7 @@ impl Selections {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::numeric::{CLOSE, OPEN};
+    use crate::placeholder::{CLOSE, OPEN};
 
     #[test]
     fn the_record_reads_back_without_when_anything_was_picked() {

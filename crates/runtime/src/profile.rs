@@ -1,5 +1,5 @@
-//! Everything the IME reads from the settings folder: the settings, and one
-//! engine every field shares, so a word registered in one application is
+//! Everything the IME reads from the settings folder: the settings, the
+//! functions the user writes, and one engine every field shares, so a word registered in one application is
 //! offered in the next. Only one field has the focus at a time, so the
 //! commit history the engine keeps is still that field's.
 
@@ -9,10 +9,12 @@ use std::rc::Rc;
 
 use kanaemi_config::DictionarySource;
 use kanaemi_core::{Candidate, Config, Converter, Effect, Event, Mode};
-use kanaemi_engine::{Engine, LineSink, Selections};
+use kanaemi_engine::{Engine, Functions, LineSink, Selections};
+use kanaemi_functions::LuauFunctions;
 
 use crate::control::{ControlPort, ControlRequest};
 use crate::dictionaries::{self, FileStamp, Stamp};
+use crate::functions;
 use crate::settings;
 
 /// What this process may do with the settings folder.
@@ -46,6 +48,10 @@ pub struct Profile {
     /// Counts reloads of the settings, so a field knows when to rebuild its core.
     generation: u64,
     engine: SharedEngine,
+    functions: Rc<LuauFunctions>,
+    functions_stamp: functions::Stamp,
+    /// As the settings name them.
+    disabled_functions: Vec<String>,
     settings_stamp: Option<kanaemi_engine::FileStamp>,
     dictionary_stamp: Stamp,
     user_stamp: FileStamp,
@@ -84,13 +90,19 @@ impl Profile {
         let (settings, settings_stamp) = settings::read_stamped(&dir, access);
         let dictionary_stamp = dictionaries::stamp(&dir, settings.dictionaries.as_deref());
         let user_stamp = dictionaries::user_stamp(&dir);
-        let engine = dictionaries::open_engine(&dir, settings.dictionaries.as_deref(), access);
+        let functions_stamp = functions::stamp(&dir);
+        let functions = functions::open(&dir, &settings.disabled_functions);
+        let mut engine = dictionaries::open_engine(&dir, settings.dictionaries.as_deref(), access);
+        engine.set_functions(Some(functions.clone() as Rc<dyn Functions>));
         let mut profile = Self {
             access,
             config: settings.config,
             dictionaries: settings.dictionaries,
             generation: 0,
             engine: SharedEngine(Rc::new(RefCell::new(engine))),
+            functions,
+            functions_stamp,
+            disabled_functions: settings.disabled_functions,
             settings_stamp,
             dictionary_stamp,
             user_stamp,
@@ -122,10 +134,13 @@ impl Profile {
     }
 
     /// Reads again what changed on disk since it was read: the settings,
-    /// the dictionaries in use, and the record of picks.
+    /// the functions, the dictionaries in use, and the record of picks.
     pub(crate) fn reload_if_changed(&mut self) {
+        let mut functions_changed = false;
         if settings::stamp(&self.dir) != self.settings_stamp {
             let (settings, stamp) = settings::read_stamped(&self.dir, self.access);
+            functions_changed = settings.disabled_functions != self.disabled_functions;
+            self.disabled_functions = settings.disabled_functions;
             self.settings_stamp = stamp;
             self.config = settings.config;
             self.dictionaries = settings.dictionaries;
@@ -136,13 +151,20 @@ impl Profile {
             self.generation += 1;
             tracing::info!("settings read again");
         }
+        let functions_stamp = functions::stamp(&self.dir);
+        if functions_changed || functions_stamp != self.functions_stamp {
+            self.functions_stamp = functions_stamp;
+            self.open_functions();
+            tracing::info!("functions read again");
+        }
         let stamp = dictionaries::stamp(&self.dir, self.dictionaries.as_deref());
         let user_stamp = dictionaries::user_stamp(&self.dir);
         let user_changed = std::mem::replace(&mut self.user_stamp, user_stamp) != user_stamp;
         if stamp != self.dictionary_stamp {
             self.dictionary_stamp = stamp;
-            let engine =
+            let mut engine =
                 dictionaries::open_engine(&self.dir, self.dictionaries.as_deref(), self.access);
+            engine.set_functions(Some(self.functions.clone() as Rc<dyn Functions>));
             let mut shared = self.engine.0.borrow_mut();
             let previous = std::mem::replace(&mut *shared, engine);
             // A sandbox cannot read the user custom dictionary back, so the
@@ -166,6 +188,20 @@ impl Profile {
             self.read_selections(&mut shared.borrow_mut());
             tracing::info!("record of picks read again");
         }
+    }
+
+    fn open_functions(&mut self) {
+        self.functions = functions::open(&self.dir, &self.disabled_functions);
+        self.engine
+            .0
+            .borrow_mut()
+            .set_functions(Some(self.functions.clone() as Rc<dyn Functions>));
+    }
+
+    /// Logs what the functions printed and how they failed since the last
+    /// call.
+    pub(crate) fn log_functions(&self) {
+        functions::log(&self.functions);
     }
 
     /// Teaches the engine what an event did. The record of picks is written
@@ -279,6 +315,12 @@ impl Profile {
 #[derive(Clone)]
 pub(crate) struct SharedEngine(Rc<RefCell<Engine>>);
 
+impl SharedEngine {
+    pub(crate) fn without_functions<T>(&self, run: impl FnOnce() -> T) -> T {
+        self.0.borrow().without_functions(run)
+    }
+}
+
 impl Converter for SharedEngine {
     fn convert(&self, reading: &str, okurigana: Option<&str>) -> Vec<Candidate> {
         self.0.borrow().convert(reading, okurigana)
@@ -296,8 +338,11 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use kanaemi_config::{DICTIONARY_DIR, FILE_NAME, SELECTIONS_FILE, USER_CUSTOM_FILE};
+    use kanaemi_config::{
+        DICTIONARY_DIR, FILE_NAME, FUNCTIONS_DIR, SELECTIONS_FILE, USER_CUSTOM_FILE,
+    };
     use kanaemi_core::Action;
+    use kanaemi_engine::Dictionary;
 
     use super::*;
 
@@ -344,6 +389,160 @@ mod tests {
             .unwrap()
             .set_modified(SystemTime::UNIX_EPOCH)
             .unwrap();
+    }
+
+    /// A folder whose dictionary has a word filled by the function `f`,
+    /// written as `source`.
+    fn with_function(name: &str, source: &str) -> PathBuf {
+        let dir = temp_dir(name);
+        fs::write(dir.join(DICTIONARY_DIR).join("words.tsv"), "よみ\t{-:f}\n").unwrap();
+        fs::create_dir_all(dir.join(FUNCTIONS_DIR)).unwrap();
+        fs::write(dir.join(FUNCTIONS_DIR).join("f.luau"), source).unwrap();
+        dir
+    }
+
+    #[test]
+    fn every_word_of_the_built_in_dictionaries_is_a_candidate() {
+        let profile = Profile::open(temp_dir("builtin-words"));
+        for builtin in kanaemi_config::BUILTIN_DICTIONARIES {
+            let (dictionary, invalid) = kanaemi_engine::TextDictionary::parse(builtin.text);
+            assert_eq!(invalid, [], "{}", builtin.name);
+            let mut readings: Vec<&str> = builtin
+                .text
+                .lines()
+                // A reading with a number is looked up with one: below.
+                .filter(|line| !line.starts_with('#') && !line.contains("{}"))
+                .filter_map(|line| line.split('\t').next())
+                .collect();
+            readings.dedup();
+            for reading in readings {
+                let lines = builtin
+                    .text
+                    .lines()
+                    .filter(|line| line.split('\t').next() == Some(reading))
+                    .count();
+                assert_eq!(dictionary.lookup(reading).len(), lines, "{reading}");
+                assert_eq!(surfaces(&profile, reading).len(), lines, "{reading}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_built_in_years_go_between_western_and_japanese_eras() {
+        let profile = Profile::open(temp_dir("builtin-years"));
+        let has = |reading: &str, surface: &str| {
+            surfaces(&profile, reading).contains(&surface.to_owned())
+        };
+        assert!(has("2026ねん", "令和8年"));
+        assert!(has("2019ねん", "令和1年"));
+        assert!(has("2019ねん", "平成31年"));
+        assert_eq!(
+            surfaces(&profile, "2026ねん")
+                .iter()
+                .filter(|s| s.starts_with("令和"))
+                .count(),
+            1
+        );
+        assert!(has("れいわ8ねん", "2026年"));
+        assert!(has("しょうわ64ねん", "1989年"));
+        assert!(!has("へいせい32ねん", "2020年"));
+    }
+
+    #[test]
+    fn a_built_in_dictionary_is_used_only_where_a_written_list_has_it() {
+        let dir = temp_dir("builtin-listed");
+        fs::write(dir.join(FILE_NAME), "dictionaries = [\"custom\"]\n").unwrap();
+        let mut profile = Profile::open(&dir);
+        assert_eq!(surfaces(&profile, "いま"), Vec::<String>::new());
+        fs::write(
+            dir.join(FILE_NAME),
+            "dictionaries = [\"custom\", \"builtin:time\"]\n",
+        )
+        .unwrap();
+        age(&dir.join(FILE_NAME));
+        profile.reload_if_changed();
+        assert_eq!(surfaces(&profile, "いま").len(), 3);
+    }
+
+    #[test]
+    fn a_function_in_the_settings_folder_fills_a_placeholder() {
+        let dir = with_function("function", "return function(s) return '<' .. s .. '>' end");
+        assert_eq!(surfaces(&Profile::open(&dir), "よみ"), ["<よみ>"]);
+    }
+
+    #[test]
+    fn a_changed_function_is_read_again() {
+        let dir = with_function("function-changed", "return function() return 'old' end");
+        let mut profile = Profile::open(&dir);
+        let path = dir.join(FUNCTIONS_DIR).join("f.luau");
+        fs::write(&path, "return function() return 'new!' end").unwrap();
+        age(&path);
+        profile.reload_if_changed();
+        assert_eq!(surfaces(&profile, "よみ"), ["new!"]);
+    }
+
+    #[test]
+    fn a_changed_module_of_a_function_is_read_again() {
+        let dir = with_function(
+            "module-changed",
+            "local m = require('./lib/m')\nreturn function() return m end",
+        );
+        let lib = dir.join(FUNCTIONS_DIR).join("lib");
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join("m.luau"), "return 'old'").unwrap();
+        let mut profile = Profile::open(&dir);
+        assert_eq!(surfaces(&profile, "よみ"), ["old"]);
+        fs::write(lib.join("m.luau"), "return 'new!'").unwrap();
+        age(&lib.join("m.luau"));
+        profile.reload_if_changed();
+        assert_eq!(surfaces(&profile, "よみ"), ["new!"]);
+    }
+
+    #[test]
+    fn a_changed_module_however_deep_is_read_again() {
+        let path = "a/b/c/d/e/f/g/h/i/m";
+        let dir = with_function(
+            "deep-module",
+            &format!("local m = require('./{path}')\nreturn function() return m end"),
+        );
+        let module = dir.join(FUNCTIONS_DIR).join(format!("{path}.luau"));
+        fs::create_dir_all(module.parent().unwrap()).unwrap();
+        fs::write(&module, "return 'old'").unwrap();
+        let mut profile = Profile::open(&dir);
+        assert_eq!(surfaces(&profile, "よみ"), ["old"]);
+        fs::write(&module, "return 'new!'").unwrap();
+        age(&module);
+        profile.reload_if_changed();
+        assert_eq!(surfaces(&profile, "よみ"), ["new!"]);
+    }
+
+    #[test]
+    fn a_function_the_settings_disable_fills_nothing() {
+        let dir = with_function("disabled", "return function() return 'mine' end");
+        let mut profile = Profile::open(&dir);
+        assert_eq!(surfaces(&profile, "よみ"), ["mine"]);
+        fs::write(dir.join(FILE_NAME), "[functions]\ndisabled = [\"f\"]\n").unwrap();
+        age(&dir.join(FILE_NAME));
+        profile.reload_if_changed();
+        assert_eq!(surfaces(&profile, "よみ"), Vec::<String>::new());
+        assert!(surfaces(&profile, "2026ねん").contains(&"令和8年".to_owned()));
+        fs::write(
+            dir.join(FILE_NAME),
+            "[functions]\ndisabled = [\"f\", \"builtin:wareki\"]\n",
+        )
+        .unwrap();
+        age(&dir.join(FILE_NAME));
+        profile.reload_if_changed();
+        assert!(!surfaces(&profile, "2026ねん").contains(&"令和8年".to_owned()));
+    }
+
+    #[test]
+    fn dictionaries_opened_again_keep_the_functions() {
+        let dir = with_function("reopened", "return function() return 'filled' end");
+        let mut profile = Profile::open(&dir);
+        fs::write(dir.join(DICTIONARY_DIR).join("more.tsv"), "ほか\t他\n").unwrap();
+        profile.reload_if_changed();
+        assert_eq!(surfaces(&profile, "よみ"), ["filled"]);
     }
 
     #[test]

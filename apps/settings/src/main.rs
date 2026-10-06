@@ -24,6 +24,7 @@ mod checks;
 mod complete;
 mod controls;
 mod convert;
+mod highlight;
 mod icons;
 mod intents;
 mod keys;
@@ -113,15 +114,17 @@ enum Page {
     Display,
     Input,
     Dictionaries,
+    Functions,
     Keys,
     About,
 }
 
 impl Page {
-    const ALL: [Page; 5] = [
+    const ALL: [Page; 6] = [
         Page::Display,
         Page::Input,
         Page::Dictionaries,
+        Page::Functions,
         Page::Keys,
         Page::About,
     ];
@@ -131,6 +134,7 @@ impl Page {
             Page::Display => "表示",
             Page::Input => "入力",
             Page::Dictionaries => "辞書",
+            Page::Functions => "関数",
             Page::Keys => "キーバインド",
             Page::About => "かなえみについて",
         }
@@ -141,6 +145,7 @@ impl Page {
             Page::Display => icons::EYE,
             Page::Input => icons::KEYBOARD,
             Page::Dictionaries => icons::BOOK,
+            Page::Functions => icons::CODE,
             Page::Keys => icons::COMMAND,
             Page::About => icons::INFO_CIRCLE,
         }
@@ -194,6 +199,7 @@ fn App() -> Element {
                 Page::Display => rsx! { pages::Display {} },
                 Page::Input => rsx! { pages::Input {} },
                 Page::Dictionaries => rsx! { pages::Dictionaries {} },
+                Page::Functions => rsx! { pages::Functions {} },
                 Page::Keys => rsx! { keys::Keys {} },
                 Page::About => rsx! { pages::About {} },
             }

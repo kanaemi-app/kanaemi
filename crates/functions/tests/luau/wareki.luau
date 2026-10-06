@@ -1,0 +1,28 @@
+local wareki = functions["wareki"]
+
+test("writes a western year in the era of its last day", function()
+	eq(wareki("2026"), "令和8")
+	eq(wareki("２０２６"), "令和8")
+	eq(wareki("2019"), "令和1")
+	eq(wareki("1989"), "平成1")
+	eq(wareki("1868"), "明治1")
+end)
+
+test("writes the era of the day the argument names", function()
+	eq(wareki("2019", "1-1"), "平成31")
+	eq(wareki("1989", "1-1"), "昭和64")
+	eq(wareki("2026", "1-1"), "令和8")
+end)
+
+test("has nothing before 明治, or for what is no year", function()
+	eq(wareki("1800"), nil)
+	eq(wareki("1868", "1-1"), nil)
+	eq(wareki("12345"), nil)
+	eq(wareki("2026", "13-1"), nil)
+	eq(wareki("2026", "2-31"), nil)
+	eq(wareki("2026", "4-31"), nil)
+	eq(wareki("2025", "2-29"), nil)
+	eq(wareki("2024", "2-29"), "令和6")
+	eq(wareki("2026", "x"), nil)
+	eq(wareki("きょう"), nil)
+end)

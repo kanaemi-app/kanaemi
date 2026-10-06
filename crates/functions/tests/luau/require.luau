@@ -1,0 +1,15 @@
+test("a built-in file requires the modules among the built-in files", function()
+	local number = require("./lib/number")
+	eq(number.each({ 1 }, number.ASCII), "1")
+end)
+
+test("a built-in file cannot require out of the built-in files", function()
+	local ok = pcall(function()
+		return require("../anything")
+	end)
+	eq(ok, false)
+end)
+
+test("a module required twice is the same table", function()
+	eq(require("./lib/number"), require("./lib/number"))
+end)

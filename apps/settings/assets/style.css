@@ -19,6 +19,9 @@
   --warn-bg: #fff4e5;
   --warn-border: #f0b35b;
   --error: #d70015;
+  --string: #2e7d32;
+  --number: #6a3ab2;
+  --name: #1f5fa8;
   color-scheme: light dark;
 }
 
@@ -37,6 +40,9 @@
     --warn-bg: #3a2c16;
     --warn-border: #8a6326;
     --error: #ff6961;
+    --string: #7cc47f;
+    --number: #b394f0;
+    --name: #6cb6ff;
     --accent: #f2704b;
     --selection-text: #1d2433;
   }
@@ -432,6 +438,30 @@ table.bindings tr + tr td { border-top: 1px solid var(--separator); }
 .item-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .item-description { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .item-warning { color: var(--error); font-size: 13px; margin-top: 2px; }
+.chip-kind {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--control-border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: normal;
+  vertical-align: 1px;
+}
+pre.source {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--control);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.hl-comment { color: var(--muted); font-style: italic; }
+.hl-string { color: var(--string); }
+.hl-number, .hl-boolean, .hl-constant { color: var(--number); }
+.hl-keyword { color: var(--accent); font-weight: 600; }
+.hl-function, .hl-type, .hl-variable-builtin { color: var(--name); }
 .meta { color: var(--muted); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ordered .info, .control .info, .section-actions button, .modal header button {
   background: var(--control);

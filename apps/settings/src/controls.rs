@@ -104,6 +104,8 @@ pub struct ListItem {
     pub convert: Option<String>,
     /// What is wrong with it, such as lines the IME cannot read.
     pub warning: Option<String>,
+    /// Where it comes from, beside its name, such as built into Kanaemi.
+    pub chip: Option<String>,
 }
 
 /// Items in a chosen order, each on or off: the order is the order of use,
@@ -134,6 +136,7 @@ pub fn OrderedList(
                 meta: None,
                 convert: None,
                 warning: None,
+                chip: None,
             })
     };
     let rest: Vec<ListItem> = items
@@ -237,7 +240,12 @@ fn ItemBody(
 ) -> Element {
     rsx! {
         div { class: "item-text",
-            span { class: "name", "{item.label}" }
+            span { class: "name",
+                "{item.label}"
+                if let Some(chip) = &item.chip {
+                    span { class: "chip-kind", "{chip}" }
+                }
+            }
             if let Some(description) = &item.description {
                 span { class: "item-description", "{description}" }
             }
@@ -270,6 +278,55 @@ fn ItemBody(
                 },
                 Icon { paths: icons::LIST_SEARCH }
             }
+        }
+    }
+}
+
+/// Items each on or off, in no order: what is off is written to `path` as a
+/// list of names. With `on_info`, each row offers a look inside.
+#[component]
+pub fn SwitchList(
+    items: Vec<ListItem>,
+    off: Vec<String>,
+    path: Vec<String>,
+    on_info: Option<EventHandler<String>>,
+) -> Element {
+    let ctx = use_context::<Ctx>();
+    let error = ctx.errors.read().get(&path.join(".")).cloned();
+    let write = move |names: Vec<String>| {
+        let path: Vec<&str> = path.iter().map(String::as_str).collect();
+        ctx.change(&path, Some(names.into_iter().collect()));
+    };
+    rsx! {
+        ul { class: "ordered",
+            for item in items {
+                li {
+                    key: "{item.name}",
+                    class: if off.contains(&item.name) { "off" } else { "" },
+                    ItemBody { item: item.clone(), on_info, on_convert: None }
+                    input {
+                        class: "switch",
+                        r#type: "checkbox",
+                        checked: !off.contains(&item.name),
+                        onchange: {
+                            let off = off.clone();
+                            let write = write.clone();
+                            let name = item.name.clone();
+                            move |_| {
+                                let mut names: Vec<String> =
+                                    off.iter().filter(|n| **n != name).cloned().collect();
+                                if !off.contains(&name) {
+                                    names.push(name.clone());
+                                }
+                                write(names);
+                            }
+                        },
+                    }
+                }
+            }
+        }
+        if let Some(error) = error {
+            p { class: "error list-error", "使えません：{error}" }
         }
     }
 }

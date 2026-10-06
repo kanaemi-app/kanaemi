@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use unicode_normalization::UnicodeNormalization;
 
-use crate::numeric::{CLOSE, Notation, OPEN};
+use crate::placeholder::{CLOSE, OPEN, Placeholder, fits};
 use crate::{ConjugationTable, Dictionary, Entry, okuri_row};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -24,9 +24,9 @@ pub enum InvalidReason {
     ConjugationType,
     #[error("the cost is not an integer from 0 to 4294967295")]
     Cost,
-    /// Includes a numeric line that conjugates or has okurigana, which the
-    /// format does not allow.
-    #[error("a number placeholder is not written as the format allows")]
+    /// Includes a line with placeholders that conjugates or has okurigana,
+    /// which the format does not allow.
+    #[error("a placeholder is not written as the format allows")]
     Placeholder,
 }
 
@@ -381,8 +381,9 @@ fn parse_line(line: &str, user_custom: bool) -> Result<Record, InvalidReason> {
         return Err(InvalidReason::Empty);
     }
     let numbers = reading.text.matches(OPEN).count();
-    if surface.matches(OPEN).count() > numbers
-        || numbers > 0 && (conjugation.is_some() || reading.okurigana.is_some())
+    let placeholders = numbers > 0 || surface.contains(OPEN);
+    if !fits(&surface, numbers)
+        || placeholders && (conjugation.is_some() || reading.okurigana.is_some())
     {
         return Err(InvalidReason::Placeholder);
     }
@@ -520,29 +521,26 @@ fn push_reading_char(
     Ok(())
 }
 
-/// A surface, whose `{…}` are placeholders with the name of a notation.
+/// A surface, whose `{…}` are placeholders.
 pub(crate) fn unescape_surface(field: &str) -> Result<String, InvalidReason> {
     let mut out = String::new();
     let mut chars = field.chars();
     while let Some(c) = chars.next() {
         match c {
-            '\\' => match chars.next() {
-                Some('{') => out.push('{'),
-                Some(c) => out.push(unescape_char(c)?),
-                None => return Err(InvalidReason::Escape),
-            },
+            '\\' => out.push(unescape_surface_char(&mut chars)?),
             '{' => {
-                let mut name = String::new();
+                let mut inside = String::new();
                 loop {
                     match chars.next() {
                         Some('}') => break,
-                        Some(c) => name.push(c),
-                        None => return Err(InvalidReason::Placeholder),
+                        Some('\\') => inside.push(unescape_surface_char(&mut chars)?),
+                        Some(OPEN | CLOSE) | None => return Err(InvalidReason::Placeholder),
+                        Some(c) => inside.push(c),
                     }
                 }
-                Notation::named(&name).ok_or(InvalidReason::Placeholder)?;
+                Placeholder::parse(&inside).ok_or(InvalidReason::Placeholder)?;
                 out.push(OPEN);
-                out.push_str(&name);
+                out.push_str(&inside);
                 out.push(CLOSE);
             }
             OPEN | CLOSE => return Err(InvalidReason::Placeholder),
@@ -550,6 +548,15 @@ pub(crate) fn unescape_surface(field: &str) -> Result<String, InvalidReason> {
         }
     }
     Ok(out)
+}
+
+/// The character a surface's `\` escapes, read from `rest`.
+fn unescape_surface_char(rest: &mut impl Iterator<Item = char>) -> Result<char, InvalidReason> {
+    match rest.next() {
+        Some(c @ ('{' | '}')) => Ok(c),
+        Some(c) => unescape_char(c),
+        None => Err(InvalidReason::Escape),
+    }
 }
 
 fn unescape_char(c: char) -> Result<char, InvalidReason> {
@@ -568,14 +575,14 @@ pub(crate) fn escape(field: &str) -> String {
         .replace('\n', "\\n")
 }
 
-/// A reading or surface the engine gave out, with a numeric item's
-/// placeholders written `{}` and `{name}` again, for people to read. A literal
+/// A reading or surface the engine gave out, with its placeholders written
+/// in braces again, for people to read. A literal
 /// `{` is shown as it is, so the text cannot be given back to the engine.
 pub fn show_placeholders(text: impl AsRef<str>) -> String {
     text.as_ref().replace(OPEN, "{").replace(CLOSE, "}")
 }
 
-/// `text` with each `{}` or `{name}` of a notation made a placeholder, as an
+/// `text` with each `{…}` written as a placeholder may be made one, as an
 /// item's reading or surface holds them; other braces stay as written.
 /// `None` when there is no placeholder. The inverse of [`show_placeholders`].
 pub fn mark_placeholders(text: impl AsRef<str>) -> Option<String> {
@@ -586,7 +593,7 @@ pub fn mark_placeholders(text: impl AsRef<str>) -> Option<String> {
         out.push_str(&rest[..open]);
         let inside = &rest[open + 1..];
         match inside.find('}') {
-            Some(close) if Notation::named(&inside[..close]).is_some() => {
+            Some(close) if Placeholder::parse(&inside[..close]).is_some() => {
                 out.push(OPEN);
                 out.push_str(&inside[..close]);
                 out.push(CLOSE);
@@ -603,8 +610,27 @@ pub fn mark_placeholders(text: impl AsRef<str>) -> Option<String> {
     found.then_some(out)
 }
 
+/// Writes placeholders as `{…}`, a literal `{` so it is not taken for one, and
+/// a `}` in a placeholder so it does not end it.
 pub(crate) fn escape_surface(surface: &str) -> String {
-    escape_braces(&escape(surface))
+    let mut out = String::new();
+    let mut inside = false;
+    for c in escape(surface).chars() {
+        match c {
+            OPEN => {
+                inside = true;
+                out.push('{');
+            }
+            CLOSE => {
+                inside = false;
+                out.push('}');
+            }
+            '{' => out.push_str("\\{"),
+            '}' if inside => out.push_str("\\}"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Writes placeholders as `{…}`, and a literal `{` so it is not taken for one.

@@ -5,6 +5,8 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use crate::BUILTIN_DICTIONARIES;
+
 /// The settings file, in the settings folder.
 pub const FILE_NAME: &str = "config.toml";
 /// The user custom dictionary's file, in the settings folder.
@@ -18,6 +20,8 @@ pub const SELECTIONS_FILE: &str = "selections.tsv";
 pub const DICTIONARY_DIR: &str = "dictionaries";
 /// The folder of romaji table files, in the settings folder.
 pub const ROMAJI_DIR: &str = "romaji";
+/// The folder of the functions a user writes, in the settings folder.
+pub const FUNCTIONS_DIR: &str = "functions";
 /// The extension of text dictionaries and romaji tables.
 pub const TEXT_EXTENSION: &str = "tsv";
 /// The extension of binary dictionaries.
@@ -155,10 +159,13 @@ pub enum DictionarySource {
         binary: PathBuf,
         text: PathBuf,
     },
+    /// A built-in dictionary, by its name.
+    Builtin(String),
 }
 
 /// The dictionaries to read, in order: `listed`, or else the user custom
-/// dictionary followed by the dictionary files in `dir`'s dictionary folder.
+/// dictionary followed by the dictionary files in `dir`'s dictionary folder,
+/// and then the built-in dictionaries.
 pub fn dictionary_sources(
     dir: impl AsRef<Path>,
     listed: Option<&[DictionarySource]>,
@@ -191,6 +198,11 @@ pub fn dictionary_sources(
                     },
                     None => DictionarySource::File(folder.join(name)),
                 }),
+        )
+        .chain(
+            BUILTIN_DICTIONARIES
+                .iter()
+                .map(|dictionary| DictionarySource::Builtin(dictionary.name.to_owned())),
         )
         .collect()
 }

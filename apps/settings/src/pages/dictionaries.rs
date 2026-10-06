@@ -26,6 +26,7 @@ pub fn Dictionaries() -> Element {
         meta: file_size(&custom),
         convert: None,
         warning: invalid_lines(&custom, true),
+        chip: None,
     }];
     items.extend(files.iter().map(|name| {
         let path = folder.join(name);
@@ -52,7 +53,17 @@ pub fn Dictionaries() -> Element {
             warning: (!is_binary(&path))
                 .then(|| invalid_lines(&path, false))
                 .flatten(),
+            chip: None,
         }
+    }));
+    items.extend(BUILTIN_DICTIONARIES.iter().map(|builtin| ListItem {
+        name: format!("{BUILTIN_PREFIX}{}", builtin.name),
+        label: description(builtin.text).unwrap_or_else(|| builtin.name.to_owned()),
+        description: Some("かなえみに入っている辞書。変換するたびに値が決まる語です。".to_owned()),
+        meta: None,
+        convert: None,
+        warning: None,
+        chip: Some("組み込み".to_owned()),
     }));
     // A listed file that is gone still shows, so it can be taken out.
     for name in &chosen {
@@ -64,16 +75,28 @@ pub fn Dictionaries() -> Element {
                 meta: None,
                 convert: None,
                 warning: None,
+                chip: None,
             });
         }
     }
     let chosen_for_official = chosen.clone();
     let mut looking = use_signal(|| None::<String>);
     let looked = looking().map(|name| {
-        if name == USER_CUSTOM {
-            ("ユーザー辞書".to_owned(), custom.clone(), true)
-        } else {
-            (name.clone(), folder.join(&name), false)
+        let builtin = name
+            .strip_prefix(BUILTIN_PREFIX)
+            .and_then(builtin_dictionary);
+        match builtin {
+            _ if name == USER_CUSTOM => (
+                "ユーザー辞書".to_owned(),
+                custom.clone(),
+                Lookup::UserCustom,
+            ),
+            Some(builtin) => (
+                description(builtin.text).unwrap_or_else(|| name.clone()),
+                PathBuf::from(&name),
+                Lookup::Builtin(builtin.text),
+            ),
+            None => (name.clone(), folder.join(&name), Lookup::File),
         }
     });
     let on_convert = {
@@ -107,12 +130,12 @@ pub fn Dictionaries() -> Element {
                 on_convert,
             }
         }
-        if let Some((label, path, user_custom)) = looked {
+        if let Some((label, path, lookup)) = looked {
             DictionaryEntries {
                 key: "{path.display()}",
                 label,
                 path,
-                user_custom,
+                lookup,
                 on_close: move |_| looking.set(None),
             }
         }
@@ -481,16 +504,26 @@ fn convert_and_use(mut ctx: Ctx, folder: &Path, listed: Option<&[String]>, name:
 
 /// A dictionary file opened to look words up in: the user custom dictionary
 /// as the IME reads it, any other as text or binary by its first bytes.
-fn open_for_lookup(path: &Path, user_custom: bool) -> Result<Box<dyn Dictionary>, String> {
-    if user_custom {
+/// Where the dictionary looked into comes from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Lookup {
+    UserCustom,
+    File,
+    /// A built-in dictionary, by its text.
+    Builtin(&'static str),
+}
+
+fn open_for_lookup(path: &Path, lookup: Lookup) -> Result<Box<dyn Dictionary>, String> {
+    match lookup {
         // Missing until a word is first registered: then it has no words.
-        return TextDictionary::read_user_custom(path)
+        Lookup::UserCustom => TextDictionary::read_user_custom(path)
             .map(|(dictionary, _)| Box::new(dictionary) as Box<dyn Dictionary>)
-            .map_err(|e| e.to_string());
+            .map_err(|e| e.to_string()),
+        Lookup::File => open_dictionary(path)
+            .map(|(dictionary, _)| dictionary)
+            .map_err(|e| e.to_string()),
+        Lookup::Builtin(text) => Ok(Box::new(TextDictionary::parse(text).0)),
     }
-    open_dictionary(path)
-        .map(|(dictionary, _)| dictionary)
-        .map_err(|e| e.to_string())
 }
 
 /// How many readings the lookup lists at most, so a large dictionary opens
@@ -548,7 +581,7 @@ type Opened = (Option<SystemTime>, Rc<Result<Box<dyn Dictionary>, String>>);
 fn DictionaryEntries(
     label: String,
     path: PathBuf,
-    user_custom: bool,
+    lookup: Lookup,
     on_close: EventHandler<()>,
 ) -> Element {
     // The store is read again when the window comes back, as a word may have
@@ -561,7 +594,7 @@ fn DictionaryEntries(
         match &*opened {
             Some((at, dictionary)) if *at == stamp => dictionary.clone(),
             _ => {
-                let dictionary = Rc::new(open_for_lookup(&path, user_custom));
+                let dictionary = Rc::new(open_for_lookup(&path, lookup));
                 *opened = Some((stamp, dictionary.clone()));
                 dictionary
             }

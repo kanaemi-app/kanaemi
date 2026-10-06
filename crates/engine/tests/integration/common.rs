@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use kanaemi_core::Effect;
-use kanaemi_engine::{Dictionary, Engine, LineSink, RankingModel, open_dictionary};
+use kanaemi_engine::{
+    Call, Dictionary, Engine, Functions, LineSink, RankingModel, open_dictionary,
+};
 
 /// What the core would report, fed to an engine one effect at a time.
 pub trait Learn {
@@ -131,4 +133,52 @@ pub fn model(bits: u8, weights: &[(&str, f32)]) -> Arc<RankingModel> {
     let path = temp_path("ranking.model");
     std::fs::write(&path, file).unwrap();
     Arc::new(RankingModel::open(&path).unwrap())
+}
+
+/// Stand-ins for the functions that write a number, which the engine alone
+/// does not have: `wide-num`, and `kanji` for numbers below a hundred only.
+pub struct Notations;
+
+impl Notations {
+    pub fn shared() -> Option<Rc<dyn Functions>> {
+        Some(Rc::new(Self))
+    }
+}
+
+impl Functions for Notations {
+    fn has(&self, name: &str) -> bool {
+        matches!(name, "wide-num" | "kanji")
+    }
+
+    fn call(&self, call: &Call) -> Option<String> {
+        let digits: Vec<u32> = call
+            .source
+            .chars()
+            .map(|c| match c {
+                '0'..='9' => Some(u32::from(c) - u32::from('0')),
+                '０'..='９' => Some(u32::from(c) - u32::from('０')),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        const KANJI: [&str; 10] = ["〇", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+        match call.name {
+            "wide-num" => digits
+                .iter()
+                .map(|&d| char::from_u32(u32::from('０') + d))
+                .collect(),
+            _ => {
+                let value = digits.iter().try_fold(0u32, |n, &d| {
+                    n.checked_mul(10)?.checked_add(d).filter(|&n| n < 100)
+                })?;
+                let (tens, ones) = (value / 10, value % 10);
+                Some(match (tens, ones) {
+                    (0, ones) => KANJI[ones as usize].to_owned(),
+                    (1, 0) => "十".to_owned(),
+                    (1, ones) => format!("十{}", KANJI[ones as usize]),
+                    (tens, 0) => format!("{}十", KANJI[tens as usize]),
+                    (tens, ones) => format!("{}十{}", KANJI[tens as usize], KANJI[ones as usize]),
+                })
+            }
+        }
+    }
 }

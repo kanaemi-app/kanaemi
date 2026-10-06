@@ -3,6 +3,7 @@
 mod about;
 mod dictionaries;
 mod display;
+mod functions;
 mod input;
 
 use std::cell::RefCell;
@@ -14,8 +15,9 @@ use std::time::SystemTime;
 
 use dioxus::prelude::*;
 use kanaemi_config::{
-    DICTIONARY_DIR, DictionarySource, ROMAJI_DIR, SELECTIONS_FILE, TEXT_EXTENSION, USER_CUSTOM,
-    USER_CUSTOM_FILE, binary_name, bundled_romaji_tables, default_romaji_tables, description,
+    BUILTIN_DICTIONARIES, BUILTIN_PREFIX, DICTIONARY_DIR, DictionarySource, FUNCTIONS_DIR,
+    ROMAJI_DIR, SELECTIONS_FILE, TEXT_EXTENSION, USER_CUSTOM, USER_CUSTOM_FILE, binary_name,
+    builtin_dictionary, bundled_romaji_tables, default_romaji_tables, description,
     dictionary_files, dictionary_sources, read_romaji_table,
 };
 use kanaemi_core::{Config, RomajiTable};
@@ -26,7 +28,7 @@ use kanaemi_engine::{
 use unicode_normalization::UnicodeNormalization;
 
 use crate::checks::invalid_lines;
-use crate::controls::{Group, KeyToggle, ListItem, OrderedList, ResetLine, Row};
+use crate::controls::{Group, KeyToggle, ListItem, OrderedList, ResetLine, Row, SwitchList};
 use crate::convert::{Conversion, conversion, convert, import_skk, is_binary};
 use crate::icons::{self, Icon};
 use crate::logs;
@@ -36,6 +38,7 @@ use crate::{Ctx, open_folder, open_url};
 pub use about::*;
 pub use dictionaries::*;
 pub use display::*;
+pub use functions::*;
 pub use input::*;
 
 fn path(items: &[&str]) -> Vec<String> {
@@ -102,6 +105,7 @@ fn source_name(folder: &Path, source: &DictionarySource) -> String {
         DictionarySource::File(path) | DictionarySource::Converted { binary: path, .. } => {
             listed_name(folder, path)
         }
+        DictionarySource::Builtin(name) => format!("{BUILTIN_PREFIX}{name}"),
     }
 }
 
@@ -160,6 +164,13 @@ mod tests {
 
         let chosen = default_dictionaries(&dir);
 
-        assert_eq!(chosen, [USER_CUSTOM, "b.tsv", "sub/a.kdic"]);
+        assert_eq!(chosen[..3], [USER_CUSTOM, "b.tsv", "sub/a.kdic"]);
+        assert_eq!(
+            chosen[3..],
+            BUILTIN_DICTIONARIES
+                .iter()
+                .map(|d| format!("{BUILTIN_PREFIX}{}", d.name))
+                .collect::<Vec<_>>()
+        );
     }
 }
