@@ -2,8 +2,8 @@ use std::fs;
 
 use kanaemi_core::Converter;
 use kanaemi_engine::{
-    Engine, FileSink, InvalidReason, LineSink, Slot, TextDictionary, open_dictionary, replace_file,
-    unhide,
+    Engine, FileSink, InvalidReason, LineSink, Slot, TextDictionary, open_dictionary, registered,
+    replace_file, unhide, unregister,
 };
 
 use crate::common::{Discard, dictionary, temp_path};
@@ -177,6 +177,61 @@ fn unhiding_removes_every_hide_line_of_the_pair_and_nothing_else() {
     let (user, _) = TextDictionary::read_user_custom(&path).unwrap();
     assert!(user.hidden().all(|pair| pair != ("きしゃ", "汽車")));
     assert_eq!(user.hidden().collect::<Vec<_>>(), [("かく", "書く")]);
+}
+
+#[test]
+fn a_hidden_pair_is_registered_when_a_word_line_of_the_file_gives_it() {
+    let path = temp_path("registered.tsv");
+    fs::write(
+        &path,
+        "きしゃ\t記者\n!きしゃ\t記者\n!かく\t書く\nか*っ\t勝っ\n!かった\t勝った\n",
+    )
+    .unwrap();
+
+    let pairs = [("きしゃ", "記者"), ("かった", "勝った"), ("かく", "書く")];
+    assert_eq!(registered(&path, &pairs).unwrap(), [true, true, false]);
+}
+
+#[test]
+fn an_okurigana_word_registers_every_okurigana_of_its_row() {
+    let path = temp_path("registered-row.tsv");
+    fs::write(&path, "か*く\t書く\n!かけ\t書け\n").unwrap();
+
+    let pairs = [("かけ", "書け"), ("かさ", "書さ")];
+    assert_eq!(registered(&path, &pairs).unwrap(), [true, false]);
+    unregister(&path, "かけ", "書け").unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "");
+}
+
+#[test]
+fn a_comment_registers_nothing_and_stays() {
+    let path = temp_path("registered-comment.tsv");
+    fs::write(&path, "#tag\tタグ\n!\\#tag\tタグ\n").unwrap();
+
+    assert_eq!(registered(&path, &[("#tag", "タグ")]).unwrap(), [false]);
+    unregister(&path, "#tag", "タグ").unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "#tag\tタグ\n");
+}
+
+#[test]
+fn a_missing_file_registers_nothing() {
+    let path = temp_path("registered-missing.tsv");
+    assert_eq!(registered(path, &[("きしゃ", "記者")]).unwrap(), [false]);
+}
+
+#[test]
+fn unregistering_removes_the_registration_and_the_hide_lines_of_the_pair() {
+    let path = temp_path("unregister.tsv");
+    fs::write(
+        &path,
+        "# 説明\nきしゃ\t記者\n!きしゃ\t記者\nか*っ\t勝っ\n!かった\t勝った\n!かく\t書く\n",
+    )
+    .unwrap();
+
+    unregister(&path, "きしゃ", "記者").unwrap();
+    unregister(&path, "かった", "勝った").unwrap();
+
+    assert_eq!(fs::read_to_string(&path).unwrap(), "# 説明\n!かく\t書く\n");
 }
 
 #[test]

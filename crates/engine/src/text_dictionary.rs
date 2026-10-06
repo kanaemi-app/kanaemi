@@ -45,6 +45,29 @@ struct Item {
     cost: Option<u32>,
 }
 
+/// A word line of a user custom dictionary.
+pub(crate) struct Registration(Record);
+
+impl Registration {
+    /// Whether the word gives (`reading`, `surface`): a word line of that
+    /// pair, or an okurigana word whose stems the pair goes on from with
+    /// okurigana of its row, as conversion finds it (`か*く` and `書く` for
+    /// `かけ` and `書け`).
+    pub(crate) fn gives(&self, reading: &str, surface: &str) -> bool {
+        match &self.0 {
+            Record::Word { reading: r, item } => r == reading && item.surface == surface,
+            Record::Okuri { stem, kana, item } => {
+                let surface_stem = item.surface.strip_suffix(kana.as_str());
+                let rest = reading.strip_prefix(stem.as_str());
+                let row = |kana: &str| kana.chars().next().and_then(okuri_row);
+                surface_stem.is_some_and(|s| surface.strip_prefix(s) == rest)
+                    && rest.is_some_and(|rest| row(rest).is_some() && row(rest) == row(kana))
+            }
+            Record::Hide { .. } => false,
+        }
+    }
+}
+
 enum Record {
     Word {
         reading: String,
@@ -178,6 +201,19 @@ impl TextDictionary {
             parse_line(line, true),
             Ok(Record::Hide { reading: r, surface: s }) if r == reading && s == surface
         )
+    }
+
+    /// The word `line` of a user custom dictionary registers, read as the
+    /// dictionary reads it: a blank line, a comment, a hide line or an
+    /// invalid one registers none.
+    pub(crate) fn registration(line: &str) -> Option<Registration> {
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        match parse_line(line, true) {
+            Ok(Record::Hide { .. }) | Err(_) => None,
+            Ok(record) => Some(Registration(record)),
+        }
     }
 
     /// A `*` in `reading` is literal: a hide line never marks okurigana.

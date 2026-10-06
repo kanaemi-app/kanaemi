@@ -139,24 +139,50 @@ impl LineSink for FileSink {
 /// (`reading`, `surface`), under the same lock as [`FileSink`]. The other
 /// lines stay byte for byte, and a missing file stays missing.
 pub fn unhide(path: impl AsRef<Path>, reading: &str, surface: &str) -> io::Result<()> {
-    let path = path.as_ref();
+    remove_lines(path.as_ref(), |text| {
+        TextDictionary::hides(text, reading, surface)
+    })
+}
+
+/// For each (reading, surface) of `pairs`, whether a word line of a user
+/// custom dictionary file gives it, as a word registered and then hidden
+/// is. The file is read once; a missing file gives nothing.
+pub fn registered(path: impl AsRef<Path>, pairs: &[(&str, &str)]) -> io::Result<Vec<bool>> {
+    let mut found = vec![false; pairs.len()];
+    let bytes = match fs::read(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(found),
+        bytes => bytes?,
+    };
+    for registration in lines(&bytes).filter_map(|(_, text)| TextDictionary::registration(text?)) {
+        for (found, (reading, surface)) in found.iter_mut().zip(pairs) {
+            *found = *found || registration.gives(reading, surface);
+        }
+    }
+    Ok(found)
+}
+
+/// Takes out the lines that give (`reading`, `surface`) and every line that
+/// hides it, as [`unhide`] does: the pair is as it was before it was
+/// registered.
+pub fn unregister(path: impl AsRef<Path>, reading: &str, surface: &str) -> io::Result<()> {
+    remove_lines(path.as_ref(), |text| {
+        TextDictionary::hides(text, reading, surface)
+            || TextDictionary::registration(text).is_some_and(|r| r.gives(reading, surface))
+    })
+}
+
+/// Rewrites the file without the lines `remove` picks, under the same lock as
+/// [`FileSink`]. The other lines stay byte for byte, a missing file stays
+/// missing, and a file that loses no line is left alone.
+fn remove_lines(path: &Path, remove: impl Fn(&str) -> bool) -> io::Result<()> {
     let _lock = lock(path)?;
     let bytes = match fs::read(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         bytes => bytes?,
     };
     let mut kept = Vec::with_capacity(bytes.len());
-    for (i, line) in bytes.split_inclusive(|&b| b == b'\n').enumerate() {
-        // The parser drops a byte order mark at the start of the file only.
-        let text = match line.strip_prefix("\u{feff}".as_bytes()) {
-            Some(rest) if i == 0 => rest,
-            _ => line,
-        };
-        let text = text.strip_suffix(b"\n").unwrap_or(text);
-        let text = text.strip_suffix(b"\r").unwrap_or(text);
-        let hides = std::str::from_utf8(text)
-            .is_ok_and(|text| TextDictionary::hides(text, reading, surface));
-        if !hides {
+    for (line, text) in lines(&bytes) {
+        if !text.is_some_and(&remove) {
             kept.extend_from_slice(line);
         }
     }
@@ -164,6 +190,23 @@ pub fn unhide(path: impl AsRef<Path>, reading: &str, surface: &str) -> io::Resul
         return Ok(());
     }
     replace_file(path, kept)
+}
+
+/// Each line of a file with its line ending, and its text when it is UTF-8.
+fn lines(bytes: &[u8]) -> impl Iterator<Item = (&[u8], Option<&str>)> {
+    bytes
+        .split_inclusive(|&b| b == b'\n')
+        .enumerate()
+        .map(|(i, line)| {
+            // The parser drops a byte order mark at the start of the file only.
+            let text = match line.strip_prefix("\u{feff}".as_bytes()) {
+                Some(rest) if i == 0 => rest,
+                _ => line,
+            };
+            let text = text.strip_suffix(b"\n").unwrap_or(text);
+            let text = text.strip_suffix(b"\r").unwrap_or(text);
+            (line, std::str::from_utf8(text).ok())
+        })
 }
 
 /// What a line is appended to: the file, or in tests one that fails.

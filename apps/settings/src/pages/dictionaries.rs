@@ -297,18 +297,26 @@ fn HiddenWords(custom: PathBuf) -> Element {
     let mut generation = use_signal(|| 0u32);
     let mut error = use_signal(|| None::<String>);
     let _ = generation();
-    let pairs: Vec<(String, String)> = TextDictionary::read_user_custom(&custom)
+    // Each pair with whether the user registered it: such a word can also go
+    // with its registration, as if it had never been registered.
+    let pairs: Vec<(String, String, bool)> = TextDictionary::read_user_custom(&custom)
         .map(|(dictionary, _)| {
-            dictionary
-                .hidden()
-                .map(|(reading, surface)| (reading.to_owned(), surface.to_owned()))
+            let hidden: Vec<(&str, &str)> = dictionary.hidden().collect();
+            let mine = registered(&custom, &hidden).unwrap_or_default();
+            hidden
+                .iter()
+                .enumerate()
+                .map(|(i, (reading, surface))| {
+                    let mine = mine.get(i).copied().unwrap_or(false);
+                    ((*reading).to_owned(), (*surface).to_owned(), mine)
+                })
                 .collect()
         })
         .unwrap_or_default();
     rsx! {
         Group {
             title: "出さない候補",
-            note: "変換中に「出さない」（Shift+Delete など）で消した候補です。「戻す」と、また候補に出ます。",
+            note: "変換中に「出さない」（Shift+Delete など）で消した候補です。「戻す」と、また候補に出ます。自分で登録した語は「登録ごと消す」で、登録する前に戻せます。",
             if pairs.is_empty() {
                 div { class: "row",
                     div { class: "row-main",
@@ -316,7 +324,7 @@ fn HiddenWords(custom: PathBuf) -> Element {
                     }
                 }
             }
-            for (reading , surface) in pairs {
+            for (reading , surface , mine) in pairs {
                 div { class: "row", key: "{reading}\t{surface}",
                     div { class: "row-main",
                         div { class: "row-text",
@@ -324,6 +332,23 @@ fn HiddenWords(custom: PathBuf) -> Element {
                             span { class: "description", {show_placeholders(&reading)} }
                         }
                         div { class: "control",
+                            if mine {
+                                button {
+                                    onclick: {
+                                        let custom = custom.clone();
+                                        let reading = reading.clone();
+                                        let surface = surface.clone();
+                                        move |_| {
+                                            match unregister(&custom, &reading, &surface) {
+                                                Ok(()) => error.set(None),
+                                                Err(e) => error.set(Some(format!("消せません：{e}"))),
+                                            }
+                                            generation += 1;
+                                        }
+                                    },
+                                    "登録ごと消す"
+                                }
+                            }
                             button {
                                 onclick: {
                                     let custom = custom.clone();

@@ -20,8 +20,8 @@ use kanaemi_config::{
 };
 use kanaemi_core::{Config, RomajiTable};
 use kanaemi_engine::{
-    Dictionary, TextDictionary, mark_placeholders, okuri_lookup, open_dictionary,
-    show_placeholders, unhide,
+    Dictionary, TextDictionary, mark_placeholders, okuri_lookup, open_dictionary, registered,
+    show_placeholders, unhide, unregister,
 };
 use unicode_normalization::UnicodeNormalization;
 
