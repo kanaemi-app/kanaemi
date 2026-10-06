@@ -21,7 +21,14 @@ Invoke-Checked rustup target add $x86
 Invoke-Checked cargo build --release -p kanaemi-windows --lib --target $x86 --manifest-path $manifest
 
 # The version kanaemi_core::VERSION reports, as the settings app prints it.
-$version = (& (Join-Path $release 'kanaemi-settings.exe') --version).Trim()
+# The app is a GUI program, which PowerShell does not wait on, so its output
+# goes through a file.
+$versionFile = New-TemporaryFile
+Start-Process (Join-Path $release 'kanaemi-settings.exe') -ArgumentList '--version' `
+    -Wait -NoNewWindow -RedirectStandardOutput $versionFile
+$version = (Get-Content -Raw $versionFile).Trim()
+Remove-Item $versionFile
+if (-not $version) { throw 'kanaemi-settings.exe printed no version' }
 # Windows Installer takes only numbers, so a build past a tag
 # (0.1.0-3-gabc1234) carries the tag's version.
 $packageVersion = ($version -split '-')[0]
