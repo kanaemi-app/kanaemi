@@ -57,6 +57,10 @@ pub struct Modifiers {
 pub enum KeyKind {
     Press,
     Release,
+    /// The OS pressing a key again while it is held. It is a press, but it
+    /// does not answer a question that wants the key pressed again. A host
+    /// that cannot tell a repeat sends a press.
+    Repeat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

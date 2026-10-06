@@ -411,7 +411,11 @@ impl Keys {
                 Some(KeyEvent {
                     key,
                     mods,
-                    kind: KeyKind::Press,
+                    kind: if raw.repeat {
+                        KeyKind::Repeat
+                    } else {
+                        KeyKind::Press
+                    },
                     time_ms: raw.time_ms,
                 })
             }
@@ -603,7 +607,8 @@ mod tests {
             repeat: true,
             ..down(0, SHIFT, "A")
         };
-        assert_eq!(keys.translate(repeat).unwrap().key, Key::Char('a'));
+        let e = keys.translate(repeat).unwrap();
+        assert_eq!((e.key, e.kind), (Key::Char('a'), KeyKind::Repeat));
         let e = keys.translate(up(0, SHIFT, "A")).unwrap();
         assert_eq!(e.key, Key::Char('a'));
     }

@@ -38,7 +38,13 @@ struct Selection {
     /// Keys typed while choosing that go on with `rest` but finish no kana
     /// yet (the `s` of `;i;tts`), carried with it.
     typed: String,
+    /// `forget` was pressed once: pressed again, it forgets the selected
+    /// candidate. Any other key, a lone modifier aside, withdraws it.
+    forgetting: bool,
 }
+
+/// Shown after the selected candidate while asking whether to forget it.
+const ASKING_TO_FORGET: &str = "（候補から除外するには、もう一度同じキーを押してください）";
 
 impl Selection {
     /// Everything typed after the okurigana's first kana.
@@ -171,6 +177,9 @@ impl<C: Converter> Core<C> {
     }
 
     fn key(&mut self, event: KeyEvent) -> bool {
+        if self.repeats_forget(event) {
+            return true;
+        }
         match event.kind {
             KeyKind::Release => {
                 self.release_held(event);
@@ -187,7 +196,7 @@ impl<C: Converter> Core<C> {
             }
             // A modifier key going down acts if its press is bound, and alone
             // it may be a tap; it goes on to the application either way.
-            KeyKind::Press if tappable(event.key) => {
+            KeyKind::Press | KeyKind::Repeat if tappable(event.key) => {
                 // A character still waiting was typed first.
                 self.settle_waiting();
                 // Another modifier key already down, even one whose flag is
@@ -223,7 +232,7 @@ impl<C: Converter> Core<C> {
                 }
                 false
             }
-            KeyKind::Press => {
+            KeyKind::Press | KeyKind::Repeat => {
                 self.modifier_down = None;
                 if let Some(consumed) = self.press_while_held(event) {
                     return consumed;
@@ -245,6 +254,38 @@ impl<C: Converter> Core<C> {
                 self.press(event.key, event.mods)
             }
         }
+    }
+
+    /// Settles the question whether to forget for a key going down, before
+    /// anything else sees it: `true` when it is `forget` held down, which does
+    /// not answer it. Any other key withdraws it, ignored or held ones too,
+    /// but `forget`, `cancel` (which withdraws it itself, staying among the
+    /// candidates) and modifier keys.
+    fn repeats_forget(&mut self, event: KeyEvent) -> bool {
+        let State::Candidates(selection) = &self.state else {
+            return false;
+        };
+        if !selection.forgetting
+            || event.kind == KeyKind::Release
+            || event.key == Key::Modifier
+            || tappable(event.key)
+        {
+            return false;
+        }
+        let chord = Chord {
+            key: event.key,
+            mods: event.mods,
+        };
+        let action = self.bound(chord, Gesture::Press);
+        if event.kind == KeyKind::Repeat && action == Some(Action::Forget) {
+            return true;
+        }
+        if !matches!(action, Some(Action::Forget | Action::Cancel))
+            && let State::Candidates(selection) = &mut self.state
+        {
+            selection.forgetting = false;
+        }
+        false
     }
 
     /// A key pressed while a key bound to be held is down; `None` when it is
@@ -600,6 +641,7 @@ impl<C: Converter> Core<C> {
             converted: candidates.len(),
             candidates,
             index: 0,
+            forgetting: false,
         };
         self.offer_forms(&mut selection);
         self.state = State::Candidates(selection);
@@ -685,6 +727,7 @@ impl<C: Converter> Core<C> {
     /// Any other character commits the selected candidate and is typed after
     /// it.
     fn candidates(&mut self, mut selection: Selection, key: Key) -> bool {
+        selection.forgetting = false;
         match key {
             Key::Char(c) if self.goes_on(&selection, c) => {
                 let mut grown = selection.word.clone();
@@ -915,6 +958,7 @@ impl<C: Converter> Core<C> {
     fn act_candidates(&mut self, mut selection: Selection, action: Action) -> Option<bool> {
         let len = selection.candidates.len();
         let can_register = self.registrations.len() < MAX_REGISTRATION_DEPTH;
+        let forgetting = mem::take(&mut selection.forgetting);
         match action {
             Action::Next if selection.index + 1 < len => {
                 selection.index += 1;
@@ -940,6 +984,7 @@ impl<C: Converter> Core<C> {
                 self.state = State::Candidates(selection);
                 self.choose_form(form);
             }
+            Action::Cancel if forgetting => self.state = State::Candidates(selection),
             Action::Cancel => self.state = State::Reading(selection.into_reading()),
             Action::Backspace if selection.typed.pop().is_some() => {
                 self.state = State::Candidates(selection);
@@ -955,7 +1000,12 @@ impl<C: Converter> Core<C> {
                 self.state = State::Reading(word);
             }
             Action::Forget => {
-                self.delete_selected(&mut selection);
+                if forgetting {
+                    self.delete_selected(&mut selection);
+                } else {
+                    // The reading's own forms come from no dictionary.
+                    selection.forgetting = selection.index < selection.converted;
+                }
                 self.state = State::Candidates(selection);
             }
             Action::Pick(place) => {
@@ -1237,6 +1287,9 @@ impl<C: Converter> Core<C> {
                 let (kana, pending) = self.after_kana(selection);
                 preedit.push_str(&kana);
                 preedit.push_str(&pending);
+                if selection.forgetting {
+                    preedit.push_str(ASKING_TO_FORGET);
+                }
                 if selection.candidates.len() > 1 {
                     let start = page_start(selection.index);
                     let end = (start + PAGE_LEN).min(selection.candidates.len());

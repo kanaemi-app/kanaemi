@@ -122,15 +122,15 @@ impl Keys {
         // so a press of that key still down is one: it stays the key first
         // pressed, whatever modifier went down since. Any other press, of a
         // key whose release went elsewhere among them, is read afresh.
-        let key = match down {
-            Some(index) if index + 1 == self.typed.len() => self.typed[index].1,
+        let (key, kind) = match down {
+            Some(index) if index + 1 == self.typed.len() => (self.typed[index].1, KeyKind::Repeat),
             _ => {
                 let key = key(keyval);
                 if keycode != 0 {
                     self.typed.retain(|(code, _)| *code != keycode);
                     self.typed.push((keycode, key));
                 }
-                key
+                (key, KeyKind::Press)
             }
         };
         // A symbol typed with Shift is that symbol (`:`), as a binding writes
@@ -142,7 +142,7 @@ impl Keys {
             },
             _ => mods,
         };
-        Some(event(key, mods, KeyKind::Press))
+        Some(event(key, mods, kind))
     }
 }
 
@@ -262,6 +262,7 @@ mod tests {
         keys.translate(0xffe1, 50, 0, 0);
         let repeat = keys.translate(u32::from('A'), A, SHIFT_MASK, 0).unwrap();
         assert_eq!(repeat.key, Key::Char('a'), "a modifier between counts not");
+        assert_eq!(repeat.kind, KeyKind::Repeat);
         let e = keys
             .translate(u32::from('A'), A, SHIFT_MASK | RELEASE_MASK, 0)
             .unwrap();

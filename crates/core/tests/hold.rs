@@ -542,3 +542,17 @@ fn a_letter_let_go_with_no_key_held_does_nothing() {
     let out = t.release(Key::Char('k'));
     assert_eq!((out.commit, out.preedit.as_str()), (None, ""));
 }
+
+#[test]
+fn a_held_key_pressed_while_asking_to_forget_withdraws_the_question() {
+    let mut t = kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    t.release(Key::Space);
+    t.shifted(Key::Delete);
+    t.down(Key::Space);
+    t.now += 400;
+    assert_eq!(t.release(Key::Space).preedit, "»漢字");
+    t.shifted(Key::Delete);
+    assert!(t.converter().deleted.is_empty());
+}

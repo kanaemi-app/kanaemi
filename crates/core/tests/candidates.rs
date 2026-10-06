@@ -126,12 +126,142 @@ fn shift_delete_hides_the_selected_candidate() {
     t.typ("kanji");
     t.key(Key::Space);
     t.key(Key::Space);
-    let out = t.shifted(Key::Delete);
+    let out = t.forget();
     assert_eq!(out.preedit, "»幹事");
     assert_eq!(
         t.converter().deleted,
         [("かんじ".to_owned(), "感じ".to_owned())]
     );
+}
+
+#[test]
+fn the_first_shift_delete_only_asks() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    let out = t.shifted(Key::Delete);
+    assert_eq!(
+        out.preedit,
+        "»漢字（候補から除外するには、もう一度同じキーを押してください）"
+    );
+    assert!(out.candidates.is_some());
+    assert!(t.converter().deleted.is_empty());
+}
+
+#[test]
+fn cancel_while_asking_keeps_the_candidate() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    t.shifted(Key::Delete);
+    assert_eq!(t.key(Key::Esc).preedit, "»漢字");
+    assert_eq!(
+        t.shifted(Key::Delete).preedit,
+        "»漢字（候補から除外するには、もう一度同じキーを押してください）",
+        "asks again"
+    );
+    assert!(t.converter().deleted.is_empty());
+}
+
+#[test]
+fn another_key_while_asking_does_what_it_does_and_forgets_nothing() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    t.shifted(Key::Delete);
+    assert_eq!(t.key(Key::Space).preedit, "»感じ");
+    assert_eq!(
+        t.shifted(Key::Delete).preedit,
+        "»感じ（候補から除外するには、もう一度同じキーを押してください）",
+        "asks again"
+    );
+    assert!(t.converter().deleted.is_empty());
+}
+
+#[test]
+fn letting_go_of_shift_between_the_presses_still_forgets() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    t.shifted(Key::Delete);
+    t.release(Key::Delete);
+    t.shifted(Key::ShiftLeft);
+    t.shifted(Key::Delete);
+    assert_eq!(
+        t.converter().deleted,
+        [("かんじ".to_owned(), "漢字".to_owned())]
+    );
+}
+
+#[test]
+fn holding_the_key_down_does_not_answer_the_question() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    let shift = Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    t.shifted(Key::Delete);
+    for _ in 0..5 {
+        t.repeat(Key::Delete, shift);
+    }
+    assert!(t.converter().deleted.is_empty(), "repeats are one press");
+    t.shifted(Key::Delete);
+    assert_eq!(
+        t.converter().deleted,
+        [("かんじ".to_owned(), "漢字".to_owned())]
+    );
+}
+
+#[test]
+fn an_ignored_shortcut_while_asking_withdraws_the_question() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    t.shifted(Key::Delete);
+    let ctrl_z = t.press(
+        Key::Char('z'),
+        Modifiers {
+            ctrl: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(ctrl_z.preedit, "»漢字");
+    t.shifted(Key::Delete);
+    assert!(t.converter().deleted.is_empty());
+}
+
+#[test]
+fn caps_lock_or_fn_while_asking_keeps_the_question() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    t.shifted(Key::Delete);
+    t.key(Key::Modifier);
+    t.shifted(Key::Delete);
+    assert_eq!(
+        t.converter().deleted,
+        [("かんじ".to_owned(), "漢字".to_owned())]
+    );
+}
+
+#[test]
+fn a_candidate_that_cannot_be_forgotten_is_not_asked_about() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kisha");
+    t.key(Key::Space);
+    t.key(Key::Space);
+    t.key(Key::Space);
+    assert_eq!(t.shifted(Key::Delete).preedit, "»キシャ");
 }
 
 #[test]
@@ -142,7 +272,7 @@ fn deleting_a_candidate_selects_the_one_after_it() {
     t.typ("kana");
     t.key(Key::Space);
     t.key(Key::Space);
-    let out = t.shifted(Key::Delete);
+    let out = t.forget();
     assert_eq!(out.preedit, "»ｶﾅ");
 }
 
@@ -155,7 +285,7 @@ fn the_katakana_candidate_cannot_be_deleted() {
     t.key(Key::Space);
     t.key(Key::Space);
     t.key(Key::Space);
-    let out = t.shifted(Key::Delete);
+    let out = t.forget();
     assert_eq!(out.preedit, "»キシャ");
     assert!(t.converter().deleted.is_empty());
 }
@@ -167,8 +297,8 @@ fn deleting_every_dictionary_candidate_leaves_katakana() {
     t.ch(';');
     t.typ("kisha");
     t.key(Key::Space);
-    t.shifted(Key::Delete);
-    let out = t.shifted(Key::Delete);
+    t.forget();
+    let out = t.forget();
     assert_eq!(out.preedit, "»キシャ");
     assert_eq!(surfaces(&out), ["キシャ", "ｷｼｬ", "ｋｉｓｈａ", "kisha"]);
 }
@@ -180,7 +310,7 @@ fn ctrl_z_after_deleting_is_not_an_undo() {
     t.ch(';');
     t.typ("kanji");
     t.key(Key::Space);
-    t.shifted(Key::Delete);
+    t.forget();
     let out = t.press(
         Key::Char('z'),
         Modifiers {
@@ -493,7 +623,7 @@ fn a_dictionary_candidate_can_be_forgotten_though_it_is_a_form_of_the_reading() 
     t.kana();
     t.typ(";kana");
     t.key(Key::Space);
-    let out = t.shifted(Key::Delete);
+    let out = t.forget();
     assert_eq!(
         t.converter().deleted,
         [("かな".to_owned(), "カナ".to_owned())]
@@ -508,9 +638,9 @@ fn the_form_offered_again_after_forgetting_cannot_be_forgotten() {
     t.kana();
     t.typ(";kana");
     t.key(Key::Space);
-    t.shifted(Key::Delete);
+    t.forget();
     t.shifted(Key::Space);
-    let out = t.shifted(Key::Delete);
+    let out = t.forget();
     assert_eq!(out.preedit, "»カナ");
     assert_eq!(t.converter().deleted.len(), 1);
 }

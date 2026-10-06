@@ -201,6 +201,17 @@ impl T {
         }))
     }
 
+    /// The OS pressing `key` again while it is held.
+    pub fn repeat(&mut self, key: Key, mods: Modifiers) -> Output {
+        self.now += 10;
+        self.handle(Event::Key(KeyEvent {
+            key,
+            mods,
+            kind: KeyKind::Repeat,
+            time_ms: self.now,
+        }))
+    }
+
     pub fn release(&mut self, key: Key) -> Output {
         self.now += 10;
         self.handle(Event::Key(KeyEvent {
@@ -246,6 +257,13 @@ impl T {
             out = self.key(Key::Space);
         }
         out
+    }
+
+    /// Shift+Delete twice: asks, then forgets the selected candidate. No
+    /// release comes between, as a host may send none.
+    pub fn forget(&mut self) -> Output {
+        self.shifted(Key::Delete);
+        self.shifted(Key::Delete)
     }
 
     pub fn shifted(&mut self, key: Key) -> Output {
