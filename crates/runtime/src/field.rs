@@ -12,6 +12,8 @@ pub struct Field {
     /// Tells this field from the others the profile follows the focus of.
     id: u64,
     core: Core<SharedEngine>,
+    /// The core's engine, to try a key without the user's functions.
+    engine: SharedEngine,
     /// The settings the core was built from.
     generation: u64,
     private: bool,
@@ -23,6 +25,7 @@ impl Field {
         Self {
             id: NEXT.fetch_add(1, Ordering::Relaxed),
             core: Core::new(profile.converter(), profile.config().clone()),
+            engine: profile.converter(),
             generation: profile.generation(),
             private: false,
         }
@@ -70,6 +73,7 @@ impl Field {
             }
         }
         let mut output = self.core.handle(event);
+        profile.log_functions();
         // A mode another program set is shown there, not by the indicator.
         let from_outside = matches!(event, Event::SetMode(_));
         if output.mode != before && profile.config().mode_indicator && !from_outside {
@@ -99,7 +103,8 @@ impl Field {
     /// field nor the profile changes. A platform that asks whether a key
     /// will be used before it sends the key answers from this.
     pub fn preview(&self, event: Event) -> Output {
-        self.core.clone().handle(event)
+        self.engine
+            .without_functions(|| self.core.clone().handle(event))
     }
 }
 
@@ -109,7 +114,9 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::SystemTime;
 
-    use kanaemi_config::{DICTIONARY_DIR, FILE_NAME, SELECTIONS_FILE, USER_CUSTOM_FILE};
+    use kanaemi_config::{
+        DICTIONARY_DIR, FILE_NAME, FUNCTIONS_DIR, SELECTIONS_FILE, USER_CUSTOM_FILE,
+    };
     use kanaemi_core::{Converter, Effect, Key, KeyEvent, KeyKind, Mode, Modifiers};
 
     use super::*;
@@ -326,6 +333,36 @@ mod tests {
             output = Some(field.handle(profile, press(Key::Char(c))));
         }
         output.expect("something typed")
+    }
+
+    #[test]
+    fn trying_a_key_runs_no_function_of_the_user() {
+        let dir = temp_dir("preview-functions");
+        fs::write(
+            dir.join(DICTIONARY_DIR).join("words.tsv"),
+            "よみ\t{-:count}\n",
+        )
+        .unwrap();
+        let functions = dir.join(FUNCTIONS_DIR);
+        fs::create_dir_all(functions.join("lib")).unwrap();
+        fs::write(
+            functions.join("lib").join("counter.luau"),
+            "return { count = 0 }",
+        )
+        .unwrap();
+        fs::write(
+            functions.join("count.luau"),
+            "local c = require('./lib/counter')\nreturn function() c.count += 1 return tostring(c.count) end",
+        )
+        .unwrap();
+        let mut profile = Profile::open(&dir);
+        let mut field = Field::new(&profile);
+        field.handle(&mut profile, FOCUS_IN);
+        field.handle(&mut profile, press(Key::Kana));
+        typ(&mut field, &mut profile, ";yomi");
+        field.preview(press(Key::Space));
+        let output = field.handle(&mut profile, press(Key::Space));
+        assert_eq!(output.preedit, "»1");
     }
 
     /// A focused field in kana mode with 貴社 picked for きしゃ, not yet

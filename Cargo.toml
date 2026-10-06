@@ -12,5 +12,6 @@ repository = "https://github.com/kanaemi-app/kanaemi"
 kanaemi-config = { path = "crates/config" }
 kanaemi-core = { path = "crates/core" }
 kanaemi-engine = { path = "crates/engine" }
+kanaemi-functions = { path = "crates/functions" }
 kanaemi-runtime = { path = "crates/runtime" }
 dioxus = "0.7.10"

@@ -10,6 +10,7 @@ publish = false
 kanaemi-config.workspace = true
 kanaemi-core.workspace = true
 kanaemi-engine.workspace = true
+kanaemi-functions.workspace = true
 serde_json = "1"
 tracing = { version = "0.1", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

@@ -8,6 +8,7 @@ mod control;
 mod dictionaries;
 mod erase;
 mod field;
+mod functions;
 mod logging;
 mod profile;
 mod settings;

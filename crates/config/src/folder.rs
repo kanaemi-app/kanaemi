@@ -18,6 +18,8 @@ pub const SELECTIONS_FILE: &str = "selections.tsv";
 pub const DICTIONARY_DIR: &str = "dictionaries";
 /// The folder of romaji table files, in the settings folder.
 pub const ROMAJI_DIR: &str = "romaji";
+/// The folder of the functions a user writes, in the settings folder.
+pub const FUNCTIONS_DIR: &str = "functions";
 /// The extension of text dictionaries and romaji tables.
 pub const TEXT_EXTENSION: &str = "tsv";
 /// The extension of binary dictionaries.

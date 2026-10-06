@@ -34,7 +34,9 @@ mod server {
     use std::time::{Duration, Instant};
 
     use kanaemi::pipe::{self, MAX_LINE};
-    use kanaemi_config::{DICTIONARY_DIR, FILE_NAME, MODEL_FILE, ROMAJI_DIR, USER_CUSTOM_FILE};
+    use kanaemi_config::{
+        DICTIONARY_DIR, FILE_NAME, FUNCTIONS_DIR, MODEL_FILE, ROMAJI_DIR, USER_CUSTOM_FILE,
+    };
     use kanaemi_engine::{FileSink, LineSink, TextDictionary};
     use windows::Win32::Foundation::*;
     use windows::Win32::Security::Authorization::*;
@@ -142,7 +144,7 @@ mod server {
         // The folder alone, so AppContainers can look up the files in it.
         grant(dir, "(RX)", false);
         // Everything already in them too: a file moved in does not inherit.
-        for folder in [DICTIONARY_DIR, ROMAJI_DIR] {
+        for folder in [DICTIONARY_DIR, ROMAJI_DIR, FUNCTIONS_DIR] {
             grant(&dir.join(folder), "(OI)(CI)(RX)", true);
         }
         for file in [FILE_NAME, MODEL_FILE] {
