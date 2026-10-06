@@ -57,3 +57,15 @@ jobs:
       - run: gh workflow run deploy.yml --repo kanaemi-app/kanaemi-app.github.io --ref main
         env:
           GH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+
+  # The Homebrew cask names the app of the latest release, so the tap writes
+  # it again once the release holds the app. As for the site, a token that may
+  # run the tap's workflows is kept as a secret.
+  homebrew:
+    needs: upload
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: gh workflow run update.yml --repo kanaemi-app/homebrew-tap --ref main
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_DISPATCH_TOKEN }}
