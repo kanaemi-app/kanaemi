@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fst::raw::{CompiledAddr, Fst};
-use fst::{Map, Streamer};
+use fst::{IntoStreamer, Map, Streamer};
 use memmap2::Mmap;
 
 use crate::{Dictionary, Entry, InvalidLine, TextDictionary, okuri_key};
@@ -312,6 +312,20 @@ impl Dictionary for BinaryDictionary {
 
     fn okuri(&self, stem: &str, row: char) -> Vec<Entry> {
         self.found(self.okuri.as_ref(), &okuri_key(stem, row))
+    }
+
+    fn readings_from(&self, prefix: &str, limit: usize) -> Vec<String> {
+        let mut stream = self.index.range().ge(prefix).into_stream();
+        let mut readings = Vec::new();
+        while readings.len() < limit
+            && let Some((key, _)) = stream.next()
+        {
+            match std::str::from_utf8(key) {
+                Ok(reading) if reading.starts_with(prefix) => readings.push(reading.to_owned()),
+                _ => break,
+            }
+        }
+        readings
     }
 }
 

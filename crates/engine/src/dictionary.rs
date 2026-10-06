@@ -1,6 +1,7 @@
 use std::io::{self, Read};
 use std::path::Path;
 
+use crate::okuri::okuri_row;
 use crate::{BINARY_MAGIC, BinaryDictionary, BinaryError, InvalidLine, TextDictionary};
 
 /// One item of a dictionary.
@@ -27,6 +28,13 @@ pub trait Dictionary {
     /// the binary dictionary format files it under: `k` for か through こ.
     /// Their surfaces stop before the okurigana.
     fn okuri(&self, stem: &str, row: char) -> Vec<Entry>;
+
+    /// Up to `limit` readings of words that start with `prefix`, in order,
+    /// to look through a dictionary. None by default.
+    fn readings_from(&self, prefix: &str, limit: usize) -> Vec<String> {
+        let _ = (prefix, limit);
+        Vec::new()
+    }
 }
 
 /// A dictionary shared between engines, as engines on several threads of one
@@ -39,6 +47,19 @@ impl<D: Dictionary + ?Sized> Dictionary for std::sync::Arc<D> {
     fn okuri(&self, stem: &str, row: char) -> Vec<Entry> {
         (**self).okuri(stem, row)
     }
+
+    fn readings_from(&self, prefix: &str, limit: usize) -> Vec<String> {
+        (**self).readings_from(prefix, limit)
+    }
+}
+
+/// Words with okurigana whose reading before the okurigana is `stem` and
+/// whose okurigana starts with `kana`, as a text dictionary writes them
+/// (`か*く`); none when `kana` starts no okurigana.
+pub fn okuri_lookup(dictionary: &(impl Dictionary + ?Sized), stem: &str, kana: char) -> Vec<Entry> {
+    okuri_row(kana)
+        .map(|row| dictionary.okuri(stem, row))
+        .unwrap_or_default()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -87,5 +108,19 @@ mod tests {
         let (dictionary, invalid) = open_dictionary(&path).unwrap();
         assert_eq!(dictionary.lookup("きしゃ")[0].surface, "汽車");
         assert_eq!(invalid, []);
+    }
+
+    #[test]
+    fn an_okurigana_word_is_looked_up_by_its_stem_and_first_kana() {
+        let (text, _) = TextDictionary::parse("か*く\t書く\nか*つ\t勝つ");
+        let surfaces = |kana| {
+            okuri_lookup(&text, "か", kana)
+                .into_iter()
+                .map(|e| e.surface)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(surfaces('き'), ["書"], "any kana of the row");
+        assert_eq!(surfaces('っ'), ["勝"]);
+        assert_eq!(surfaces('ア'), Vec::<String>::new(), "no row has it");
     }
 }

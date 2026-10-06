@@ -68,6 +68,14 @@ pub fn Dictionaries() -> Element {
         }
     }
     let chosen_for_official = chosen.clone();
+    let mut looking = use_signal(|| None::<String>);
+    let looked = looking().map(|name| {
+        if name == USER_CUSTOM {
+            ("ユーザー辞書".to_owned(), custom.clone(), true)
+        } else {
+            (name.clone(), folder.join(&name), false)
+        }
+    });
     let on_convert = {
         let folder = folder.clone();
         let listed = written.is_some().then(|| chosen.clone());
@@ -95,7 +103,17 @@ pub fn Dictionaries() -> Element {
                 chosen,
                 fixed: vec![USER_CUSTOM.to_owned()],
                 path: path(&["dictionaries"]),
+                on_info: move |name: String| looking.set(Some(name)),
                 on_convert,
+            }
+        }
+        if let Some((label, path, user_custom)) = looked {
+            DictionaryEntries {
+                key: "{path.display()}",
+                label,
+                path,
+                user_custom,
+                on_close: move |_| looking.set(None),
             }
         }
         OfficialDictionaries { chosen: chosen_for_official }
@@ -433,5 +451,213 @@ fn convert_and_use(mut ctx: Ctx, folder: &Path, listed: Option<&[String]>, name:
     } else {
         // The list stays, but the folder now holds a new file.
         ctx.store.write();
+    }
+}
+
+/// A dictionary file opened to look words up in: the user custom dictionary
+/// as the IME reads it, any other as text or binary by its first bytes.
+fn open_for_lookup(path: &Path, user_custom: bool) -> Result<Box<dyn Dictionary>, String> {
+    if user_custom {
+        // Missing until a word is first registered: then it has no words.
+        return TextDictionary::read_user_custom(path)
+            .map(|(dictionary, _)| Box::new(dictionary) as Box<dyn Dictionary>)
+            .map_err(|e| e.to_string());
+    }
+    open_dictionary(path)
+        .map(|(dictionary, _)| dictionary)
+        .map_err(|e| e.to_string())
+}
+
+/// How many readings the lookup lists at most, so a large dictionary opens
+/// at once.
+const READINGS_SHOWN: usize = 100;
+
+/// One word a dictionary has: its reading, its surface, and what else there
+/// is to say about it.
+type Found = (String, String, Option<String>);
+
+/// The words whose readings start with `query`, from the first reading when
+/// it is empty. A query with `*` looks up a word with okurigana by its stem
+/// and the okurigana (`か*く`), as a text dictionary writes it.
+fn entries_for(dictionary: &dyn Dictionary, query: &str) -> Vec<Found> {
+    // As the dictionary holds its readings: a pasted か with its voicing mark
+    // apart is が.
+    let query: String = query.trim().nfc().collect();
+    let query = query.as_str();
+    // A `*` may also be part of a reading itself (`あ\*`), so those follow.
+    let mut found: Vec<Found> = query
+        .split_once('*')
+        .and_then(|(stem, okurigana)| Some((stem, okurigana, okurigana.chars().next()?)))
+        .map(|(stem, okurigana, kana)| {
+            okuri_lookup(dictionary, stem, kana)
+                .into_iter()
+                .map(|entry| {
+                    let surface = format!("{}{okurigana}", show_placeholders(&entry.surface));
+                    (query.to_owned(), surface, Some("送り仮名あり".to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // A number's place in a reading is written `{}` but held as a mark.
+    let prefix = mark_placeholders(query).unwrap_or_else(|| query.to_owned());
+    found.extend(
+        dictionary
+            .readings_from(&prefix, READINGS_SHOWN)
+            .into_iter()
+            .flat_map(|reading| {
+                let shown = show_placeholders(&reading);
+                dictionary.lookup(&reading).into_iter().map(move |entry| {
+                    let note = entry.conjugation.map(|c| format!("活用：{c}"));
+                    (shown.clone(), show_placeholders(&entry.surface), note)
+                })
+            }),
+    );
+    found
+}
+
+/// A dictionary file as opened, with the time it was last changed then.
+type Opened = (Option<SystemTime>, Rc<Result<Box<dyn Dictionary>, String>>);
+
+/// What a dictionary has for a reading, to see before choosing it.
+#[component]
+fn DictionaryEntries(
+    label: String,
+    path: PathBuf,
+    user_custom: bool,
+    on_close: EventHandler<()>,
+) -> Element {
+    // The store is read again when the window comes back, as a word may have
+    // been registered meanwhile; the file is opened again only if it changed.
+    let _ = use_context::<Ctx>().store.read();
+    let opened = use_hook(|| Rc::new(RefCell::new(None::<Opened>)));
+    let stamp = fs::metadata(&path).and_then(|m| m.modified()).ok();
+    let dictionary = {
+        let mut opened = opened.borrow_mut();
+        match &*opened {
+            Some((at, dictionary)) if *at == stamp => dictionary.clone(),
+            _ => {
+                let dictionary = Rc::new(open_for_lookup(&path, user_custom));
+                *opened = Some((stamp, dictionary.clone()));
+                dictionary
+            }
+        }
+    };
+    let mut reading = use_signal(String::new);
+    let found = match dictionary.as_ref() {
+        Ok(dictionary) => Ok(entries_for(dictionary.as_ref(), &reading())),
+        Err(error) => Err(error.clone()),
+    };
+    rsx! {
+        div { class: "modal-backdrop", onclick: move |_| on_close.call(()),
+            div {
+                class: "modal",
+                onclick: move |e| e.stop_propagation(),
+                header {
+                    div {
+                        h2 { "{label}" }
+                        p { class: "item-description",
+                            "読みの順に、はじめの {READINGS_SHOWN} 個の読みの語を出します。読みをかなで入れると、その読みで始まる語に絞ります。送り仮名のある語は、送り仮名の前に * を入れて引きます（か*く）。"
+                        }
+                    }
+                    button { onclick: move |_| on_close.call(()), "閉じる" }
+                }
+                input {
+                    class: "filter",
+                    placeholder: "読みで絞り込む…",
+                    value: "{reading}",
+                    oninput: move |e| reading.set(e.value()),
+                }
+                div { class: "modal-body",
+                    match found {
+                        Err(error) => rsx! { p { class: "error", "読めません：{error}" } },
+                        Ok(found) if found.is_empty() => rsx! {
+                            p { class: "description", "語はありません" }
+                        },
+                        Ok(found) => rsx! {
+                            table { class: "rules",
+                                thead {
+                                    tr {
+                                        th { "読み" }
+                                        th { "表記" }
+                                        th {}
+                                    }
+                                }
+                                tbody {
+                                    for (reading , surface , note) in found {
+                                        tr {
+                                            td { "{reading}" }
+                                            td { "{surface}" }
+                                            td { class: "item-description", {note.unwrap_or_default()} }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn found(text: &str, query: &str) -> Vec<(String, String)> {
+        entries_for(&TextDictionary::parse(text).0, query)
+            .into_iter()
+            .map(|(reading, surface, _)| (reading, surface))
+            .collect()
+    }
+
+    fn pairs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn the_first_readings_are_shown_with_nothing_asked() {
+        assert_eq!(
+            found("かんじ\t漢字\nあい\t愛", ""),
+            pairs(&[("あい", "愛"), ("かんじ", "漢字")])
+        );
+    }
+
+    #[test]
+    fn a_query_narrows_to_the_readings_it_starts() {
+        assert_eq!(
+            found("かんじ\t漢字\nかんじ\t感じ\nあい\t愛", " かん "),
+            pairs(&[("かんじ", "感じ"), ("かんじ", "漢字")]),
+            "cheapest first, as the dictionary has them"
+        );
+    }
+
+    #[test]
+    fn a_reading_with_its_voicing_mark_apart_is_found_as_one() {
+        assert_eq!(found("がく\t学", "か\u{3099}"), pairs(&[("がく", "学")]));
+        assert_eq!(
+            found("が*く\t欠く", "か\u{3099}*く"),
+            pairs(&[("が*く", "欠く")]),
+            "the row of が, not of か"
+        );
+    }
+
+    #[test]
+    fn a_reading_with_a_star_of_its_own_is_found_too() {
+        assert_eq!(found("あ\\*\t亜", "あ*"), pairs(&[("あ*", "亜")]));
+    }
+
+    #[test]
+    fn a_reading_with_a_number_is_shown_and_found_as_written() {
+        assert_eq!(found("{}こ\t{}個", "{}"), pairs(&[("{}こ", "{}個")]));
+    }
+
+    #[test]
+    fn a_word_with_okurigana_is_found_by_its_stem_and_okurigana() {
+        assert_eq!(found("か*く\t書く", "か*く"), pairs(&[("か*く", "書く")]));
+        assert_eq!(found("か*く\t書く", "か*"), []);
     }
 }

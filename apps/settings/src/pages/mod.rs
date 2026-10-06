@@ -5,9 +5,12 @@ mod dictionaries;
 mod display;
 mod input;
 
+use std::cell::RefCell;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::SystemTime;
 
 use dioxus::prelude::*;
 use kanaemi_config::{
@@ -16,7 +19,11 @@ use kanaemi_config::{
     dictionary_files, dictionary_sources, read_romaji_table,
 };
 use kanaemi_core::{Config, RomajiTable};
-use kanaemi_engine::{TextDictionary, show_placeholders, unhide};
+use kanaemi_engine::{
+    Dictionary, TextDictionary, mark_placeholders, okuri_lookup, open_dictionary,
+    show_placeholders, unhide,
+};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::checks::invalid_lines;
 use crate::controls::{Group, KeyToggle, ListItem, OrderedList, ResetLine, Row};

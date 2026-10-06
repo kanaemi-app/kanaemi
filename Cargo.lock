@@ -2616,6 +2616,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "unicode-normalization",
  "ureq",
  "xxhash-rust",
  "zip",

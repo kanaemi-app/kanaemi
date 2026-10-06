@@ -462,3 +462,13 @@ fn the_forged_fst_of_endless_paths_is_well_formed_but_spells_no_key() {
     let mut stream = fst.stream();
     assert!(stream.next().is_none());
 }
+
+#[test]
+fn readings_are_listed_in_order_from_a_prefix() {
+    let binary = BinaryDictionary::from_bytes(encode(&text(), None)).unwrap();
+    for dictionary in [&binary as &dyn Dictionary, &text()] {
+        assert_eq!(dictionary.readings_from("", 3), ["!", "か", "きしゃ"]);
+        assert_eq!(dictionary.readings_from("き", 10), ["きしゃ"]);
+        assert_eq!(dictionary.readings_from("ん", 10), Vec::<String>::new());
+    }
+}

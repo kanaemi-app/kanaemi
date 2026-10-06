@@ -240,6 +240,16 @@ impl Dictionary for TextDictionary {
         found.sort_by_key(|e| e.cost);
         found
     }
+
+    fn readings_from(&self, prefix: &str, limit: usize) -> Vec<String> {
+        let mut readings: Vec<&str> = self
+            .readings()
+            .filter(|reading| reading.starts_with(prefix))
+            .collect();
+        readings.sort_unstable();
+        readings.truncate(limit);
+        readings.into_iter().map(str::to_owned).collect()
+    }
 }
 
 impl TextDictionary {
