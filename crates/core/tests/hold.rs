@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Action, Binding, Config, Event, Gesture, Key, Modifiers};
+use kanaemi_core::{Action, Binding, Config, Event, Gesture, Key, Mode, Modifiers};
 
 /// The test configuration with no key bound to be held.
 fn unheld() -> Config {
@@ -371,6 +371,37 @@ fn a_letter_waiting_when_the_focus_moves_is_typed_after_a_space() {
     t.down(Key::Space);
     t.ch('a');
     let out = t.handle(Event::FocusOut);
+    assert_eq!(out.commit.as_deref(), Some(" あ"));
+}
+
+#[test]
+fn a_held_space_is_forgotten_when_the_mode_changes() {
+    let mut t = kana();
+    t.down(Key::Space);
+    t.ch('k');
+    t.ch('a');
+    // Its release never came: switching the mode is a way out.
+    t.handle(Event::SetMode(Mode::Abc));
+    t.kana();
+    let (commit, out) = t.typ("ka");
+    assert_eq!((commit.as_str(), out.preedit.as_str()), ("か", ""));
+}
+
+#[test]
+fn a_held_space_is_kept_when_the_mode_asked_for_is_the_mode_already() {
+    let mut t = kana();
+    t.down(Key::Space);
+    t.ch('k');
+    assert_eq!(t.handle(Event::SetMode(Mode::Kana)).preedit, "_k");
+    assert_eq!(t.release(Key::Char('k')).preedit, "›k");
+}
+
+#[test]
+fn a_letter_waiting_when_the_mode_changes_is_typed_first() {
+    let mut t = kana();
+    t.down(Key::Space);
+    t.ch('a');
+    let out = t.handle(Event::SetMode(Mode::Abc));
     assert_eq!(out.commit.as_deref(), Some(" あ"));
 }
 

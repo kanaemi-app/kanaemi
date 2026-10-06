@@ -331,8 +331,11 @@ impl<C: Converter> Core<C> {
             // Begin in ABC mode types the key it is bound to, and a held key
             // types nothing of its own: the character typed is all there is.
             Some(Action::Begin) if self.mode == Mode::Abc => {}
+            // A mode it switches to itself does not let go of it.
             Some(action) => {
+                let held = self.held.take();
                 self.act(action, pressed);
+                self.held = held;
             }
             None => {}
         }
@@ -350,6 +353,14 @@ impl<C: Converter> Core<C> {
             self.replay(pressed);
             self.replay(waiting);
         }
+    }
+
+    /// A held key's release may never come, as from a platform that loses
+    /// it: switching the mode lets go of the key, so nothing stays stuck
+    /// past it. A character waiting on it is typed first.
+    fn forget_held(&mut self) {
+        self.settle_waiting();
+        self.held = None;
     }
 
     /// A key whose press was kept from the application, acting now: the held
@@ -966,12 +977,16 @@ impl<C: Converter> Core<C> {
     }
 
     fn enter_kana(&mut self) {
-        if !self.password {
+        if self.mode != Mode::Kana && !self.password {
+            self.forget_held();
             self.mode = Mode::Kana;
         }
     }
 
     fn leave_kana(&mut self) {
+        if self.mode != Mode::Abc {
+            self.forget_held();
+        }
         self.commit_inner();
         self.mode = Mode::Abc;
     }
