@@ -142,6 +142,7 @@ fn a_rule_that_another_rule_extends_is_used_when_the_longer_one_does_not_come() 
 fn unfinished_romaji_at_a_commit_uses_the_longest_rule_and_drops_letters_forming_none() {
     let mut t = T::with_config(Config {
         romaji: table(&["a\tあ\nabc\tX"]),
+        keep_unfinished_romaji: false,
         ..config()
     });
     t.kana();
@@ -164,6 +165,7 @@ fn unfinished_romaji_at_a_commit_goes_on_after_the_longest_rule() {
 fn an_n_followed_by_nothing_forming_a_rule_at_a_commit_is_n() {
     let mut t = T::with_config(Config {
         romaji: table(&["nbc\tX"]),
+        keep_unfinished_romaji: false,
         ..config()
     });
     t.kana();
@@ -220,4 +222,70 @@ fn a_symbol_left_at_a_commit_is_typed_as_it_is() {
     t.kana();
     t.typ("-");
     assert_eq!(t.handle(Event::Flush).commit.as_deref(), Some("-"));
+}
+
+#[test]
+fn unfinished_romaji_outside_a_reading_is_committed_as_typed() {
+    let mut t = T::new();
+    t.kana();
+    assert_eq!(t.typ("arew").0, "あれ");
+    let out = t.key(Key::Enter);
+    assert_eq!(out.commit.as_deref(), Some("w"));
+    assert!(!out.consumed, "enter still reaches the application");
+}
+
+#[test]
+fn unfinished_romaji_outside_a_reading_keeps_what_rules_form_and_the_rest_as_typed() {
+    let mut t = T::with_config(Config {
+        romaji: table(&["a\tあ\nabc\tX"]),
+        ..config()
+    });
+    t.kana();
+    t.typ("ab");
+    assert_eq!(t.handle(Event::Flush).commit.as_deref(), Some("あb"));
+
+    let mut t = T::new();
+    t.kana();
+    assert_eq!(t.typ("tt").0, "っ");
+    assert_eq!(t.handle(Event::Flush).commit.as_deref(), Some("t"));
+}
+
+#[test]
+fn an_n_left_outside_a_reading_is_still_n() {
+    let mut t = T::new();
+    t.kana();
+    assert_eq!(t.typ("kan").0, "か");
+    assert_eq!(t.handle(Event::Flush).commit.as_deref(), Some("ん"));
+}
+
+#[test]
+fn unfinished_romaji_is_kept_before_a_character_off_the_table_and_a_new_reading() {
+    let mut t = T::new();
+    t.kana();
+    assert_eq!(t.typ("arewA").0, "あれwA");
+
+    let mut t = T::new();
+    t.kana();
+    t.typ("arew");
+    assert_eq!(t.ch(';').commit.as_deref(), Some("w"));
+}
+
+#[test]
+fn unfinished_romaji_in_a_reading_is_still_dropped() {
+    let mut t = T::new();
+    t.kana();
+    t.ch(';');
+    t.typ("kanj");
+    assert_eq!(t.key(Key::Enter).commit.as_deref(), Some("かん"));
+}
+
+#[test]
+fn unfinished_romaji_can_be_dropped_outside_a_reading_too() {
+    let mut t = T::with_config(Config {
+        keep_unfinished_romaji: false,
+        ..config()
+    });
+    t.kana();
+    t.typ("arew");
+    assert_eq!(t.key(Key::Enter).commit, None);
 }

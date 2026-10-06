@@ -121,6 +121,19 @@ fn the_mode_indicator_can_be_turned_off() {
 }
 
 #[test]
+fn unfinished_romaji_is_kept_unless_turned_off() {
+    let (settings, problems) = load("");
+    assert_eq!(problems, Vec::<String>::new());
+    assert!(settings.config.keep_unfinished_romaji);
+    let (settings, problems) = load("[romaji]\nkeep_unfinished = false");
+    assert_eq!(problems, Vec::<String>::new());
+    assert!(!settings.config.keep_unfinished_romaji);
+    let (settings, problems) = load("[romaji]\nkeep_unfinished = \"no\"");
+    assert_eq!(problems, ["romaji.keep_unfinished"]);
+    assert!(settings.config.keep_unfinished_romaji);
+}
+
+#[test]
 fn a_control_port_is_read_from_the_control_table() {
     let (settings, problems) = load("[control]\nport = 50123");
     assert_eq!(problems, Vec::<String>::new());

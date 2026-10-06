@@ -16,6 +16,11 @@ pub struct Config {
     pub tap_timeout_ms: u64,
     /// Whether to show the input mode for a moment when it changes.
     pub mode_indicator: bool,
+    /// Whether romaji left unfinished outside a reading is committed as
+    /// typed. Otherwise the letters forming nothing are dropped; inside a
+    /// reading they always are, so that they do not end up in what is
+    /// converted.
+    pub keep_unfinished_romaji: bool,
 }
 
 impl Default for Config {
@@ -27,6 +32,7 @@ impl Default for Config {
             pass_while_composing: Modifiers::default(),
             tap_timeout_ms: 300,
             mode_indicator: true,
+            keep_unfinished_romaji: true,
         }
     }
 }

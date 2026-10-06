@@ -94,8 +94,22 @@ fn moving_and_deleting_keys_commit_unfinished_romaji_and_pass_on() {
 }
 
 #[test]
-fn letters_forming_no_kana_are_dropped_when_a_key_passes_on() {
+fn letters_forming_no_kana_are_committed_as_typed_when_a_key_passes_on() {
     let mut t = T::new();
+    t.kana();
+    t.ch('k');
+    let out = t.key(Key::Delete);
+    assert!(!out.consumed);
+    assert_eq!(out.commit.as_deref(), Some("k"));
+    assert_eq!(out.preedit, "");
+}
+
+#[test]
+fn letters_forming_no_kana_can_be_dropped_when_a_key_passes_on() {
+    let mut t = T::with_config(Config {
+        keep_unfinished_romaji: false,
+        ..config()
+    });
     t.kana();
     t.ch('k');
     let out = t.key(Key::Delete);

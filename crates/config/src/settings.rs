@@ -242,6 +242,12 @@ impl Reader<'_> {
     }
 
     fn romaji(&mut self, item: &str, key: &str, value: Value) {
+        if key == "keep_unfinished" {
+            return match value.as_bool() {
+                Some(keep) => self.settings.config.keep_unfinished_romaji = keep,
+                None => self.problem(item, ProblemKind::NotABool),
+            };
+        }
         if key != "tables" {
             return self.problem(item, ProblemKind::UnknownItem);
         }

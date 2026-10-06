@@ -72,12 +72,18 @@ impl RomajiTable {
     /// made from both letters, ん for an `n` from the `n` alone.
     pub(crate) fn feed_parts(&self, pending: &mut String, c: char) -> Vec<(usize, String)> {
         pending.push(c);
-        self.resolve(pending, false)
+        self.resolve(pending, false, false)
     }
 
     /// Turns `pending` into text as far as it can. Unless `finishing`, input
     /// that may still grow into a rule, ん or っ waits for the next key.
-    fn resolve(&self, pending: &mut String, finishing: bool) -> Vec<(usize, String)> {
+    /// Letters forming nothing are dropped unless `keeping`.
+    fn resolve(
+        &self,
+        pending: &mut String,
+        finishing: bool,
+        keeping: bool,
+    ) -> Vec<(usize, String)> {
         let mut made = Vec::new();
         let mut used = 0;
         while let Some(first) = pending.chars().next() {
@@ -106,7 +112,7 @@ impl RomajiTable {
                 made.push((used + 1, "ん".to_owned()));
             } else if consonant && second == Some(first) {
                 made.push((used + 2, "っ".to_owned()));
-            } else if !first.is_ascii_lowercase() {
+            } else if keeping || !first.is_ascii_lowercase() {
                 made.push((used + first.len_utf8(), first.to_string()));
             }
             pending.remove(0);
@@ -160,7 +166,15 @@ impl RomajiTable {
     /// As [`Self::flush`], each piece of text with where its keys end, as
     /// [`Self::feed_parts`] gives them.
     pub(crate) fn flush_parts(&self, pending: &mut String) -> Vec<(usize, String)> {
-        self.resolve(pending, true)
+        self.resolve(pending, true, false)
+    }
+
+    /// As [`Self::flush`], but letters forming nothing stay as typed.
+    pub(crate) fn flush_keeping(&self, pending: &mut String) -> String {
+        self.resolve(pending, true, true)
+            .into_iter()
+            .map(|(_, kana)| kana)
+            .collect()
     }
 }
 

@@ -500,7 +500,8 @@ impl<C: Converter> Core<C> {
             if self.registrations.is_empty()
                 && let State::Idle { pending } = &mut self.state
             {
-                let kana = self.config.romaji.flush(pending);
+                let mut pending = mem::take(pending);
+                let kana = self.flush_unfinished(&mut pending);
                 self.emit(&kana);
             }
             return false;
@@ -539,7 +540,7 @@ impl<C: Converter> Core<C> {
                 self.state = State::Idle { pending };
             }
             Key::Char(c) => {
-                let kana = self.config.romaji.flush(&mut pending);
+                let kana = self.flush_unfinished(&mut pending);
                 self.emit(&kana);
                 self.emit(c.encode_utf8(&mut [0; 4]));
             }
@@ -549,7 +550,7 @@ impl<C: Converter> Core<C> {
                 self.state = State::Idle { pending };
             }
             _ => {
-                let kana = self.config.romaji.flush(&mut pending);
+                let kana = self.flush_unfinished(&mut pending);
                 self.emit(&kana);
                 return self.direct(key) || self.leave_on_esc(key);
             }
@@ -797,7 +798,7 @@ impl<C: Converter> Core<C> {
     fn act_idle(&mut self, mut pending: String, action: Action, key: Key) -> Option<bool> {
         match action {
             Action::Begin => {
-                let kana = self.config.romaji.flush(&mut pending);
+                let kana = self.flush_unfinished(&mut pending);
                 self.emit(&kana);
                 self.state = State::Reading(Word::default());
                 return None;
@@ -812,11 +813,11 @@ impl<C: Converter> Core<C> {
             _ => {}
         }
         if self.registrations.is_empty() {
-            let kana = self.config.romaji.flush(&mut pending);
+            let kana = self.flush_unfinished(&mut pending);
             self.emit(&kana);
             return Some(self.leave_on_esc(key));
         }
-        let kana = self.config.romaji.flush(&mut pending);
+        let kana = self.flush_unfinished(&mut pending);
         self.emit(&kana);
         match action {
             Action::Commit => self.finish_registration(),
@@ -1140,10 +1141,19 @@ impl<C: Converter> Core<C> {
         }
     }
 
+    /// Resolves romaji left unfinished outside a reading at a commit.
+    fn flush_unfinished(&self, pending: &mut String) -> String {
+        if self.config.keep_unfinished_romaji {
+            self.config.romaji.flush_keeping(pending)
+        } else {
+            self.config.romaji.flush(pending)
+        }
+    }
+
     fn commit_inner(&mut self) {
         match mem::replace(&mut self.state, State::idle()) {
             State::Idle { mut pending } => {
-                let kana = self.config.romaji.flush(&mut pending);
+                let kana = self.flush_unfinished(&mut pending);
                 self.emit(&kana)
             }
             // What is visible goes in full: romaji given back by the word is

@@ -126,6 +126,22 @@ pub fn Input() -> Element {
                 on_close: move |_| looking.set(None),
             }
         }
+        Group { title: "ローマ字の打ちかけ",
+            Row {
+                label: "打ちかけを残して確定",
+                description: "かなにならないまま確定したローマ字を、打ったとおりに残します（arew で確定すると「あれw」）。切ると捨てます（「あれ」）。変換する読みの中では、いつも捨てます。",
+                path: path(&["romaji", "keep_unfinished"]),
+                shipped: (config.keep_unfinished_romaji != shipped.keep_unfinished_romaji)
+                    .then(|| if shipped.keep_unfinished_romaji { "残す" } else { "捨てる" }.to_owned()),
+                input {
+                    class: "switch",
+                    r#type: "checkbox",
+                    role: "switch",
+                    checked: config.keep_unfinished_romaji,
+                    onchange: move |e| ctx.change(&["romaji", "keep_unfinished"], Some(e.checked().into())),
+                }
+            }
+        }
         Group {
             title: "変換中のショートカット",
             note: "変換中の文字があるときに、選んだキーとの組み合わせ（Cmd+C など）は、文字を確定してからアプリに送ります。選んでいないものは、変換中の文字をうっかり失わないよう、押しても何もしません。",
