@@ -430,7 +430,7 @@ table.bindings tr + tr td { border-top: 1px solid var(--separator); }
 .item-description { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .item-warning { color: var(--error); font-size: 13px; margin-top: 2px; }
 .meta { color: var(--muted); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.ordered .info, .section-actions button, .modal header button {
+.ordered .info, .control .info, .section-actions button, .modal header button {
   background: var(--control);
   border: 1px solid var(--control-border);
   border-radius: 6px;

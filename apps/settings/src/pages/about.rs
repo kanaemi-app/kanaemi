@@ -81,7 +81,13 @@ pub fn About() -> Element {
                     div { class: "row-main",
                         code { class: "path", "{log.display()}" }
                         div { class: "control",
-                            button { onclick: move |_| reading_log.set(true), "見る" }
+                            button {
+                                class: "info",
+                                title: "中身を見る",
+                                "aria-label": "中身を見る",
+                                onclick: move |_| reading_log.set(true),
+                                Icon { paths: icons::LIST_SEARCH }
+                            }
                             button {
                                 onclick: {
                                     let log = log.clone();
