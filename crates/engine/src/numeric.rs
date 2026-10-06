@@ -1,15 +1,10 @@
-//! Numbers in readings, and the ways a numeric item writes them.
-//!
-//! A numeric item holds its placeholders as [`OPEN`] and [`CLOSE`] around a
-//! notation's name, so a literal `{` or `}` in a word stays itself.
+//! Numbers in readings, and the built-in functions that write them.
 
-pub(crate) const OPEN: char = '\u{FDD0}';
-pub(crate) const CLOSE: char = '\u{FDD1}';
+use crate::placeholder::{CLOSE, OPEN};
 
-/// How a numeric item writes the number put in a placeholder.
+/// How a built-in function writes a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Notation {
-    Digits,
     WideDigits,
     KanjiDigits,
     Kanji,
@@ -18,10 +13,9 @@ pub(crate) enum Notation {
 }
 
 impl Notation {
-    /// The notation a placeholder names; the empty name is plain digits.
+    /// The notation of a built-in function's name.
     pub(crate) fn named(name: &str) -> Option<Self> {
         Some(match name {
-            "" => Self::Digits,
             "wide-num" => Self::WideDigits,
             "kanji-num" => Self::KanjiDigits,
             "kanji" => Self::Kanji,
@@ -41,7 +35,6 @@ impl Notation {
         };
         let each = |of: &dyn Fn(u8) -> char| digits.iter().map(|&d| of(d)).collect();
         match self {
-            Self::Digits => Some(each(&|d| char::from(b'0' + d))),
             Self::WideDigits => Some(each(&|d| WIDE_DIGITS[usize::from(d)])),
             Self::KanjiDigits => Some(each(&|d| KANJI_DIGITS[usize::from(d)])),
             Self::Kanji => counted(significant, false),
@@ -81,25 +74,6 @@ impl Numbers {
         }
         (!found.values.is_empty()).then_some(found)
     }
-}
-
-/// `surface` with each placeholder replaced by the number of its place, as its
-/// notation writes it. `None` when a placeholder has no number or its notation
-/// cannot write it.
-pub(crate) fn fill(surface: &str, values: &[String]) -> Option<String> {
-    let mut out = String::new();
-    let mut values = values.iter();
-    let mut rest = surface;
-    while let Some(open) = rest.find(OPEN) {
-        out.push_str(&rest[..open]);
-        let inside = &rest[open + OPEN.len_utf8()..];
-        let close = inside.find(CLOSE)?;
-        let notation = Notation::named(&inside[..close])?;
-        out.push_str(&notation.write(values.next()?)?);
-        rest = &inside[close + CLOSE.len_utf8()..];
-    }
-    out.push_str(rest);
-    Some(out)
 }
 
 const WIDE_DIGITS: [char; 10] = ['０', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
@@ -179,7 +153,6 @@ mod tests {
     #[test]
     fn each_name_writes_twelve_and_two_thousand_twenty_six_its_way() {
         let cases = [
-            ("", "12", "2026"),
             ("wide-num", "１２", "２０２６"),
             ("kanji-num", "一二", "二〇二六"),
             ("kanji", "十二", "二千二十六"),
@@ -194,6 +167,7 @@ mod tests {
 
     #[test]
     fn an_unknown_name_is_no_notation() {
+        assert_eq!(Notation::named(""), None);
         assert_eq!(Notation::named("roman"), None);
         assert_eq!(Notation::named("Kanji"), None);
     }
@@ -237,19 +211,14 @@ mod tests {
         assert_eq!(write("kanji", "100000000000000000000"), None);
         assert_eq!(write("daiji", "100000000000000000000"), None);
         assert_eq!(
-            write("", "100000000000000000000").as_deref(),
-            Some("100000000000000000000")
-        );
-        assert_eq!(
             write("grouped-num", "100000000000000000000").as_deref(),
             Some("100,000,000,000,000,000,000")
         );
     }
 
     #[test]
-    fn leading_zeros_stay_in_digits_and_go_from_counted_numbers() {
+    fn leading_zeros_stay_in_digit_by_digit_numbers_and_go_from_counted_ones() {
         let cases = [
-            ("", "007"),
             ("wide-num", "００７"),
             ("kanji-num", "〇〇七"),
             ("kanji", "七"),
@@ -303,29 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn the_nth_placeholder_takes_the_nth_number_in_its_notation() {
-        let surface = format!("{}月{}日", placeholder("kanji"), placeholder("wide-num"));
-        let values = ["12".to_owned(), "1".to_owned()];
-        assert_eq!(fill(&surface, &values).as_deref(), Some("十二月１日"));
-    }
-
-    #[test]
-    fn a_surface_left_with_no_number_or_an_unwritable_one_fills_nothing() {
-        let values = ["1".to_owned()];
-        let two = format!("{0}と{0}", placeholder(""));
-        assert_eq!(fill(&two, &values), None);
-        let huge = ["100000000000000000000".to_owned()];
-        assert_eq!(fill(&placeholder("kanji"), &huge), None);
-    }
-
-    #[test]
-    fn a_surface_without_placeholders_stays_as_written() {
-        assert_eq!(fill("{個}", &["1".to_owned()]).as_deref(), Some("{個}"));
-    }
-
-    #[test]
     fn full_width_digits_are_read_as_their_numbers() {
-        assert_eq!(write("", "１２").as_deref(), Some("12"));
         assert_eq!(write("kanji", "２０２６").as_deref(), Some("二千二十六"));
         assert_eq!(write("wide-num", "1２").as_deref(), Some("１２"));
     }

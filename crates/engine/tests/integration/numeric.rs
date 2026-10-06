@@ -27,8 +27,14 @@ fn surfaces(engine: &Engine, reading: &str) -> Vec<String> {
 #[test]
 fn a_number_fills_the_placeholders_of_numeric_items() {
     let (e, _) = engine(COUNTERS, "");
-    assert_eq!(surfaces(&e, "１こ"), ["1個", "１個", "一個"]);
+    assert_eq!(surfaces(&e, "1こ"), ["1個", "１個", "一個"]);
     assert_eq!(surfaces(&e, "12こ"), ["12個", "１２個", "十二個"]);
+}
+
+#[test]
+fn the_empty_function_writes_the_number_as_typed() {
+    let (e, _) = engine(COUNTERS, "");
+    assert_eq!(surfaces(&e, "１こ"), ["１個", "一個"]);
 }
 
 #[test]
@@ -53,13 +59,13 @@ fn a_number_a_notation_cannot_write_leaves_out_that_candidate_only() {
 #[test]
 fn a_reading_with_a_number_is_also_looked_up_as_typed() {
     let (e, _) = engine("１ばん\t一番\t\t0\n{}ばん\t{}番\t\t1", "");
-    assert_eq!(surfaces(&e, "１ばん"), ["一番", "1番"]);
+    assert_eq!(surfaces(&e, "１ばん"), ["一番", "１番"]);
 }
 
 #[test]
 fn a_surface_from_a_word_and_a_numeric_item_is_one_candidate() {
-    let (e, _) = engine("１ばん\t1番\n{}ばん\t{}番", "");
-    assert_eq!(surfaces(&e, "１ばん"), ["1番"]);
+    let (e, _) = engine("１ばん\t１番\n{}ばん\t{}番", "");
+    assert_eq!(surfaces(&e, "１ばん"), ["１番"]);
 }
 
 #[test]
@@ -101,7 +107,7 @@ fn deleting_a_numeric_candidate_hides_its_item_for_every_number() {
     let (mut e, lines) = engine(COUNTERS, "");
     e.delete("１こ", "一個");
     assert_eq!(*lines.0.borrow(), ["!{}こ\t{kanji}個"]);
-    assert_eq!(surfaces(&e, "２こ"), ["2個", "２個"]);
+    assert_eq!(surfaces(&e, "2こ"), ["2個", "２個"]);
 }
 
 #[test]
@@ -141,6 +147,16 @@ fn a_word_registered_with_a_placeholder_enters_the_field_filled() {
 #[test]
 fn the_commit_of_a_registered_numeric_item_is_recorded_with_its_placeholders() {
     let (mut e, _) = engine("", "");
+    e.register("１こ", "{kanji}個");
+    e.commit("１こ", "一個");
+    let text = e.take_selections().unwrap().to_text();
+    assert!(text.contains("\n{}こ\t{kanji}個\t"), "{text}");
+}
+
+#[test]
+fn the_commit_of_a_numeric_item_registered_after_converting_is_recorded_with_its_placeholders() {
+    let (mut e, _) = engine("", "");
+    assert_eq!(surfaces(&e, "１こ"), Vec::<String>::new());
     e.register("１こ", "{kanji}個");
     e.commit("１こ", "一個");
     let text = e.take_selections().unwrap().to_text();

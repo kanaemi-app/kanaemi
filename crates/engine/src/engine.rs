@@ -1,8 +1,11 @@
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use kanaemi_core::{Candidate, Converter, Effect};
 
-use crate::numeric::{Numbers, fill};
+use crate::numeric::Numbers;
+use crate::placeholder::{Functions, OPEN, fill, fits};
 use crate::{
     CONTEXT_CHARS, CandidateFacts, ConjugationTable, Dictionary, HISTORY_LEN, ItemLine, LineSink,
     MAX_SUFFIX_KANA, RankingInput, RankingModel, Selections, TextDictionary, UserCustom,
@@ -93,6 +96,17 @@ pub struct Engine {
     selections: Selections,
     /// Whether `selections` changed since it was last handed over.
     selections_changed: bool,
+    functions: Option<Rc<dyn Functions>>,
+    /// Set while a key is only tried, so the user's functions, which may
+    /// count their calls, run once for each key.
+    without_functions: Cell<bool>,
+    /// The last conversion without okurigana, so a candidate is recorded by
+    /// the item it was filled from even when its function gives another
+    /// text each time.
+    last: RefCell<Option<(String, Vec<CandidateFacts>)>>,
+    /// The last commit as the core reported it, and the pair it was recorded
+    /// as, so undoing it withdraws that pair whatever was converted since.
+    committed: Option<((String, String), (String, String))>,
 }
 
 /// A candidate as it is gathered: what ranking knows of it.
@@ -121,6 +135,10 @@ impl Engine {
             model: None,
             selections: Selections::default(),
             selections_changed: false,
+            functions: None,
+            without_functions: Cell::new(false),
+            last: RefCell::new(None),
+            committed: None,
         }
     }
 
@@ -128,6 +146,43 @@ impl Engine {
     /// engines of one process may share it.
     pub fn set_model(&mut self, model: Option<Arc<RankingModel>>) {
         self.model = model;
+    }
+
+    /// Fills placeholders with `functions` from now on, before the built-in
+    /// ones. The engines of one process may share them.
+    pub fn set_functions(&mut self, functions: Option<Rc<dyn Functions>>) {
+        self.functions = functions;
+        self.last.replace(None);
+    }
+
+    /// Runs `run` with only the built-in functions filling placeholders, and
+    /// keeps no conversion for recording, as for a key that is only tried.
+    pub fn without_functions<T>(&self, run: impl FnOnce() -> T) -> T {
+        let before = self.without_functions.replace(true);
+        let result = run();
+        self.without_functions.set(before);
+        result
+    }
+
+    /// Keeps `facts` of a word registered for `reading` as converted, before
+    /// what was converted for it, so its commit is recorded as registered
+    /// without running the functions again.
+    fn remember(&self, reading: &str, facts: CandidateFacts) {
+        if self.without_functions.get() {
+            return;
+        }
+        let mut last = self.last.borrow_mut();
+        match last.as_mut() {
+            Some((converted, all)) if converted == reading => all.insert(0, facts),
+            _ => *last = Some((reading.to_owned(), vec![facts])),
+        }
+    }
+
+    /// The user's functions, unless a key is only tried.
+    fn user_functions(&self) -> Option<&dyn Functions> {
+        self.functions
+            .as_deref()
+            .filter(|_| !self.without_functions.get())
     }
 
     /// Every candidate with what the ranking model knows of it, in no order:
@@ -170,6 +225,7 @@ impl Engine {
     /// yet written on top.
     pub fn replace_user(&mut self, user: TextDictionary) {
         self.user.replace(user);
+        self.last.replace(None);
     }
 
     /// Carries what the field taught and the lines not yet written over from
@@ -189,8 +245,10 @@ impl Engine {
                 okurigana,
                 surface,
             } => {
+                let reported = (nfc(reading), nfc(surface));
                 let (reading, surface) =
-                    self.recorded(nfc(reading), okurigana.is_some(), nfc(surface));
+                    self.recorded(reported.0.clone(), okurigana.is_some(), reported.1.clone());
+                self.committed = Some((reported, (reading.clone(), surface.clone())));
                 self.selections.record(&reading, &surface);
                 self.selections_changed = true;
                 self.field.commit(reading, surface);
@@ -221,8 +279,11 @@ impl Engine {
                 okurigana,
                 surface,
             } => {
-                let (reading, surface) =
-                    self.recorded(nfc(reading), okurigana.is_some(), nfc(surface));
+                let reported = (nfc(reading), nfc(surface));
+                let (reading, surface) = match self.committed.take() {
+                    Some((committed, recorded)) if committed == reported => recorded,
+                    _ => self.recorded(reported.0, okurigana.is_some(), reported.1),
+                };
                 self.selections.withdraw(&reading, &surface);
                 self.selections_changed = true;
                 self.field.withdraw(&reading, &surface);
@@ -234,16 +295,35 @@ impl Engine {
     }
 
     /// The pair a candidate the core reports is recorded as, found again as
-    /// it was converted. Converting with okurigana fills no numeric item.
+    /// it was converted. Converting with okurigana fills no placeholder.
     fn recorded(&self, reading: String, okurigana: bool, surface: String) -> (String, String) {
-        if okurigana || Numbers::find(&reading).is_none() {
+        if okurigana {
             return (reading, surface);
         }
-        self.found(&reading, None)
-            .into_iter()
-            .find(|f| f.facts.surface == surface)
-            .and_then(|f| f.facts.numeric)
-            .unwrap_or((reading, surface))
+        // The candidate, and the item it was filled from if any.
+        let template = |all: &[CandidateFacts]| {
+            all.iter()
+                .find(|f| f.surface == surface)
+                .map(|f| f.template.clone())
+        };
+        let last = match self.last.borrow().as_ref() {
+            Some((converted, all)) if *converted == reading => template(all),
+            _ => None,
+        };
+        // Found again only when that conversion did not give it, such as a
+        // word registered since: running the functions again may give
+        // another item this text.
+        last.or_else(|| {
+            template(
+                &self
+                    .found(&reading, None)
+                    .into_iter()
+                    .map(|f| f.facts)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .flatten()
+        .unwrap_or((reading, surface))
     }
 
     fn register(
@@ -253,12 +333,11 @@ impl Engine {
         head: Option<String>,
         surface: &str,
     ) {
-        if let Some((numbers, surface)) =
-            numeric_registration(reading, okurigana.as_deref(), surface)
+        if let Some(registration) = placeholder_registration(reading, okurigana.as_deref(), surface)
         {
             let line = ItemLine {
-                reading: &numbers.reading,
-                surface: &surface,
+                reading: &registration.reading,
+                surface: &registration.surface,
                 ..ItemLine::default()
             };
             self.user.write(line.to_string());
@@ -303,13 +382,21 @@ impl Engine {
             Some(_) => None,
             None => Numbers::find(reading),
         };
+        let functions = self.user_functions();
         for (priority, slot) in self.slots.iter().enumerate() {
             let dictionary: &dyn Dictionary = match slot {
                 Slot::UserCustom => user,
                 Slot::Dictionary(d) => d.as_ref(),
             };
             let hidden = |reading: &str, surface: &str| user.is_hidden(reading, surface);
-            for mut f in found_in(dictionary, reading, okurigana, numbers.as_ref(), &hidden) {
+            for mut f in found_in(
+                dictionary,
+                reading,
+                okurigana,
+                numbers.as_ref(),
+                functions,
+                &hidden,
+            ) {
                 match all.iter_mut().find(|a| a.facts.surface == f.facts.surface) {
                     Some(a) => a.okuri |= f.okuri,
                     None => {
@@ -368,7 +455,7 @@ impl Engine {
     }
 
     /// Brings candidates picked again and again to the front, heaviest first.
-    /// Once the reading, or a numeric item's reading for it, has a commit in
+    /// Once the reading, or the reading of an item a candidate filled, has a commit in
     /// this field, the field's history decides instead: a choice just made
     /// there is not overturned.
     fn favor(&self, reading: &str, ranked: Vec<Found>) -> Vec<Found> {
@@ -405,7 +492,12 @@ impl Converter for Engine {
     fn convert(&self, reading: &str, okurigana: Option<&str>) -> Vec<Candidate> {
         let reading = &nfc(reading);
         let okurigana = okurigana.map(nfc);
-        let ranked = self.rank(reading, self.found(reading, okurigana.as_deref()));
+        let found = self.found(reading, okurigana.as_deref());
+        if okurigana.is_none() && !self.without_functions.get() {
+            let facts = found.iter().map(|f| f.facts.clone()).collect();
+            self.last.replace(Some((reading.clone(), facts)));
+        }
+        let ranked = self.rank(reading, found);
         let ranked = self.okuri_first(reading, ranked);
         self.favor(reading, ranked)
             .into_iter()
@@ -416,23 +508,59 @@ impl Converter for Engine {
     }
 
     fn registered_text(&self, reading: &str, okurigana: Option<&str>, surface: &str) -> String {
-        numeric_registration(&nfc(reading), okurigana, surface)
-            .and_then(|(numbers, surface)| fill(&surface, &numbers.values))
-            .unwrap_or_else(|| surface.to_owned())
+        let reading = nfc(reading);
+        let Some(registration) = placeholder_registration(&reading, okurigana, surface) else {
+            if okurigana.is_none() {
+                self.remember(&reading, CandidateFacts::plain(nfc(surface)));
+            }
+            return surface.to_owned();
+        };
+        let Some(text) = fill(
+            &registration.surface,
+            &registration.numbers,
+            &reading,
+            self.user_functions(),
+        )
+        .map(|text| nfc(&text)) else {
+            return surface.to_owned();
+        };
+        let facts = CandidateFacts {
+            template: Some((registration.reading, registration.surface)),
+            ..CandidateFacts::plain(text.clone())
+        };
+        self.remember(&reading, facts);
+        text
     }
 }
 
-/// The reading's numbers and the numeric item's surface, when a word
-/// registered for `reading` has placeholders and so is written as one.
-fn numeric_registration(
+/// A word registered with placeholders, written as an item with them.
+struct PlaceholderRegistration {
+    /// With a placeholder in place of each number.
+    reading: String,
+    surface: String,
+    /// As typed.
+    numbers: Vec<String>,
+}
+
+/// `None` when `surface` has no placeholders, or would make an invalid line.
+fn placeholder_registration(
     reading: &str,
     okurigana: Option<&str>,
     surface: &str,
-) -> Option<(Numbers, String)> {
+) -> Option<PlaceholderRegistration> {
     if okurigana.is_some() {
         return None;
     }
-    Some((Numbers::find(reading)?, mark_placeholders(surface)?))
+    let surface = mark_placeholders(surface)?;
+    let (reading, numbers) = match Numbers::find(reading) {
+        Some(found) => (found.reading, found.values),
+        None => (reading.to_owned(), Vec::new()),
+    };
+    fits(&surface, numbers.len()).then_some(PlaceholderRegistration {
+        reading,
+        surface,
+        numbers,
+    })
 }
 
 /// The candidates one dictionary gives for a reading, and for its `numbers`
@@ -444,15 +572,16 @@ fn found_in(
     reading: &str,
     okurigana: Option<&str>,
     numbers: Option<&Numbers>,
+    functions: Option<&dyn Functions>,
     hidden: &dyn Fn(&str, &str) -> bool,
 ) -> Vec<Found> {
     let mut found: Vec<Found> = Vec::new();
     let mut add = |surface: String,
                    cost: u32,
                    built: bool,
-                   numeric: Option<(String, String)>,
+                   template: Option<(String, String)>,
                    okuri: bool| {
-        let (recorded_reading, recorded_surface) = match &numeric {
+        let (recorded_reading, recorded_surface) = match &template {
             Some((reading, surface)) => (reading.as_str(), surface.as_str()),
             None => (reading, surface.as_str()),
         };
@@ -465,7 +594,7 @@ fn found_in(
                 if cost < f.facts.cost {
                     f.facts.cost = cost;
                     f.facts.built = built;
-                    f.facts.numeric = numeric;
+                    f.facts.template = template;
                 }
             }
             None => found.push(Found {
@@ -474,7 +603,7 @@ fn found_in(
                     dictionary: 0,
                     cost,
                     built,
-                    numeric,
+                    template,
                 },
                 okuri,
             }),
@@ -491,7 +620,16 @@ fn found_in(
         _ => dictionary.lookup(reading),
     };
     for e in whole.into_iter().filter(|e| e.conjugation.is_none()) {
-        add(e.surface, e.cost, false, None, false);
+        if !e.surface.contains(OPEN) {
+            add(e.surface, e.cost, false, None, false);
+        } else if okurigana.is_none()
+            // A hidden item runs no function: one may count its calls.
+            && !hidden(reading, &e.surface)
+            && let Some(surface) = fill(&e.surface, &[], reading, functions)
+        {
+            let template = (reading.to_owned(), e.surface);
+            add(nfc(&surface), e.cost, false, Some(template), false);
+        }
     }
     let table = ConjugationTable::builtin();
     for (rest, entries) in splits {
@@ -537,9 +675,12 @@ fn found_in(
     if let Some(numbers) = numbers {
         let items = dictionary.lookup(&numbers.reading);
         for e in items.into_iter().filter(|e| e.conjugation.is_none()) {
-            if let Some(surface) = fill(&e.surface, &numbers.values) {
-                let numeric = (numbers.reading.clone(), e.surface);
-                add(surface, e.cost, false, Some(numeric), false);
+            if hidden(&numbers.reading, &e.surface) {
+                continue;
+            }
+            if let Some(surface) = fill(&e.surface, &numbers.values, reading, functions) {
+                let template = (numbers.reading.clone(), e.surface);
+                add(nfc(&surface), e.cost, false, Some(template), false);
             }
         }
     }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::numeric::{CLOSE, OPEN};
+use crate::placeholder::{CLOSE, OPEN};
 use crate::test_support::{Words, entry, stems};
 
 fn parse(text: &str) -> TextDictionary {
@@ -371,11 +371,15 @@ fn a_numeric_line_keeps_its_placeholders_apart_from_literal_braces() {
 }
 
 #[test]
-fn reasons_for_invalid_numeric_lines() {
+fn reasons_for_invalid_placeholder_lines() {
     for line in [
         "{}こ\t{}と{}",
         "こ\t{}個",
-        "{}こ\t{roman}個",
+        "{}こ\t{1:kanji}個",
+        "{}こ\t{x:kanji}個",
+        "{}こ\t{ka:n:ji}個",
+        "きょう\t{-:date}\t五段-カ行",
+        "き*ょ\t{-:date}ょ",
         "{}こ\t{kanji個",
         "{kanji}こ\t個",
         "{こ\t個",
@@ -386,6 +390,29 @@ fn reasons_for_invalid_numeric_lines() {
     ] {
         assert_eq!(invalid(line), [InvalidReason::Placeholder], "{line:?}");
     }
+}
+
+#[test]
+fn a_word_without_numbers_may_have_placeholders_that_take_the_reading() {
+    let d = parse("きょう\t{-:date %Y}年");
+    assert_eq!(
+        surfaces(&d, "きょう"),
+        [format!("{}年", placeholder("-:date %Y"))]
+    );
+    assert_eq!(invalid("いま\t{0:date}"), [InvalidReason::Placeholder]);
+}
+
+#[test]
+fn an_argument_escapes_its_braces_and_backslashes() {
+    let d = parse("かっこ\t{-:wrap \\{\\}\\\\}");
+    let surface = placeholder("-:wrap {}\\");
+    assert_eq!(surfaces(&d, "かっこ"), std::slice::from_ref(&surface));
+    let line = ItemLine {
+        reading: "かっこ",
+        surface: &surface,
+        ..ItemLine::default()
+    };
+    assert_eq!(line.to_string(), "かっこ\t{-:wrap \\{\\}\\\\}");
 }
 
 #[test]
@@ -411,13 +438,17 @@ fn placeholders_are_shown_as_they_are_written() {
 }
 
 #[test]
-fn braces_with_a_notation_s_name_are_marked_as_placeholders() {
+fn braces_written_as_a_placeholder_may_be_are_marked_as_placeholders() {
     assert_eq!(
-        mark_placeholders("{kanji}個{x}"),
-        Some(format!("{}個{{x}}", placeholder("kanji")))
+        mark_placeholders("{kanji}個{x:y}"),
+        Some(format!("{}個{{x:y}}", placeholder("kanji")))
     );
     assert_eq!(mark_placeholders("{}"), Some(placeholder("")));
-    assert_eq!(mark_placeholders("{x}個{"), None);
+    assert_eq!(
+        mark_placeholders("{-:date %Y}"),
+        Some(placeholder("-:date %Y"))
+    );
+    assert_eq!(mark_placeholders("{x:y}個{"), None);
     assert_eq!(mark_placeholders("個"), None);
 }
 

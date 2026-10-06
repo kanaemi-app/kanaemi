@@ -32,16 +32,29 @@ pub struct CandidateFacts {
     pub cost: u32,
     /// Built from a conjugating stem rather than found whole.
     pub built: bool,
-    /// The reading and surface of the numeric item it was filled from.
-    pub numeric: Option<(String, String)>,
+    /// The reading and surface of the item with placeholders it was filled
+    /// from.
+    pub template: Option<(String, String)>,
 }
 
 impl CandidateFacts {
+    /// A word found whole in the first dictionary at no cost.
+    pub(crate) fn plain(surface: String) -> Self {
+        Self {
+            surface,
+            dictionary: 0,
+            cost: 0,
+            built: false,
+            template: None,
+        }
+    }
+
     /// The (reading, surface) the history, the picks and hide lines know it
-    /// by, `reading` being what was converted: a numeric item's own, so what
-    /// is learned with one number holds for every number.
+    /// by, `reading` being what was converted: the item with placeholders it was
+    /// filled from, so what is learned with one number or value holds for
+    /// every one.
     pub fn recorded<'a>(&'a self, reading: &'a str) -> (&'a str, &'a str) {
-        match &self.numeric {
+        match &self.template {
             Some((reading, surface)) => (reading, surface),
             None => (reading, &self.surface),
         }
@@ -110,7 +123,7 @@ fn join(parts: &[Part], out: &mut Vec<u8>) {
 
 /// The one definition of the features: each goes to `emit` as its parts. A
 /// candidate is known by its [recorded](CandidateFacts::recorded) pair, the
-/// form the history holds, so a number's features are its numeric item's.
+/// form the history holds, so a filled candidate's features are its item's.
 fn each_feature(input: &RankingInput, candidate: &CandidateFacts, mut emit: impl FnMut(&[Part])) {
     use Part::{Char, Number, Text};
     let (reading, s) = candidate.recorded(input.reading);
@@ -344,7 +357,7 @@ mod tests {
             dictionary,
             cost,
             built,
-            numeric: None,
+            template: None,
         }
     }
 
@@ -423,7 +436,7 @@ mod tests {
             context: "箱が",
         };
         let candidate = CandidateFacts {
-            numeric: Some(("{}こ".to_owned(), "{kanji}個".to_owned())),
+            template: Some(("{}こ".to_owned(), "{kanji}個".to_owned())),
             ..facts("五個", 0, 0, false)
         };
         let got = names(&features(&input, &candidate));

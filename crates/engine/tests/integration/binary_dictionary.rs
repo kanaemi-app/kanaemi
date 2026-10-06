@@ -29,6 +29,21 @@ fn a_converted_dictionary_finds_what_the_text_finds() {
 }
 
 #[test]
+fn a_converted_dictionary_keeps_placeholders_with_positions_and_arguments() {
+    let text = "きょう\t{-:date %Y\\}}年\n{}がつ{}にち\t{1:kanji}月{0:}日\n";
+    let path = converted(text);
+
+    let binary = BinaryDictionary::open(&path).unwrap();
+
+    let (text, invalid) = TextDictionary::parse(text);
+    assert_eq!(invalid, []);
+    assert_eq!(binary.lookup("きょう"), text.lookup("きょう"));
+    let numeric = "\u{FDD0}\u{FDD1}がつ\u{FDD0}\u{FDD1}にち";
+    assert_eq!(binary.lookup(numeric), text.lookup(numeric));
+    assert_eq!(text.lookup(numeric).len(), 1);
+}
+
+#[test]
 fn converting_reports_the_lines_it_could_not_read() {
     let (_, invalid) = convert_text("きしゃ\t記者\nbroken\n");
 

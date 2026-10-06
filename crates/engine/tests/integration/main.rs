@@ -5,6 +5,7 @@ mod binary_dictionary;
 mod common;
 mod conversion;
 mod numeric;
+mod placeholder;
 mod ranking;
 mod selections;
 mod skk;

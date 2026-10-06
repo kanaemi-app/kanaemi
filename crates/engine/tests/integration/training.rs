@@ -17,7 +17,7 @@ fn facts(surface: &str, dictionary: usize, cost: u32, built: bool) -> CandidateF
         dictionary,
         cost,
         built,
-        numeric: None,
+        template: None,
     }
 }
 
@@ -93,7 +93,7 @@ fn candidate_facts_of_a_number_carry_the_numeric_item_the_history_records() {
     assert_eq!(
         filled,
         [CandidateFacts {
-            numeric: Some((item.0.to_owned(), item.1.to_owned())),
+            template: Some((item.0.to_owned(), item.1.to_owned())),
             ..facts("五個", 1, 0, false)
         }]
     );
