@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Create the self-signed identity install.sh signs development builds with,
 # in the login keychain, so that a rebuild keeps the permissions macOS gave
-# the app.
+# the app. Releases are signed by an identity of their own, kept apart from
+# this machine (release-identity.sh).
 set -euo pipefail
 
 name="Kanaemi Development"

@@ -2,6 +2,10 @@
 
 GitHub のリリースを公開すると、そのタグから OS ごとのインストーラーを作り、リリースに付ける（[OS ごとのインストーラーで配る](../adr/20261005-distribute-with-an-installer-for-each-os.md)）。インストーラーと一緒に、それらの目録 `index.json` も付ける。最新のリリースの目録は `https://github.com/kanaemi-app/kanaemi/releases/latest/download/index.json` で取れる。
 
+## 署名
+
+macOS のインストーラーに入れるアプリは、どのリリースも同じ自己署名の証明書で署名する。版を上げても、利用者が与えた入力監視の許可は残る。
+
 ## 目録
 
 ```json

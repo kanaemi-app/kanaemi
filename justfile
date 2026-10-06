@@ -32,6 +32,10 @@ install-macos:
 macos-dev-identity:
     apps/macos/dev-identity.sh
 
+# Make the identity releases sign the macOS app with, into a new folder, for the secrets of the GitHub environment "release".
+macos-release-identity folder:
+    apps/macos/release-identity.sh {{folder}}
+
 # Build the IBus input method and install it under /usr/local/lib/kanaemi; asks for sudo.
 install-ibus:
     apps/ibus/install.sh

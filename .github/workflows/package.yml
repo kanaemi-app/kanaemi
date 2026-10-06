@@ -7,6 +7,13 @@ name: Package
 # package-*, for the caller to use or discard.
 on:
   workflow_call:
+    inputs:
+      # Signs the macOS app by the release identity, kept in the secrets of
+      # the environment "release"; ad-hoc otherwise. Every release is signed
+      # by the same one, so an update keeps the permissions users gave it.
+      sign:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -49,6 +56,7 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    environment: ${{ inputs.sign && 'release' || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -56,6 +64,14 @@ jobs:
           fetch-depth: 0
       - run: brew install librsvg
       - run: rustup toolchain install
+      - name: Import the release signing identity
+        if: inputs.sign
+        run: |
+          .github/import-macos-identity.sh "$RUNNER_TEMP/signing.keychain-db"
+          echo "KANAEMI_SIGN_IDENTITY=Kanaemi Release" >>"$GITHUB_ENV"
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
       - run: apps/macos/package.sh
       - run: .github/describe-packages.sh macos
       - uses: actions/upload-artifact@v7.0.1
