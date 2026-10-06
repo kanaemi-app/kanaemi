@@ -48,6 +48,14 @@ pub fn Display() -> Element {
             &m.cursor,
             format!("{}か{}んじ", marks.reading, marks.cursor),
         ),
+        (
+            "hold",
+            "押さえたまま",
+            "押さえたままに割り当てたキーを、押さえたままか単独で押したのか決まるまで、末尾に付けます",
+            &marks.hold,
+            &m.hold,
+            format!("{}かん{}j", marks.reading, marks.hold),
+        ),
     ];
     rsx! {
         Group {

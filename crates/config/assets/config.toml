@@ -29,6 +29,7 @@
 #okurigana = "*"
 #registration = " « "
 #cursor = "|"
+#hold = "_"
 
 # 上から順に重ねるローマ字の表。用意された表の名前か、romaji フォルダの表のファイル名。
 # 用意された表：full-width・hepburn・kunrei・input-aids・z-symbols・azik。

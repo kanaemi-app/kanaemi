@@ -233,6 +233,7 @@ impl Reader<'_> {
             "okurigana" => &mut marks.okurigana,
             "registration" => &mut marks.registration,
             "cursor" => &mut marks.cursor,
+            "hold" => &mut marks.hold,
             _ => return self.problem(item, ProblemKind::UnknownItem),
         };
         *field = mark;

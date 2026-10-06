@@ -331,6 +331,9 @@ pub struct Marks {
     /// Where the cursor is inside a reading or the text to register, when it
     /// is not at the end.
     pub cursor: String,
+    /// After the preedit while a key bound to be held is not yet known held
+    /// or pressed alone, followed by the character waiting on it.
+    pub hold: String,
 }
 
 impl Default for Marks {
@@ -341,6 +344,7 @@ impl Default for Marks {
             okurigana: "*".to_owned(),
             registration: " « ".to_owned(),
             cursor: "|".to_owned(),
+            hold: "_".to_owned(),
         }
     }
 }

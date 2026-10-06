@@ -53,13 +53,51 @@ fn a_letter_typed_and_let_go_while_space_is_held_begins_a_reading() {
     assert_eq!(out.commit, None);
     let out = t.ch('k');
     assert!(out.consumed);
-    assert_eq!(out.preedit, "", "not known yet");
+    assert_eq!(out.preedit, "_k", "not known yet");
     let out = t.release(Key::Char('k'));
     assert_eq!(out.preedit, "›k");
     let out = t.release(Key::Space);
     assert_eq!((out.commit, out.preedit.as_str()), (None, "›k"));
     let (_, out) = t.typ("anji");
     assert_eq!(out.preedit, "›かんじ");
+}
+
+#[test]
+fn a_held_key_shows_its_mark_until_it_is_known_held_or_alone() {
+    let mut t = kana();
+    // An application that sees no preedit takes a kept key for its own.
+    assert_eq!(t.down(Key::Space).preedit, "_");
+    assert_eq!(t.ch('k').preedit, "_k");
+    assert_eq!(t.release(Key::Char('k')).preedit, "›k");
+    assert_eq!(t.release(Key::Space).preedit, "›k");
+}
+
+#[test]
+fn the_mark_of_a_held_key_follows_the_preedit() {
+    let mut t = kana();
+    t.typ(";ka");
+    assert_eq!(t.down(Key::Space).preedit, "›か_");
+    assert_eq!(t.ch('k').preedit, "›か_k");
+}
+
+#[test]
+fn the_mark_of_a_held_key_is_gone_once_it_is_pressed_alone() {
+    let mut t = kana();
+    t.down(Key::Space);
+    let out = t.release(Key::Space);
+    assert_eq!(
+        (out.commit.as_deref(), out.preedit.as_str()),
+        (Some(" "), "")
+    );
+}
+
+#[test]
+fn the_mark_of_a_held_key_is_set_by_the_configuration() {
+    let mut config = config();
+    config.marks.hold = "▼".to_owned();
+    let mut t = T::with_config(config);
+    t.kana();
+    assert_eq!(t.down(Key::Space).preedit, "▼");
 }
 
 #[test]
@@ -97,7 +135,7 @@ fn space_tapped_does_what_it_is_bound_to_as_it_is_let_go() {
     let mut t = kana();
     t.typ(";kanji");
     let out = t.down(Key::Space);
-    assert_eq!(out.preedit, "›かんじ", "not yet");
+    assert_eq!(out.preedit, "›かんじ_", "not yet");
     assert_eq!(t.release(Key::Space).preedit, "»漢字");
 }
 
@@ -252,7 +290,7 @@ fn a_character_key_held_acts_before_what_is_typed() {
 #[test]
 fn a_character_key_pressed_alone_does_what_it_does_as_it_is_let_go() {
     let mut t = semicolon_held();
-    assert_eq!(t.ch(';').preedit, "", "not yet");
+    assert_eq!(t.ch(';').preedit, "_", "not yet");
     assert_eq!(t.release(Key::Char(';')).preedit, "›");
 }
 

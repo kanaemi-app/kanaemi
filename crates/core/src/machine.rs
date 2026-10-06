@@ -1153,6 +1153,18 @@ impl<C: Converter> Core<C> {
                 }
             }
         }
+        if let Some(Held {
+            state: HeldState::Undecided(waiting),
+            ..
+        }) = &self.held
+        {
+            preedit.push_str(&marks.hold);
+            match waiting.map(|chord| chord.key) {
+                Some(Key::Char(c)) => preedit.push(c),
+                Some(Key::Space) => preedit.push(' '),
+                _ => {}
+            }
+        }
         Output {
             consumed,
             commit: (!self.commit.is_empty()).then(|| self.commit.clone()),

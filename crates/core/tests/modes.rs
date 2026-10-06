@@ -279,6 +279,7 @@ fn the_marks_can_be_changed() {
         okurigana: "*".to_owned(),
         registration: "|".to_owned(),
         cursor: "_".to_owned(),
+        hold: "H".to_owned(),
     };
     let mut t = T::with_config(Config { marks, ..config() });
     t.kana();

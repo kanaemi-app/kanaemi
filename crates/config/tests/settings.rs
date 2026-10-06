@@ -90,6 +90,13 @@ fn marks_can_be_changed_one_by_one() {
 }
 
 #[test]
+fn the_mark_of_a_held_key_can_be_changed() {
+    let (settings, problems) = load("[marks]\nhold = \"▼\"");
+    assert_eq!(problems, Vec::<String>::new());
+    assert_eq!(settings.config.marks.hold, "▼");
+}
+
+#[test]
 fn a_mark_must_be_a_non_empty_line() {
     let (settings, problems) = load("[marks]\nreading = \"\"\ncandidate = \"a\\tb\"");
     assert_eq!(problems, ["marks.reading", "marks.candidate"]);
