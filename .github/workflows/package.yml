@@ -79,6 +79,7 @@ jobs:
           name: package-macos
           path: |
             target/package/*.pkg
+            target/package/*.zip
             target/package/*.json
           if-no-files-found: error
 

@@ -63,3 +63,10 @@ productbuild \
   --distribution "$work/distribution.xml" \
   --package-path "$work" \
   "$out/Kanaemi-$version.pkg"
+
+# The bare app for the Homebrew cask, which moves it into ~/Library/Input
+# Methods itself: the installer package cannot serve it, since a cask installs
+# a package for the whole system. ditto keeps the signature intact. Unlike
+# the other installers, a zip does not tell the OS by its extension, so the
+# name does.
+ditto -c -k --keepParent "$app" "$out/Kanaemi-$version-macos-$(uname -m).zip"

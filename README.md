@@ -70,6 +70,14 @@ SKK で SandS を使ってきたなら、`;` の代わりに Space を押さえ�
 
 OS ごとのふつうの入れ方（インストーラーやパッケージ）で、[リリース](https://github.com/kanaemi-app/kanaemi/releases) から配っています。入れたあと、入力ソースに Kanaemi を足してください。手順は [インストールのドキュメント](https://kanaemi-app.github.io/docs/install/) にあります。
 
+macOS では [Homebrew](https://brew.sh/) からも入れられます。
+
+```sh
+brew install --cask kanaemi-app/tap/kanaemi
+```
+
+インストーラーで入れた Kanaemi がすでにあると、Homebrew は上書きせずに止まります。そのときは `--force` を付けてください。置き換わるのはアプリだけで、辞書と設定はそのまま残ります。
+
 辞書は Kanaemi の本体とは別に、[kanaemi-dict](https://github.com/kanaemi-app/kanaemi-dict) が配っています。設定アプリの「辞書」の「公式の辞書」から、基本辞書と分野ごとの追加辞書を入れられます。
 
 ## 開発
