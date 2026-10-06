@@ -13,10 +13,41 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use kanaemi_engine::{Call, Functions};
 use mlua::{Function, Lua, LuaOptions, MultiValue, StdLib, Value, VmState};
 
-use crate::require::FolderRequirer;
+use crate::require::{BUILTIN_CHUNK, FolderRequirer};
 
 /// The extension of a function's file.
 pub const EXTENSION: &str = "luau";
+
+/// The functions the IME has, and the modules they require, by their path:
+/// written as files of the functions folder would be, so they work copied
+/// there too. A file at the top gives a function of its name.
+const BUILTINS: [(&str, &str); 7] = [
+    (
+        "half-num.luau",
+        include_str!("../assets/functions/half-num.luau"),
+    ),
+    (
+        "wide-num.luau",
+        include_str!("../assets/functions/wide-num.luau"),
+    ),
+    (
+        "kanji-num.luau",
+        include_str!("../assets/functions/kanji-num.luau"),
+    ),
+    ("kanji.luau", include_str!("../assets/functions/kanji.luau")),
+    ("daiji.luau", include_str!("../assets/functions/daiji.luau")),
+    (
+        "grouped-num.luau",
+        include_str!("../assets/functions/grouped-num.luau"),
+    ),
+    (
+        "lib/number.luau",
+        include_str!("../assets/functions/lib/number.luau"),
+    ),
+];
+
+/// The `kanaemi` table every function has, by key.
+const KANAEMI: [(&str, &str); 1] = [("number", include_str!("../assets/kanaemi/number.luau"))];
 
 /// Long enough for any function that writes a word, short enough that typing
 /// does not stall on one that never ends.
@@ -118,6 +149,8 @@ impl Shared {
 pub struct LuauFunctions {
     lua: Lua,
     functions: HashMap<String, Function>,
+    /// The names of the functions read from the folder, by name.
+    read: Vec<String>,
     shared: Rc<Shared>,
     errors: RefCell<Vec<FunctionError>>,
     /// Functions whose failure is already reported, so one that fails at
@@ -137,11 +170,25 @@ impl LuauFunctions {
         let shared = Rc::new(Shared::default());
         let mut errors = Vec::new();
         let mut functions = HashMap::new();
+        let mut read = Vec::new();
         let lua = match sandbox(dir, &shared) {
             Ok(lua) => {
+                for name in builtin_names() {
+                    match builtin(&lua, name, &shared) {
+                        Ok(function) => {
+                            functions.insert(name.to_owned(), function);
+                        }
+                        Err(error) => errors.push(FunctionError::Unrunnable {
+                            path: PathBuf::from(format!("{name}.{EXTENSION}")),
+                            message: error.to_string(),
+                        }),
+                    }
+                }
+                // A file of a built-in function's name goes in its place.
                 for path in files(dir) {
                     match load(&lua, &path, &shared) {
                         Ok(Some((name, function))) => {
+                            read.push(name.clone());
                             functions.insert(name, function);
                         }
                         Ok(None) => {}
@@ -162,6 +209,7 @@ impl LuauFunctions {
         Self {
             lua,
             functions,
+            read,
             shared,
             errors: RefCell::new(errors),
             reported: RefCell::new(HashSet::new()),
@@ -169,9 +217,10 @@ impl LuauFunctions {
         }
     }
 
-    /// The names of the functions read, in no order.
+    /// The names of the functions read from the folder, by name; the
+    /// built-in ones are not among them.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.functions.keys().map(String::as_str)
+        self.read.iter().map(String::as_str)
     }
 
     /// What went wrong since the last call: files that could not be read or
@@ -237,9 +286,10 @@ fn sandbox(dir: &Path, shared: &Rc<Shared>) -> mlua::Result<Lua> {
     let globals = lua.globals();
     globals.raw_set(
         "require",
-        lua.create_require_function(FolderRequirer::new(dir))?,
+        lua.create_require_function(FolderRequirer::new(dir, &BUILTINS))?,
     )?;
     globals.raw_set("print", print(&lua, shared)?)?;
+    globals.raw_set("kanaemi", kanaemi(&lua, shared)?)?;
     let seed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.subsec_nanos() ^ since.as_secs() as u32);
@@ -259,6 +309,22 @@ fn sandbox(dir: &Path, shared: &Rc<Shared>) -> mlua::Result<Lua> {
         }
     });
     Ok(lua)
+}
+
+/// The `kanaemi` table, read-only like the standard libraries.
+fn kanaemi(lua: &Lua, shared: &Shared) -> mlua::Result<mlua::Table> {
+    let kanaemi = lua.create_table()?;
+    for (key, source) in KANAEMI {
+        let table = shared.run(key, || {
+            lua.load(source)
+                .set_name(format!("=kanaemi.{key}"))
+                .eval::<mlua::Table>()
+        })?;
+        table.set_readonly(true);
+        kanaemi.raw_set(key, table)?;
+    }
+    kanaemi.set_readonly(true);
+    Ok(kanaemi)
 }
 
 /// `print` that keeps each line, with the function that printed it, as Luau's
@@ -286,6 +352,24 @@ fn files(dir: &Path) -> Vec<PathBuf> {
         .collect();
     files.sort();
     files
+}
+
+/// The names of the built-in functions: their files at the top.
+fn builtin_names() -> impl Iterator<Item = &'static str> {
+    BUILTINS
+        .iter()
+        .filter(|(file, _)| !file.contains('/'))
+        .filter_map(|(file, _)| file.strip_suffix(&format!(".{EXTENSION}")))
+}
+
+/// Through `require`, as a file of the folder is, so the modules it shares
+/// run once.
+fn builtin(lua: &Lua, name: &str, shared: &Shared) -> mlua::Result<Function> {
+    shared.run(name, || {
+        lua.load("return require(...)")
+            .set_name(format!("{BUILTIN_CHUNK}{name}.{EXTENSION}"))
+            .call::<Function>(format!("./{name}"))
+    })
 }
 
 fn load(

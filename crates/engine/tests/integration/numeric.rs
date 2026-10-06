@@ -1,7 +1,7 @@
 use kanaemi_core::{Converter, Effect};
 use kanaemi_engine::{Engine, Selections, Slot, TextDictionary};
 
-use crate::common::{Learn, Lines, dictionary};
+use crate::common::{Learn, Lines, Notations, dictionary};
 
 const COUNTERS: &str = "\
 {}こ\t{kanji}個
@@ -13,7 +13,9 @@ fn engine(text: &str, user: &str) -> (Engine, Lines) {
     let lines = Lines::default();
     let slots = vec![Slot::UserCustom, Slot::Dictionary(dictionary(text))];
     let user = TextDictionary::parse_user_custom(user).0;
-    (Engine::new(slots, user, lines.clone()), lines)
+    let mut engine = Engine::new(slots, user, lines.clone());
+    engine.set_functions(Notations::shared());
+    (engine, lines)
 }
 
 fn surfaces(engine: &Engine, reading: &str) -> Vec<String> {

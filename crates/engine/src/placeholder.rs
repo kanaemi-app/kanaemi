@@ -4,13 +4,11 @@
 //! An item holds a placeholder as [`OPEN`] and [`CLOSE`] around what was
 //! written between its braces, so a literal `{` or `}` in a word stays itself.
 
-use crate::numeric::Notation;
-
 pub(crate) const OPEN: char = '\u{FDD0}';
 pub(crate) const CLOSE: char = '\u{FDD1}';
 
-/// Functions the user adds. One of the name of a built-in function goes in its
-/// place.
+/// The functions placeholders name. The engine itself has only the one of the
+/// empty name, which gives its source back.
 pub trait Functions {
     fn has(&self, name: &str) -> bool;
 
@@ -141,21 +139,13 @@ pub(crate) fn fill(
         };
         out.push_str(&match functions {
             Some(functions) if functions.has(call.name) => functions.call(&call)?,
-            _ => builtin(call.name, call.source)?,
+            _ if call.name.is_empty() => call.source.to_owned(),
+            _ => return None,
         });
         rest = &inside[close + CLOSE.len_utf8()..];
     }
     out.push_str(rest);
     Some(out)
-}
-
-/// The functions the IME has: the empty name gives its source back, and the
-/// others write a number. None of them takes an argument.
-fn builtin(name: &str, source: &str) -> Option<String> {
-    if name.is_empty() {
-        return Some(source.to_owned());
-    }
-    Notation::named(name)?.write(source)
 }
 
 #[cfg(test)]
@@ -220,11 +210,11 @@ mod tests {
 
     #[test]
     fn placeholders_without_a_position_take_the_numbers_in_turn() {
-        let surface = format!("{}月{}日{}", marked("1:"), marked("kanji"), marked(""));
+        let surface = format!("{}月{}日{}", marked("1:"), marked("shout"), marked(""));
         let numbers = ["12".to_owned(), "1".to_owned()];
         assert_eq!(
-            fill(&surface, &numbers, "", None).as_deref(),
-            Some("1月十二日1")
+            fill(&surface, &numbers, "", Some(&Shout)).as_deref(),
+            Some("1月12!日1")
         );
     }
 
@@ -276,12 +266,13 @@ mod tests {
     }
 
     #[test]
-    fn a_user_function_goes_in_place_of_the_builtin_of_its_name() {
+    fn the_engine_has_no_function_but_the_empty_one() {
         let numbers = ["1".to_owned()];
-        assert_eq!(fill(&marked("kanji"), &numbers, "", Some(&Shout)), None);
+        assert_eq!(fill(&marked("kanji"), &numbers, "", None), None);
+        assert_eq!(fill(&marked("wide-num"), &numbers, "", Some(&Shout)), None);
         assert_eq!(
-            fill(&marked("wide-num"), &numbers, "", Some(&Shout)).as_deref(),
-            Some("１")
+            fill(&marked(""), &numbers, "", Some(&Shout)).as_deref(),
+            Some("1")
         );
     }
 

@@ -1,10 +1,12 @@
 use kanaemi_core::Converter;
 use kanaemi_engine::{CandidateFacts, Engine, RankingInput, Slot, TextDictionary, feature_indices};
 
-use crate::common::{Discard, Learn, dictionary, model};
+use crate::common::{Discard, Learn, Notations, dictionary, model};
 
 fn engine(slots: Vec<Slot>) -> Engine {
-    Engine::new(slots, TextDictionary::parse_user_custom("").0, Discard)
+    let mut engine = Engine::new(slots, TextDictionary::parse_user_custom("").0, Discard);
+    engine.set_functions(Notations::shared());
+    engine
 }
 
 fn text(text: &str) -> Slot {

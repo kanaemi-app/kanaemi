@@ -418,8 +418,8 @@ fn random_numbers_differ_between_states() {
 fn the_examples_of_the_specification_work() {
     let functions = open(&[
         (
-            "half.luau",
-            "return function(source, arg)\n  return (source:gsub(utf8.charpattern, function(c)\n    local code = utf8.codepoint(c)\n    if code >= 0xFF10 and code <= 0xFF19 then\n      return string.char(code - 0xFF10 + 0x30)\n    end\n  end))\nend",
+            "dai.luau",
+            "return function(source, arg)\n  local digits = kanaemi.number.digits(source)\n  local kanji = digits and kanaemi.number.counted(digits, false)\n  return kanji and (\"第\" .. kanji)\nend",
         ),
         (
             "date.luau",
@@ -432,8 +432,8 @@ fn the_examples_of_the_specification_work() {
         ),
     ]);
     assert_eq!(
-        call(&functions, "half", "１２こ", None).as_deref(),
-        Some("12こ")
+        call(&functions, "dai", "１２", None).as_deref(),
+        Some("第十二")
     );
     assert_eq!(
         call(&functions, "date", "", Some("%%")).as_deref(),
@@ -445,5 +445,131 @@ fn the_examples_of_the_specification_work() {
     );
     assert_eq!(call(&functions, "count", "", None).as_deref(), Some("1"));
     assert_eq!(call(&functions, "count", "", None).as_deref(), Some("2"));
+    assert_eq!(functions.take_errors(), []);
+}
+
+fn write(name: &str, digits: &str) -> Option<String> {
+    call(&open(&[]), name, digits, None)
+}
+
+/// What a Luau test file has besides the functions: `test(name, body)` runs
+/// `body` and keeps how it failed, and `eq(actual, expected)` fails unless
+/// the two are equal.
+const PRELUDE: &str = r#"
+local failures = {}
+local count = 0
+local function test(name, body)
+	count += 1
+	local ok, message = pcall(body)
+	if not ok then
+		table.insert(failures, `{name}: {message}`)
+	end
+end
+local function eq(actual, expected)
+	if actual ~= expected then
+		error(`expected {expected}, got {actual}`, 2)
+	end
+end
+return test, eq, failures, function()
+	return count
+end
+"#;
+
+/// Runs each Luau test file in `tests/luau`, in the sandbox the functions run
+/// in, with the built-in functions by name in `functions`.
+#[test]
+fn the_luau_tests_pass() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("luau");
+    let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == EXTENSION))
+        .collect();
+    paths.sort();
+    assert!(!paths.is_empty());
+    let mut failures = Vec::new();
+    for path in paths {
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let shared = Rc::new(Shared::default());
+        let lua = sandbox(&dir, &shared).unwrap();
+        let functions = lua.create_table().unwrap();
+        for name in builtin_names() {
+            let function = builtin(&lua, name, &shared).unwrap();
+            functions.raw_set(name, function).unwrap();
+        }
+        let (test, eq, found, count): (Function, Function, mlua::Table, Function) =
+            lua.load(PRELUDE).eval().unwrap();
+        let environment = lua.create_table().unwrap();
+        environment.raw_set("functions", functions).unwrap();
+        environment.raw_set("test", test).unwrap();
+        environment.raw_set("eq", eq).unwrap();
+        let globals = lua.create_table().unwrap();
+        globals.raw_set("__index", lua.globals()).unwrap();
+        environment.set_metatable(Some(globals)).unwrap();
+        let source = fs::read_to_string(&path).unwrap();
+        if let Err(error) = lua
+            .load(source)
+            // As one of the built-in files, to require their modules.
+            .set_name(format!("{BUILTIN_CHUNK}{file}"))
+            .set_environment(environment)
+            .exec()
+        {
+            failures.push(format!("{file}: {error}"));
+        }
+        for message in found.sequence_values::<String>() {
+            failures.push(format!("{file}: {}", message.unwrap()));
+        }
+        assert!(count.call::<usize>(()).unwrap() > 0, "{file} has no test");
+    }
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+#[test]
+fn a_file_of_a_builtin_s_name_goes_in_its_place() {
+    let functions = open(&[("kanji.luau", "return function() return 'mine' end")]);
+    assert_eq!(
+        call(&functions, "kanji", "1", None).as_deref(),
+        Some("mine")
+    );
+    assert_eq!(call(&functions, "daiji", "1", None).as_deref(), Some("壱"));
+}
+
+#[test]
+fn every_function_has_the_kanaemi_helpers_and_cannot_change_them() {
+    let functions = open(&[
+        (
+            "counted.luau",
+            "return function(s) return kanaemi.number.counted(kanaemi.number.digits(s), false) end",
+        ),
+        (
+            "break.luau",
+            "return function() kanaemi.number.counted = nil return '' end",
+        ),
+    ]);
+    assert_eq!(call(&functions, "break", "", None), None);
+    assert_eq!(
+        call(&functions, "counted", "２０２６", None).as_deref(),
+        Some("二千二十六")
+    );
+}
+
+#[test]
+fn the_builtin_files_work_copied_into_the_functions_folder() {
+    let functions = open(&BUILTINS);
+    assert_eq!(
+        functions.names().collect::<HashSet<_>>(),
+        builtin_names().collect::<HashSet<_>>()
+    );
+    for name in builtin_names() {
+        for digits in ["0", "007", "12", "２０２６", "100010", "1111"] {
+            assert_eq!(
+                call(&functions, name, digits, None),
+                write(name, digits),
+                "{name} {digits}"
+            );
+        }
+    }
     assert_eq!(functions.take_errors(), []);
 }

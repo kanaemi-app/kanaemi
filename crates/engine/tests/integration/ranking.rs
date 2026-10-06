@@ -1,14 +1,16 @@
 use kanaemi_core::Converter;
 use kanaemi_engine::{Engine, Slot, TextDictionary};
 
-use crate::common::{Discard, Learn, dictionary, model};
+use crate::common::{Discard, Learn, Notations, dictionary, model};
 
 fn engine(text: &str) -> Engine {
-    Engine::new(
+    let mut engine = Engine::new(
         [Slot::UserCustom, Slot::Dictionary(dictionary(text))],
         TextDictionary::parse_user_custom("").0,
         Discard,
-    )
+    );
+    engine.set_functions(Notations::shared());
+    engine
 }
 
 fn surfaces(engine: &Engine, reading: &str) -> Vec<String> {
