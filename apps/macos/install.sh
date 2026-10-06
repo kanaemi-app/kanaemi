@@ -6,13 +6,14 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 app="$root/target/Kanaemi.app"
 dest="$HOME/Library/Input Methods/Kanaemi.app"
 
-# Signed by the development identity when there is one, so that a rebuild
-# keeps the permissions macOS gave the app (dev-identity.sh creates it).
-identity="Kanaemi Development"
+# Signed by the identity releases are signed with when the keychain has it,
+# so that a rebuild keeps the permissions macOS gave the app
+# (import-identity.sh imports it).
+identity="Kanaemi Release"
 if security find-certificate -c "$identity" >/dev/null 2>&1; then
   export KANAEMI_SIGN_IDENTITY="$identity"
 else
-  echo "no \"$identity\" in the keychain; signing ad-hoc (run apps/macos/dev-identity.sh to keep permissions across rebuilds)" >&2
+  echo "no \"$identity\" in the keychain; signing ad-hoc (run apps/macos/import-identity.sh to keep permissions across rebuilds)" >&2
 fi
 
 cargo build --release -p kanaemi-macos -p kanaemi-settings --manifest-path "$root/Cargo.toml"

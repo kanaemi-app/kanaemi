@@ -28,9 +28,9 @@ test:
 install-macos:
     apps/macos/install.sh
 
-# Create the self-signed identity install-macos signs with, so rebuilds keep macOS permissions.
-macos-dev-identity:
-    apps/macos/dev-identity.sh
+# Import the identity releases sign with, given as MACOS_SIGNING_P12 and MACOS_SIGNING_PASSWORD, into the login keychain, so install-macos signs with it too.
+macos-import-identity:
+    apps/macos/import-identity.sh
 
 # Make the identity releases sign the macOS app with, into a new folder, for the secrets of the GitHub environment "release".
 macos-release-identity folder:
