@@ -1198,7 +1198,11 @@ impl<C: Converter> Core<C> {
             ..
         }) = &self.held
         {
-            preedit.push_str(&marks.hold);
+            if marks.hold.is_empty() {
+                preedit.push('\u{200B}');
+            } else {
+                preedit.push_str(&marks.hold);
+            }
             match waiting.map(|chord| chord.key) {
                 Some(Key::Char(c)) => preedit.push(c),
                 Some(Key::Space) => preedit.push(' '),

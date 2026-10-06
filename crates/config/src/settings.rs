@@ -223,7 +223,9 @@ impl Reader<'_> {
 
     fn mark(&mut self, item: &str, key: &str, value: Value) {
         let mark = match value.as_str() {
-            Some(s) if !s.is_empty() && !s.contains(['\t', '\n', '\r']) => s.to_owned(),
+            Some(s) if (key == "hold" || !s.is_empty()) && !s.contains(['\t', '\n', '\r']) => {
+                s.to_owned()
+            }
             _ => return self.problem(item, ProblemKind::BadMark),
         };
         let marks = &mut self.settings.config.marks;

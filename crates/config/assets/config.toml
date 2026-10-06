@@ -23,13 +23,14 @@
 #mode_indicator = true
 
 # 未確定文字列の印。空でない文字列で、改行とタブを含まない。
+# hold だけは空にもでき、空なら見えない幅のない文字（U+200B）を置く。
 #[marks]
 #reading = "›"
 #candidate = "»"
 #okurigana = "*"
 #registration = " « "
 #cursor = "|"
-#hold = "_"
+#hold = ""
 
 # 上から順に重ねるローマ字の表。用意された表の名前か、romaji フォルダの表のファイル名。
 # 用意された表：full-width・hepburn・kunrei・input-aids・z-symbols・azik。

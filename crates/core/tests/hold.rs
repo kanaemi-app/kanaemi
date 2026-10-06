@@ -6,6 +6,7 @@ use kanaemi_core::{Action, Binding, Config, Event, Gesture, Key, Mode, Modifiers
 /// The test configuration with no key bound to be held.
 fn unheld() -> Config {
     let mut config = common::config();
+    config.marks.hold = "_".to_owned();
     let bindings = &mut config.bindings;
     for scene in [
         &mut bindings.kana,
@@ -95,6 +96,19 @@ fn the_mark_of_a_held_key_is_gone_once_it_is_pressed_alone() {
         (out.commit.as_deref(), out.preedit.as_str()),
         (Some(" "), "")
     );
+}
+
+#[test]
+fn an_empty_mark_of_a_held_key_is_a_zero_width_space_as_by_default() {
+    assert_eq!(Config::default().marks.hold, "");
+    let mut config = config();
+    config.marks.hold = String::new();
+    let mut t = T::with_config(config);
+    t.kana();
+    // Still a preedit, so the application leaves the kept key to the IME.
+    assert_eq!(t.down(Key::Space).preedit, "\u{200B}");
+    assert_eq!(t.ch('k').preedit, "\u{200B}k");
+    assert_eq!(t.release(Key::Char('k')).preedit, "›k");
 }
 
 #[test]
@@ -358,6 +372,7 @@ fn a_modifier_pressed_while_a_letter_waits_follows_a_space_tap_and_the_letter() 
 /// `;` held goes to ABC mode; pressed alone, it still begins.
 fn semicolon_held() -> T {
     let mut config = common::config();
+    config.marks.hold = "_".to_owned();
     config.bindings.kana.push(Binding {
         from: plain(Key::Char(';')),
         gesture: Gesture::Hold,

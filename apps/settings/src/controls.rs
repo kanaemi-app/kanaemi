@@ -80,7 +80,11 @@ pub fn ResetLine(shipped: Option<String>, path: Vec<String>) -> Element {
                     let path: Vec<&str> = path.iter().map(String::as_str).collect();
                     ctx.change(&path, None);
                 },
-                "既定の「{shipped}」に戻す"
+                if shipped.is_empty() {
+                    "既定の空に戻す"
+                } else {
+                    "既定の「{shipped}」に戻す"
+                }
             }
         }
     }

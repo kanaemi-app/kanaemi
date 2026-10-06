@@ -347,7 +347,9 @@ pub struct Marks {
     /// is not at the end.
     pub cursor: String,
     /// After the preedit while a key bound to be held is not yet known held
-    /// or pressed alone, followed by the character waiting on it.
+    /// or pressed alone, followed by the character waiting on it. Empty, it
+    /// is shown as a zero-width space: an application that sees no preedit
+    /// takes the kept key for its own.
     pub hold: String,
 }
 
@@ -359,7 +361,7 @@ impl Default for Marks {
             okurigana: "*".to_owned(),
             registration: " « ".to_owned(),
             cursor: "|".to_owned(),
-            hold: "_".to_owned(),
+            hold: String::new(),
         }
     }
 }
