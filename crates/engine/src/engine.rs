@@ -39,6 +39,26 @@ impl FieldSession {
         }
     }
 
+    /// Drops the last commit of the pair, as never made.
+    fn withdraw(&mut self, reading: &str, surface: &str) {
+        if let Some(at) = self
+            .history
+            .iter()
+            .rposition(|(r, s)| r == reading && s == surface)
+        {
+            self.history.remove(at);
+        }
+    }
+
+    /// Takes `text` off the end of the context; a context that does not end
+    /// with it is no longer known, and starts over.
+    fn erase(&mut self, text: &str) {
+        match self.context.strip_suffix(text) {
+            Some(rest) => self.context.truncate(rest.len()),
+            None => self.context.clear(),
+        }
+    }
+
     fn type_text(&mut self, text: &str) {
         self.context.push_str(text);
         let excess = self.context.chars().count().saturating_sub(CONTEXT_CHARS);
@@ -196,7 +216,19 @@ impl Engine {
                 self.user
                     .write(TextDictionary::hide_line(&reading, &surface));
             }
+            Effect::Withdrawn {
+                reading,
+                okurigana,
+                surface,
+            } => {
+                let (reading, surface) =
+                    self.recorded(nfc(reading), okurigana.is_some(), nfc(surface));
+                self.selections.withdraw(&reading, &surface);
+                self.selections_changed = true;
+                self.field.withdraw(&reading, &surface);
+            }
             Effect::Typed(text) => self.field.type_text(&nfc(text)),
+            Effect::Erased(text) => self.field.erase(&nfc(text)),
             Effect::FocusMoved => self.field = FieldSession::default(),
         }
     }

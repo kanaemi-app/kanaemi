@@ -33,6 +33,18 @@ impl Selections {
         self.pairs.insert(key, (weight + 1.0, self.tick));
     }
 
+    /// Takes back a pick recorded, as never made. The picks since it faded
+    /// it a little; a pick taken back at once takes back all of it.
+    pub(crate) fn withdraw(&mut self, reading: &str, surface: &str) {
+        let key = (reading.to_owned(), surface.to_owned());
+        let weight = self.weight_of(self.pairs.get(&key)) - 1.0;
+        if weight > 0.0 {
+            self.pairs.insert(key, (weight, self.tick));
+        } else {
+            self.pairs.remove(&key);
+        }
+    }
+
     /// The pair's weight now, after the picks since it faded it.
     pub(crate) fn weight(&self, reading: &str, surface: &str) -> f64 {
         self.weight_of(self.pairs.get(&(reading.to_owned(), surface.to_owned())))

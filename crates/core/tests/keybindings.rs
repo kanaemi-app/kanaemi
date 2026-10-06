@@ -4,6 +4,22 @@ use common::*;
 use kanaemi_core::{Action, Binding, Bindings, Chord, Config, Gesture, Key, Mode, Modifiers};
 
 #[test]
+fn bindings_tell_whether_keys_are_sent_to_the_application() {
+    let shipped = Bindings::default();
+    assert!(shipped.sends_keys());
+
+    let undo_only = Bindings {
+        application: Vec::new(),
+        ..Bindings::default()
+    };
+    assert!(undo_only.sends_keys(), "undoing a commit erases by keys");
+
+    let mut neither = undo_only;
+    neither.kana.retain(|b| b.to != Action::UndoCommit);
+    assert!(!neither.sends_keys());
+}
+
+#[test]
 fn a_key_the_core_does_not_handle_passes_on_and_keeps_the_preedit() {
     let mut t = T::new();
     t.kana();

@@ -6,10 +6,12 @@ use std::cell::{Cell, RefCell};
 use std::ffi::OsStr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::ptr::NonNull;
 use std::time::Duration;
 
+use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchTime};
-use kanaemi_core::{Chord, Event, KeyEvent, Output};
+use kanaemi_core::{Chord, Event, Key, KeyEvent, Modifiers, Output};
 use kanaemi_runtime::{Field, Profile};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, Bool, NSObject};
@@ -34,7 +36,8 @@ use objc2_input_method_kit::{
 };
 
 use crate::keys::{Keys, POSTED_MARK, RawEvent, RawKind, key_to_send, utf16_offset};
-use crate::{candidates, indicator, input_monitoring, key_tap, secure_input};
+use crate::posted::{self, Posted, Purpose};
+use crate::{accessibility, candidates, indicator, input_monitoring, key_tap, secure_input};
 
 const CONNECTION_NAME: &str = "io.github.kanaemi-app.inputmethod.Kanaemi_Connection";
 
@@ -51,6 +54,11 @@ thread_local! {
     static PANEL_ROW: Cell<usize> = const { Cell::new(0) };
     /// Whether the keys down are to be looked at again soon.
     static WATCHING: Cell<bool> = const { Cell::new(false) };
+    /// The keys posted to the application, whichever client has the focus.
+    static POSTED: RefCell<Posted> = RefCell::new(Posted::default());
+    /// Told of every click in another application, kept for as long as
+    /// the IME runs.
+    static CLICKS: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
 }
 
 fn with_profile<T>(f: impl FnOnce(&mut Profile) -> T) -> T {
@@ -115,6 +123,54 @@ fn look_at_keys() {
     WATCHING.set(false);
     guarded((), release_keys);
     watch_keys();
+}
+
+/// Feeds `event` to the field with the focus.
+fn tell_active(event: Event) {
+    let Some(active) = ACTIVE.with_borrow(|active| active.clone()) else {
+        return;
+    };
+    let client: Option<Retained<AnyObject>> = unsafe { msg_send![&*active, client] };
+    active.dispatch(event, client.as_deref());
+}
+
+/// Tells the active field the text is erased, from the main queue: the last
+/// Backspace passed on is handled by the application before anything queued
+/// after it runs.
+fn erased_later() {
+    DispatchQueue::main().exec_async(|| guarded((), || tell_active(Event::Erased(true))));
+}
+
+/// Once the Backspaces erasing text are waited for too long, tells the
+/// active field they never came, so the keys typed meanwhile go on.
+fn give_up_erasing_later() {
+    let Ok(when) = DispatchTime::try_from(Duration::from_millis(posted::WAIT_MS + 1)) else {
+        return;
+    };
+    let _ = DispatchQueue::main().after(when, || {
+        guarded((), || {
+            if POSTED.with_borrow_mut(|posted| posted.expire(now_ms())) {
+                tracing::warn!("the keys erasing text never came back");
+                tell_active(Event::Erased(false));
+            }
+        });
+    });
+}
+
+/// Watches every click in other applications: one may move the caret of
+/// the field with the focus, where the core can no longer tell what is
+/// before it. Watching mouse buttons asks for no permission.
+fn watch_clicks() {
+    let mask =
+        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
+    let handler = RcBlock::new(|_event: NonNull<NSEvent>| {
+        guarded((), || tell_active(Event::CaretMoved));
+    });
+    let monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &handler);
+    if monitor.is_none() {
+        tracing::warn!("clicks not watched");
+    }
+    CLICKS.set(monitor);
 }
 
 /// What the tap saw, kept; it is passed on from the main queue, not from
@@ -232,6 +288,28 @@ define_class!(
                 menu.addItem(&item);
                 menu.addItem(&NSMenuItem::separatorItem(mtm));
             }
+            if with_profile(|profile| accessibility::missing(profile.config())) {
+                let warning = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &NSString::from_str(accessibility::WARNING),
+                        None,
+                        &NSString::from_str(""),
+                    )
+                };
+                warning.setEnabled(false);
+                menu.addItem(&warning);
+                let item = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &NSString::from_str("アクセシビリティの設定を開く…"),
+                        Some(sel!(openAccessibility:)),
+                        &NSString::from_str(""),
+                    )
+                };
+                menu.addItem(&item);
+                menu.addItem(&NSMenuItem::separatorItem(mtm));
+            }
             let item = unsafe {
                 NSMenuItem::initWithTitle_action_keyEquivalent(
                     NSMenuItem::alloc(mtm),
@@ -252,6 +330,11 @@ define_class!(
         #[unsafe(method(openInputMonitoring:))]
         fn open_input_monitoring(&self, _sender: Option<&AnyObject>) {
             guarded((), open_input_monitoring);
+        }
+
+        #[unsafe(method(openAccessibility:))]
+        fn open_accessibility(&self, _sender: Option<&AnyObject>) {
+            guarded((), open_accessibility);
         }
 
         #[unsafe(method(recognizedEvents:))]
@@ -340,6 +423,17 @@ impl KanaemiController {
             repeat: typed && event.isARepeat(),
         };
         tracing::debug!(?raw, "key");
+        // A key the IME posted goes on to the application unseen by the core:
+        // it is what the core asked for. The release of a key never reaches
+        // the IME, so the press is what tells the application has it.
+        if raw.kind == RawKind::KeyDown
+            && let Some(purpose) = POSTED.with_borrow_mut(|p| p.take(raw.key_code, raw.time_ms))
+        {
+            if purpose == Purpose::Erasing && !POSTED.with_borrow(Posted::erasing) {
+                erased_later();
+            }
+            return Bool::NO;
+        }
         // A field focused before Kanaemi was started or replaced is never
         // activated, yet its keys come here; the keys let go are its too.
         if !ACTIVE.with_borrow(|active| {
@@ -374,6 +468,24 @@ impl KanaemiController {
         Bool::new(consumed)
     }
 
+    /// Posts a Backspace for each grapheme of `text`; the core hears whether
+    /// it is gone once the application has handled them, or that it is not
+    /// once they are waited for too long. Returns whether they were sent; the
+    /// key that asked for them goes on as it is when not.
+    fn erase(&self, text: &str, client: Option<&AnyObject>) -> bool {
+        let presses = kanaemi_runtime::backspaces(text);
+        let backspace = Chord {
+            key: Key::Backspace,
+            mods: Modifiers::default(),
+        };
+        if (0..presses).all(|_| send_key(backspace, Purpose::Erasing)) {
+            give_up_erasing_later();
+            return true;
+        }
+        self.dispatch(Event::Erased(false), client);
+        false
+    }
+
     /// Feeds the core the release of each key let go since the keys were
     /// last looked at.
     fn release_lifted(&self, client: Option<&AnyObject>, time_ms: u64) {
@@ -385,6 +497,7 @@ impl KanaemiController {
     fn make_active(&self) {
         ACTIVE.set(Some(self.retain()));
         input_monitoring::note();
+        accessibility::note();
         follow_hold();
     }
 
@@ -431,14 +544,18 @@ impl KanaemiController {
         let handled = catch_unwind(AssertUnwindSafe(|| {
             let output = with_profile(|profile| ivars.field.borrow_mut().handle(profile, event));
             tracing::debug!(?event, ?output, "handled");
+            let erasing = output
+                .erase
+                .as_deref()
+                .is_none_or(|text| self.erase(text, client));
             if let Some(client) = client {
                 self.draw(&output, client);
             }
             match output.send {
                 // Without the permission to send keys, the pressed key goes on as
                 // it is, which most applications still handle.
-                Some(chord) => send_key(chord),
-                None => output.consumed,
+                Some(chord) => send_key(chord, Purpose::InPlace),
+                None => output.consumed && erasing,
             }
         }));
         match handled {
@@ -550,19 +667,15 @@ fn hide_candidates() {
     });
 }
 
-#[link(name = "ApplicationServices", kind = "framework")]
-unsafe extern "C" {
-    fn AXIsProcessTrusted() -> bool;
-}
-
-/// Posts `chord` as a key press and release; returns whether it was sent.
-/// Posting needs the Accessibility permission.
-fn send_key(chord: Chord) -> bool {
+/// Posts `chord` as a key press and release for `purpose`, kept until it
+/// comes back to the IME; returns whether it was sent. Posting needs the
+/// Accessibility permission.
+fn send_key(chord: Chord, purpose: Purpose) -> bool {
     let Some((code, flags)) = key_to_send(chord) else {
         tracing::warn!(?chord, "no key code to send");
         return false;
     };
-    if !unsafe { AXIsProcessTrusted() } {
+    if !accessibility::trusted() {
         // Once is enough: without the permission every remapped key ends here.
         static WARNED: std::sync::Once = std::sync::Once::new();
         WARNED.call_once(|| {
@@ -582,6 +695,7 @@ fn send_key(chord: Chord) -> bool {
         );
         CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&event));
     }
+    POSTED.with_borrow_mut(|posted| posted.post(code, now_ms(), purpose));
     true
 }
 
@@ -614,6 +728,18 @@ fn open_settings_app() {
 /// added by hand.
 fn open_input_monitoring() {
     open(&[OsStr::new(input_monitoring::SETTINGS_URL)]);
+    reveal_bundle();
+}
+
+/// Opens the Accessibility settings, with Kanaemi.app beside them as for
+/// Input Monitoring.
+fn open_accessibility() {
+    open(&[OsStr::new(accessibility::SETTINGS_URL)]);
+    reveal_bundle();
+}
+
+/// Selects Kanaemi.app in Finder, to drag into a permission's list.
+fn reveal_bundle() {
     let bundle = NSBundle::mainBundle().bundlePath().to_string();
     open(&[OsStr::new("-R"), OsStr::new(&bundle)]);
 }
@@ -667,6 +793,7 @@ pub fn run() {
     with_profile(|profile| profile.listen(|| DispatchQueue::main().exec_async(serve_control)));
     // IMKServer looks the class up by its Info.plist name, so register it first.
     let _ = KanaemiController::class();
+    watch_clicks();
 
     let bundle_id = NSBundle::mainBundle().bundleIdentifier();
     let name = NSString::from_str(CONNECTION_NAME);

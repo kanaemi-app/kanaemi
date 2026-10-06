@@ -76,9 +76,15 @@ impl Field {
             output.indicator = Some(output.mode);
         }
         if !learn_typed {
-            output
-                .effects
-                .retain(|effect| !matches!(effect, Effect::Committed { .. } | Effect::Typed(_)));
+            output.effects.retain(|effect| {
+                !matches!(
+                    effect,
+                    Effect::Committed { .. }
+                        | Effect::Withdrawn { .. }
+                        | Effect::Typed(_)
+                        | Effect::Erased(_)
+                )
+            });
         }
         profile.learn(&output.effects);
         profile.follow_focus(self.id, event, output.mode);
@@ -368,6 +374,28 @@ mod tests {
         let mut field = picking_kisha(&mut profile, true);
         let output = field.handle(&mut profile, press(Key::Enter));
         assert_eq!(output.commit.as_deref(), Some("貴社"), "still typed");
+        assert_eq!(output.effects, []);
+    }
+
+    #[test]
+    fn what_is_undone_in_a_private_field_is_left_out_of_the_effects() {
+        let dir = picks_dir("private-undo");
+        let mut profile = Profile::open(&dir);
+        let mut field = picking_kisha(&mut profile, true);
+        field.handle(&mut profile, press(Key::Enter));
+        let undo = Event::Key(KeyEvent {
+            key: Key::Backspace,
+            mods: Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+            kind: KeyKind::Press,
+            time_ms: 0,
+        });
+        let output = field.handle(&mut profile, undo);
+        assert_eq!(output.erase.as_deref(), Some("貴社"));
+        let output = field.handle(&mut profile, Event::Erased(true));
+        assert_eq!(output.preedit, "»貴社", "still undone");
         assert_eq!(output.effects, []);
     }
 

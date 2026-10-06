@@ -68,6 +68,41 @@ fn the_committed_text_is_the_context_until_the_focus_moves() {
 }
 
 #[test]
+fn a_commit_withdrawn_is_as_if_never_made() {
+    let mut e = engine(KISHA);
+    for _ in 0..3 {
+        e.commit("きしゃ", "記者");
+    }
+    e.commit("きしゃ", "貴社");
+    assert_eq!(surfaces(&e, "きしゃ")[0], "貴社");
+    e.withdraw("きしゃ", "貴社");
+    assert_eq!(surfaces(&e, "きしゃ"), ["記者", "汽車", "貴社"]);
+}
+
+#[test]
+fn a_pick_withdrawn_no_longer_counts() {
+    let mut e = engine(KISHA);
+    for _ in 0..3 {
+        e.commit("きしゃ", "貴社");
+        e.move_focus();
+    }
+    assert_eq!(surfaces(&e, "きしゃ")[0], "貴社");
+    e.withdraw("きしゃ", "貴社");
+    assert_eq!(surfaces(&e, "きしゃ"), ["記者", "汽車", "貴社"]);
+}
+
+#[test]
+fn erased_text_is_no_longer_the_context() {
+    let mut e = engine(KISHA);
+    e.set_model(Some(model(16, &[("a\u{1f}の\u{1f}汽車", 5.0)])));
+    e.type_text("鉄道の");
+    e.erase("の");
+    assert_eq!(surfaces(&e, "きしゃ")[0], "記者");
+    e.type_text("の");
+    assert_eq!(surfaces(&e, "きしゃ")[0], "汽車");
+}
+
+#[test]
 fn an_engine_opened_again_without_a_model_ranks_by_the_rules() {
     let mut old = engine(KISHA);
     old.set_model(Some(model(16, &[("s\u{1f}貴社", 2.0)])));

@@ -6,6 +6,7 @@
 
 mod control;
 mod dictionaries;
+mod erase;
 mod field;
 mod logging;
 mod profile;
@@ -13,6 +14,7 @@ mod settings;
 mod shared;
 
 pub use control::*;
+pub use erase::*;
 pub use field::*;
 pub use logging::*;
 pub use profile::*;

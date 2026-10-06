@@ -261,6 +261,7 @@ fn action_label(mode: &str, action: Action) -> &'static str {
         (_, Action::Abc) => "確定して ABC モードへ",
         (_, Action::Kana) => "かなモードへ",
         (_, Action::Begin) => "読みを始める",
+        (_, Action::UndoCommit) => "直前の確定を取り消す",
         (_, Action::Pick(place)) => SELECT_LABELS
             .get(usize::from(place))
             .copied()
@@ -298,6 +299,15 @@ fn input_monitoring_missing() -> bool {
     return false;
 }
 
+/// Whether the IME said it lacks the Accessibility permission, read as
+/// [`input_monitoring_missing`] is.
+fn accessibility_missing() -> bool {
+    #[cfg(target_os = "macos")]
+    return kanaemi_config::accessibility_missing_file().is_some_and(|file| file.exists());
+    #[cfg(not(target_os = "macos"))]
+    return false;
+}
+
 #[component]
 pub fn Keys() -> Element {
     let ctx = use_context::<Ctx>();
@@ -326,8 +336,23 @@ pub fn Keys() -> Element {
             }
         }
     });
+    let accessibility = (current.sends_keys() && accessibility_missing()).then(|| {
+        rsx! {
+            div { class: "problems",
+                p {
+                    "キーを別のキーに置き換えて送ったり、直前の確定を取り消したりするには、macOS の「アクセシビリティ」で Kanaemi を許可します。一覧にないときは、一緒に開く Finder の Kanaemi.app を一覧にドラッグします。"
+                }
+                div { class: "actions",
+                    button { onclick: move |_| crate::open_accessibility(),
+                        "アクセシビリティの設定を開く"
+                    }
+                }
+            }
+        }
+    });
     let switcher = rsx! {
         {monitoring}
+        {accessibility}
         div { class: "view-switch", role: "tablist",
             button {
                 class: if !advanced() { "selected" },

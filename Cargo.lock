@@ -2576,6 +2576,7 @@ dependencies = [
 name = "kanaemi-macos"
 version = "0.0.0"
 dependencies = [
+ "block2",
  "dispatch2",
  "kanaemi-config",
  "kanaemi-core",
@@ -2599,6 +2600,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-subscriber",
+ "unicode-segmentation",
 ]
 
 [[package]]

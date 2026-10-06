@@ -262,6 +262,20 @@ pub fn open_input_monitoring() {
     open(OsStr::new(
         "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
     ));
+    reveal_bundle();
+}
+
+/// Opens the Accessibility settings, with Kanaemi.app beside them as for
+/// Input Monitoring.
+pub fn open_accessibility() {
+    open(OsStr::new(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    ));
+    reveal_bundle();
+}
+
+/// Selects Kanaemi.app in Finder, to drag into a permission's list.
+fn reveal_bundle() {
     // This app ships inside Kanaemi.app.
     let bundle = std::env::current_exe().ok().and_then(|exe| {
         exe.ancestors()

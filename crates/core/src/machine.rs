@@ -61,6 +61,40 @@ impl Selection {
     }
 }
 
+/// A candidate committed, as it was chosen, and the text the core put in the
+/// field after it since. Only what the core itself committed is known to be
+/// before the caret, so any key passed to the application ends it.
+#[derive(Clone)]
+struct Undoable {
+    /// Romaji left after the okurigana went into `after` as it was typed.
+    selection: Selection,
+    surface: String,
+    after: String,
+}
+
+impl Undoable {
+    fn committed(&self) -> Effect {
+        Effect::Committed {
+            reading: self.selection.word.kana(),
+            okurigana: self.selection.word.okurigana().map(str::to_owned),
+            surface: self.surface.clone(),
+        }
+    }
+
+    fn withdrawn(&self) -> Effect {
+        Effect::Withdrawn {
+            reading: self.selection.word.kana(),
+            okurigana: self.selection.word.okurigana().map(str::to_owned),
+            surface: self.surface.clone(),
+        }
+    }
+
+    /// What it put in the field.
+    fn text(&self) -> String {
+        format!("{}{}", self.surface, self.after)
+    }
+}
+
 #[derive(Clone)]
 struct Registration {
     word: Word,
@@ -102,7 +136,17 @@ pub struct Core<C> {
     modifiers_held: Vec<Key>,
     modifier_down: Option<(Key, u64)>,
     held: Option<Held>,
+    /// The last candidate committed, while it can be undone.
+    undoable: Option<Undoable>,
+    /// A commit undone, waiting for the host to erase it.
+    erasing: Option<Undoable>,
+    /// Keys that came while the host was erasing.
+    keys_waiting: Vec<KeyEvent>,
+    /// A commit undone and being chosen again: its `after` follows whatever
+    /// is committed next, and Cancel commits it as it was.
+    redoing: Option<Undoable>,
     commit: String,
+    erase: Option<String>,
     send: Option<Chord>,
     effects: Vec<Effect>,
 }
@@ -119,7 +163,12 @@ impl<C: Converter> Core<C> {
             modifiers_held: Vec::new(),
             modifier_down: None,
             held: None,
+            undoable: None,
+            erasing: None,
+            keys_waiting: Vec::new(),
+            redoing: None,
             commit: String::new(),
+            erase: None,
             send: None,
             effects: Vec::new(),
         }
@@ -128,10 +177,35 @@ impl<C: Converter> Core<C> {
     pub fn handle(&mut self, event: Event) -> Output {
         let before = self.mode;
         self.commit.clear();
+        self.erase = None;
         self.send = None;
         self.effects.clear();
         let consumed = match event {
-            Event::Key(key) => self.key(key),
+            // Typed after the undo, a key goes after it, once the host is done.
+            Event::Key(key) if self.erasing.is_some() => {
+                self.keys_waiting.push(key);
+                true
+            }
+            Event::Key(key) => self.key_in_field(key),
+            Event::CaretMoved => {
+                self.undoable = None;
+                false
+            }
+            Event::Erased(erased) => {
+                self.choose_again(erased);
+                // Taken from the application already, they can no longer
+                // pass on to it. One undoing again starts another wait, and
+                // the keys after it wait for that.
+                let mut keys = mem::take(&mut self.keys_waiting).into_iter();
+                for key in keys.by_ref() {
+                    self.key_in_field(key);
+                    if self.erasing.is_some() {
+                        break;
+                    }
+                }
+                self.keys_waiting.extend(keys);
+                true
+            }
             Event::FocusIn { password } => {
                 self.focus_in(password);
                 false
@@ -162,6 +236,20 @@ impl<C: Converter> Core<C> {
                 false
             }
         };
+        // Leaving or clicking committed what was visible; a field the focus
+        // comes into holds none of it.
+        if let Event::FocusIn { .. } | Event::FocusOut | Event::Flush = event {
+            self.undoable = None;
+            self.erasing = None;
+            self.keys_waiting.clear();
+            self.redoing = None;
+        }
+        // A word chosen again and erased leaves what followed it.
+        if !self.composing()
+            && let Some(redoing) = self.redoing.take()
+        {
+            self.emit(&redoing.after);
+        }
         if !self.commit.is_empty() {
             self.effects.push(Effect::Typed(self.commit.clone()));
         }
@@ -174,6 +262,17 @@ impl<C: Converter> Core<C> {
 
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    fn key_in_field(&mut self, key: KeyEvent) -> bool {
+        let consumed = self.key(key);
+        // The application may move the caret or type: what is before the
+        // caret is no longer known.
+        if key.kind == KeyKind::Press && !is_modifier(key.key) && (!consumed || self.send.is_some())
+        {
+            self.undoable = None;
+        }
+        consumed
     }
 
     fn key(&mut self, event: KeyEvent) -> bool {
@@ -853,6 +952,15 @@ impl<C: Converter> Core<C> {
             }
             // Unfinished romaji is dropped.
             Action::Cancel if !pending.is_empty() => return None,
+            Action::UndoCommit if pending.is_empty() && self.registrations.is_empty() => {
+                self.state = State::Idle { pending };
+                let Some(undoable) = self.undoable.take() else {
+                    return Some(false);
+                };
+                self.erase = Some(undoable.text());
+                self.erasing = Some(undoable);
+                return None;
+            }
             _ => {}
         }
         if self.registrations.is_empty() {
@@ -922,6 +1030,9 @@ impl<C: Converter> Core<C> {
                     self.choose_form(form);
                 }
             }
+            Action::Cancel if self.redoing.is_some() && self.registrations.is_empty() => {
+                self.restore();
+            }
             Action::Cancel => {}
             Action::Backspace if !word.is_empty() => {
                 word.backspace();
@@ -985,6 +1096,9 @@ impl<C: Converter> Core<C> {
                 self.choose_form(form);
             }
             Action::Cancel if forgetting => self.state = State::Candidates(selection),
+            Action::Cancel if self.redoing.is_some() && self.registrations.is_empty() => {
+                self.restore();
+            }
             Action::Cancel => self.state = State::Reading(selection.into_reading()),
             Action::Backspace if selection.typed.pop().is_some() => {
                 self.state = State::Candidates(selection);
@@ -1054,15 +1168,55 @@ impl<C: Converter> Core<C> {
     /// Commits a candidate. Romaji typed past the okurigana's first kana
     /// stays to begin the next word, however the candidate is committed.
     fn commit_selection(&mut self, selection: Selection, index: usize) {
-        if let Some(candidate) = selection.candidates.get(index) {
-            self.effects.push(Effect::Committed {
-                reading: selection.word.kana(),
-                okurigana: selection.word.okurigana().map(str::to_owned),
-                surface: candidate.surface.clone(),
-            });
-            self.emit(&candidate.surface);
+        let keys = selection.after();
+        if let Some(surface) = selection.candidates.get(index).map(|c| c.surface.clone()) {
+            let committed = Undoable {
+                after: self
+                    .redoing
+                    .as_ref()
+                    .map(|r| r.after.clone())
+                    .unwrap_or_default(),
+                selection: Selection {
+                    index,
+                    rest: String::new(),
+                    typed: String::new(),
+                    ..selection
+                },
+                surface,
+            };
+            self.effects.push(committed.committed());
+            self.emit(&committed.surface);
+            if self.registrations.is_empty() {
+                self.undoable = Some(committed);
+            }
         }
-        self.retype(&selection.after());
+        self.retype(&keys);
+    }
+
+    /// Once the host erased the commit undone, chooses it again; otherwise
+    /// it stays committed, and can no longer be undone.
+    fn choose_again(&mut self, erased: bool) {
+        let Some(undoable) = self.erasing.take() else {
+            return;
+        };
+        if !erased {
+            return;
+        }
+        self.effects.push(undoable.withdrawn());
+        self.effects.push(Effect::Erased(undoable.text()));
+        self.state = State::Candidates(undoable.selection.clone());
+        self.redoing = Some(undoable);
+    }
+
+    /// Commits again what was undone, as it was, to be undone again.
+    fn restore(&mut self) {
+        let Some(undoable) = self.redoing.take() else {
+            return;
+        };
+        self.state = State::idle();
+        self.effects.push(undoable.committed());
+        self.emit(&undoable.text());
+        self.undoable = Some(undoable);
     }
 
     /// Types keys a word gave back, after it, as if they were typed now: in
@@ -1230,10 +1384,22 @@ impl<C: Converter> Core<C> {
     }
 
     /// Committed text goes into the innermost registration, if any.
+    /// What followed a commit being chosen again follows the first text
+    /// committed in its place.
     fn emit(&mut self, text: &str) {
-        match self.registrations.last_mut() {
-            Some(registration) => registration.text.insert(text),
-            None => self.commit.push_str(text),
+        if let Some(registration) = self.registrations.last_mut() {
+            registration.text.insert(text);
+            return;
+        }
+        if text.is_empty() {
+            return;
+        }
+        let after = self.redoing.take().map(|r| r.after).unwrap_or_default();
+        for text in [text, &after] {
+            self.commit.push_str(text);
+            if let Some(undoable) = &mut self.undoable {
+                undoable.after.push_str(text);
+            }
         }
     }
 
@@ -1300,6 +1466,9 @@ impl<C: Converter> Core<C> {
                 }
             }
         }
+        if let Some(redoing) = &self.redoing {
+            preedit.push_str(&redoing.after);
+        }
         if let Some(Held {
             state: HeldState::Undecided(waiting),
             ..
@@ -1318,6 +1487,7 @@ impl<C: Converter> Core<C> {
         }
         Output {
             consumed,
+            erase: self.erase.clone(),
             commit: (!self.commit.is_empty()).then(|| self.commit.clone()),
             cursor: preedit.chars().count(),
             preedit,
@@ -1368,6 +1538,11 @@ fn tappable(key: Key) -> bool {
             | Key::AltLeft
             | Key::AltRight
     )
+}
+
+/// A key that changes nothing in the field by itself.
+fn is_modifier(key: Key) -> bool {
+    tappable(key) || key == Key::Modifier
 }
 
 /// Whether no modifier but the key's own is held with it.

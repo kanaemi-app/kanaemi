@@ -61,7 +61,8 @@
 # @commit-hiragana・@commit-katakana・@commit-half-katakana・@commit-full-alphanumeric・@commit-alphanumeric（読みをその形にして確定する）・
 # @select-1〜@select-9（その番号の候補を確定）・
 # @register（登録を始める）・@forget（その候補を以後出さない）・@abc（確定して ABC モードへ）・@kana（かなモードへ）・
-# @begin（読みを始める。読みの中では送り仮名を始め、候補を選んでいるときは確定して次の読みを始める）。
+# @begin（読みを始める。読みの中では送り仮名を始め、候補を選んでいるときは確定して次の読みを始める）・
+# @undo-commit（直前に確定した候補を、選び直せるように戻す）。
 # 割り当てたキーは、ローマ字の表より先に機能として働く。場面に合わない機能は書けない。
 
 # 読みを打っているとき
@@ -168,6 +169,7 @@
 #"eisu" = "@abc"
 #"muhenkan" = "@abc"
 #";" = "@begin"
+#"shift+backspace" = "@undo-commit"
 
 # ABC モードで、何も打っていないとき
 #[keys.abc]

@@ -554,7 +554,11 @@ fn the_bindings_tables_are_written_as_the_file_writes_them() {
 fn each_table_offers_only_the_actions_that_work_there() {
     assert!(actions("candidates").contains(&Action::Forget));
     assert!(!actions("reading").contains(&Action::Forget));
-    assert_eq!(actions("kana"), [Action::Abc, Action::Kana, Action::Begin]);
+    assert_eq!(
+        actions("kana"),
+        [Action::Abc, Action::Kana, Action::Begin, Action::UndoCommit]
+    );
+    assert!(!actions("candidates").contains(&Action::UndoCommit));
     assert_eq!(actions("abc"), [Action::Abc, Action::Kana]);
     assert_eq!(actions(APPLICATION_TABLE), []);
 }

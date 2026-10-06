@@ -42,8 +42,17 @@ pub enum Effect {
         okurigana: Option<String>,
         surface: String,
     },
+    /// A commit reported as [`Effect::Committed`] was undone, to be learned
+    /// as never made.
+    Withdrawn {
+        reading: String,
+        okurigana: Option<String>,
+        surface: String,
+    },
     /// Text went into the field, converted or not.
     Typed(String),
+    /// Text just before the caret was taken out of the field.
+    Erased(String),
     /// The focus moved to another field: what was learned of the last one ends.
     FocusMoved,
 }
@@ -53,6 +62,9 @@ pub enum Effect {
 pub struct Output {
     /// Whether the key was handled here; `false` means the host passes it to the application.
     pub consumed: bool,
+    /// Text just before the caret to take out of the field before anything
+    /// else is shown; the host tells with [`crate::Event::Erased`] once done.
+    pub erase: Option<String>,
     /// Text to commit before passing the key on.
     pub commit: Option<String>,
     pub preedit: String,

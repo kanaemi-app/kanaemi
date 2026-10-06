@@ -106,6 +106,8 @@ pub enum Action {
     Begin,
     /// Commit the candidate at this place on the shown page, from 0.
     Pick(u8),
+    /// Take the candidate last committed back to choosing it again.
+    UndoCommit,
 }
 
 /// Where a key is pressed, which decides the list of bindings it is looked up in.
@@ -196,6 +198,12 @@ impl Bindings {
         .into_iter()
         .flatten()
         .any(|binding| binding.gesture == Gesture::Hold)
+    }
+
+    /// Whether the host is asked to send keys to the application: keys sent
+    /// in place of others, or Backspaces that erase a commit undone.
+    pub fn sends_keys(&self) -> bool {
+        !self.application.is_empty() || self.kana.iter().any(|b| b.to == Action::UndoCommit)
     }
 }
 
@@ -321,7 +329,17 @@ impl Default for Bindings {
                 &[begin],
             ]
             .concat(),
-            kana: [&to_abc[..], &[off], &[begin]].concat(),
+            // With nothing to undo, Shift+Backspace passes on and deletes a
+            // character in most applications, where other keys bound by
+            // other IMEs reload a page (Ctrl+Shift+R) or delete a word
+            // (Ctrl+Backspace).
+            kana: [
+                &to_abc[..],
+                &[off],
+                &[begin],
+                &[key(Key::Backspace, shift, UndoCommit)],
+            ]
+            .concat(),
             abc: [&to_kana[..], &[on]].concat(),
             application: vec![
                 remap('h', Key::Backspace),

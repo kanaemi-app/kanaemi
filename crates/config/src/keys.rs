@@ -50,8 +50,8 @@ impl Scene {
     pub(crate) fn allows(self, action: Action) -> bool {
         use Action::*;
         match self {
-            Self::Reading => !matches!(action, Forget | Pick(_)),
-            Self::Candidates => !matches!(action, Delete | Left | Right | Home | End),
+            Self::Reading => !matches!(action, Forget | Pick(_) | UndoCommit),
+            Self::Candidates => !matches!(action, Delete | Left | Right | Home | End | UndoCommit),
             Self::Registration => matches!(
                 action,
                 Commit
@@ -66,7 +66,7 @@ impl Scene {
                     | Kana
                     | Begin
             ),
-            Self::Kana => matches!(action, Abc | Kana | Begin),
+            Self::Kana => matches!(action, Abc | Kana | Begin | UndoCommit),
             Self::Abc => matches!(action, Abc | Kana),
         }
     }
@@ -165,6 +165,7 @@ fn every_action() -> Vec<Action> {
         Action::Begin,
     ]);
     all.extend((0..PICKABLE).map(Action::Pick));
+    all.push(Action::UndoCommit);
     all
 }
 
@@ -196,6 +197,7 @@ pub fn format_action(action: Action) -> String {
         Action::Kana => "kana".to_owned(),
         Action::Begin => "begin".to_owned(),
         Action::Pick(n) => format!("select-{}", u16::from(n) + 1),
+        Action::UndoCommit => "undo-commit".to_owned(),
     };
     format!("@{name}")
 }

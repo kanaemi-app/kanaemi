@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
-use kanaemi_core::{Chord, Event, Mode, Output};
+use kanaemi_core::{Chord, Event, Key, Mode, Modifiers, Output};
 use kanaemi_runtime::{Access, Field, Profile};
 use windows::Win32::Foundation::*;
 use windows::Win32::System::SystemInformation::GetTickCount64;
@@ -15,8 +15,10 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::TextServices::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumThreadWindows, GA_ROOT, GUITHREADINFO, GetAncestor, GetClassNameW, GetGUIThreadInfo,
-    GetMessageExtraInfo, GetWindowRect, GetWindowThreadProcessId, IsWindowVisible,
+    CallNextHookEx, EnumThreadWindows, GA_ROOT, GUITHREADINFO, GetAncestor, GetClassNameW,
+    GetGUIThreadInfo, GetMessageExtraInfo, GetWindowRect, GetWindowThreadProcessId, HHOOK,
+    IsWindowVisible, SetWindowsHookExW, UnhookWindowsHookEx, WH_MOUSE, WM_LBUTTONDOWN,
+    WM_MBUTTONDOWN, WM_NCLBUTTONDOWN, WM_NCMBUTTONDOWN, WM_NCRBUTTONDOWN, WM_RBUTTONDOWN,
 };
 use windows::core::*;
 
@@ -30,6 +32,48 @@ thread_local! {
     /// The settings and the engine every field of this thread shares. TSF
     /// calls a text input processor only on the thread that created it.
     static PROFILE: RefCell<Option<Profile>> = const { RefCell::new(None) };
+    /// The hook told of mouse buttons in the thread's windows, while active.
+    static MOUSE_HOOK: Cell<Option<HHOOK>> = const { Cell::new(None) };
+    /// Whether a mouse button went down since the core last heard.
+    static CLICKED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Notes a mouse button going down in the thread's windows, which may move
+/// the caret: the core hears of it before the next event, as a call from
+/// here could come inside one from TSF.
+unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code >= 0
+        && matches!(
+            wparam.0 as u32,
+            WM_LBUTTONDOWN
+                | WM_RBUTTONDOWN
+                | WM_MBUTTONDOWN
+                | WM_NCLBUTTONDOWN
+                | WM_NCRBUTTONDOWN
+                | WM_NCMBUTTONDOWN
+        )
+    {
+        CLICKED.set(true);
+    }
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// Watches the mouse buttons in the thread's windows; watching them asks
+/// for no permission.
+fn watch_clicks() {
+    if MOUSE_HOOK.get().is_some() {
+        return;
+    }
+    match unsafe { SetWindowsHookExW(WH_MOUSE, Some(mouse_proc), None, GetCurrentThreadId()) } {
+        Ok(hook) => MOUSE_HOOK.set(Some(hook)),
+        Err(error) => tracing::warn!(%error, "clicks not watched"),
+    }
+}
+
+fn stop_watching_clicks() {
+    if let Some(hook) = MOUSE_HOOK.take() {
+        let _ = unsafe { UnhookWindowsHookEx(hook) };
+    }
 }
 
 fn with_profile<T>(f: impl FnOnce(&mut Profile) -> T) -> Option<T> {
@@ -85,7 +129,16 @@ struct State {
     element: RefCell<Option<u32>>,
     /// Edits not yet made, with the document each is for, oldest first.
     edits: RefCell<VecDeque<(ITfContext, Edit)>>,
+    /// Backspaces sent to erase text and not yet let go: once the last is,
+    /// the application has deleted with each of them.
+    erasing: Cell<usize>,
+    /// When those Backspaces were sent, in `GetTickCount64` milliseconds.
+    erasing_since: Cell<u64>,
 }
+
+/// How long the Backspaces erasing text are waited for. Past it, the next
+/// event tells the core they never came, so keys stop waiting on them.
+const ERASE_WAIT_MS: u64 = 1000;
 
 #[implement(
     ITfTextInputProcessorEx,
@@ -347,7 +400,12 @@ impl State {
         let output = {
             let mut field = self.field.borrow_mut();
             let field = field.as_mut()?;
-            with_profile(|profile| field.handle(profile, event))?
+            with_profile(|profile| {
+                if CLICKED.take() {
+                    field.handle(profile, Event::CaretMoved);
+                }
+                field.handle(profile, event)
+            })?
         };
         let (thread, now) = unsafe { (GetCurrentThreadId(), GetTickCount64()) };
         let report = self
@@ -363,21 +421,68 @@ impl State {
     /// Feeds one event to the core and shows the result in `context`;
     /// returns whether the key was consumed.
     fn dispatch(self: &Rc<Self>, event: Event, context: Option<&ITfContext>, sync: bool) -> bool {
+        // A key-up the key sink never saw would keep the core waiting.
+        if self.erasing.get() > 0
+            && unsafe { GetTickCount64() }.saturating_sub(self.erasing_since.get()) > ERASE_WAIT_MS
+        {
+            tracing::warn!("the keys erasing text never came back");
+            self.erasing.set(0);
+            self.dispatch(Event::Erased(false), context, sync);
+        }
         let Some(output) = self.handle(event) else {
             return false;
         };
         tracing::debug!(?event, ?output, "handled");
+        let erasing = output
+            .erase
+            .as_deref()
+            .is_none_or(|text| self.erase(text, context));
         if let Some(context) = context {
             self.show(&output, context, sync);
         }
         match output.send {
             Some(chord) => send_key(chord),
-            None => output.consumed,
+            None => output.consumed && erasing,
+        }
+    }
+
+    /// Sends a Backspace for each grapheme of `text`; the core hears whether
+    /// it is gone once the application has handled them. Returns whether they
+    /// were sent; the key that asked for them goes on as it is when not.
+    fn erase(self: &Rc<Self>, text: &str, context: Option<&ITfContext>) -> bool {
+        let presses = kanaemi_runtime::backspaces(text);
+        let backspace = Chord {
+            key: Key::Backspace,
+            mods: Modifiers::default(),
+        };
+        if (0..presses).all(|_| send_key(backspace)) {
+            self.erasing.set(presses);
+            self.erasing_since.set(unsafe { GetTickCount64() });
+            return true;
+        }
+        self.dispatch(Event::Erased(false), context, false);
+        false
+    }
+
+    /// Takes a key the text service sent; once the last Backspace sent to
+    /// erase text is let go, the core hears the text is gone. A key goes up
+    /// only after the application handled its press.
+    fn sent_key_up(self: &Rc<Self>, wparam: WPARAM, context: Option<&ITfContext>) {
+        if wparam.0 != usize::from(keys::VK_BACK) || self.erasing.get() == 0 {
+            return;
+        }
+        self.erasing.set(self.erasing.get() - 1);
+        if self.erasing.get() == 0 {
+            self.dispatch(Event::Erased(true), context, false);
         }
     }
 
     /// Whether the core would consume `event`, without changing its state.
     fn would_consume(&self, event: Event) -> bool {
+        // A click since is heard first, as the key would hear it.
+        if CLICKED.take() {
+            self.handle(Event::CaretMoved);
+        }
         let Some(output) = self
             .field
             .borrow()
@@ -694,6 +799,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             *state.sink.borrow_mut() = None;
             *state.field.borrow_mut() = None;
             remote::detach();
+            stop_watching_clicks();
             Ok(())
         })
     }
@@ -747,6 +853,7 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
                     }
                 }
             });
+            watch_clicks();
             let context = state.focused_context();
             state.focus_in(context.as_ref());
             Ok(())
@@ -809,6 +916,8 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
     fn OnSetFocus(&self, focus: Ref<ITfDocumentMgr>, previous: Ref<ITfDocumentMgr>) -> Result<()> {
         guarded(Ok(()), || {
             let previous = previous.as_ref().and_then(|d| unsafe { d.GetTop() }.ok());
+            // The core forgets what it was erasing once the focus goes.
+            self.state.erasing.set(0);
             self.state
                 .dispatch(Event::FocusOut, previous.as_ref(), false);
             indicator::hide();
@@ -881,10 +990,13 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         lparam: LPARAM,
     ) -> Result<BOOL> {
         guarded(Ok(FALSE), || {
+            let state = &self.state;
             if sent_here() {
+                // OnKeyUp may follow for the same release; it is counted once.
+                state.tested.set(Some((wparam.0, lparam.0)));
+                state.sent_key_up(wparam, context.as_ref());
                 return Ok(FALSE);
             }
-            let state = &self.state;
             state.tested.set(Some((wparam.0, lparam.0)));
             if let Some(event) = state.key(wparam, lparam, false) {
                 state.dispatch(event, context.as_ref(), false);
@@ -913,11 +1025,12 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
     /// held it back and types what it meant now, as the release ends it.
     fn OnKeyUp(&self, context: Ref<ITfContext>, wparam: WPARAM, lparam: LPARAM) -> Result<BOOL> {
         guarded(Ok(FALSE), || {
-            if sent_here() {
-                return Ok(FALSE);
-            }
             let state = &self.state;
             if state.tested.take() == Some((wparam.0, lparam.0)) {
+                return Ok(FALSE);
+            }
+            if sent_here() {
+                state.sent_key_up(wparam, context.as_ref());
                 return Ok(FALSE);
             }
             if let Some(event) = state.key(wparam, lparam, false) {

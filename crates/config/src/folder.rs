@@ -73,6 +73,17 @@ pub fn input_monitoring_missing_file() -> Option<PathBuf> {
     )
 }
 
+/// A file the IME keeps while it lacks the Accessibility permission, which
+/// sending keys to the application needs; kept for the settings app as
+/// [`input_monitoring_missing_file`] is.
+#[cfg(target_os = "macos")]
+pub fn accessibility_missing_file() -> Option<PathBuf> {
+    Some(
+        PathBuf::from(std::env::var_os("HOME")?)
+            .join("Library/Caches/kanaemi/accessibility-missing"),
+    )
+}
+
 /// The XDG base directory `variable` names on this system.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn xdg_dir(variable: &str, fallback: &str) -> Option<PathBuf> {

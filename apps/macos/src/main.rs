@@ -8,6 +8,8 @@
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 #[cfg(target_os = "macos")]
+mod accessibility;
+#[cfg(target_os = "macos")]
 mod app;
 mod candidates;
 #[cfg(target_os = "macos")]
@@ -17,6 +19,7 @@ mod input_monitoring;
 #[cfg(target_os = "macos")]
 mod key_tap;
 mod keys;
+mod posted;
 #[cfg(target_os = "macos")]
 mod secure_input;
 

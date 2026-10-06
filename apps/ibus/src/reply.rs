@@ -1,7 +1,7 @@
 //! What the engine tells IBus after an event, decided apart from D-Bus so it
 //! builds and tests on every platform.
 
-use kanaemi_core::{Candidate, Mode, Output};
+use kanaemi_core::{Candidate, Chord, Key, Mode, Modifiers, Output};
 
 use crate::keys;
 
@@ -41,6 +41,17 @@ impl Reply {
 /// where the panel shows it well (`indicator`).
 pub fn reply(output: &Output, indicator: bool) -> Reply {
     let mut signals = Vec::new();
+    // Forwarded keys reach the application in order, before what follows.
+    if let Some(text) = &output.erase {
+        let backspace = Chord {
+            key: Key::Backspace,
+            mods: Modifiers::default(),
+        };
+        if let Some((keyval, state)) = keys::key_to_send(backspace) {
+            let presses = kanaemi_runtime::backspaces(text);
+            signals.extend((0..presses).map(|_| Signal::Forward(keyval, state)));
+        }
+    }
     if let Some(text) = &output.commit {
         signals.push(Signal::Commit(text.clone()));
     }
@@ -107,6 +118,7 @@ mod tests {
     fn output() -> Output {
         Output {
             consumed: true,
+            erase: None,
             commit: None,
             preedit: String::new(),
             cursor: 0,
@@ -138,6 +150,24 @@ mod tests {
                 Signal::Commit("漢字".to_owned()),
                 Signal::Preedit("›かな".to_owned(), 3),
                 Signal::HideCandidates,
+            ]
+        );
+    }
+
+    #[test]
+    fn text_to_erase_goes_first_as_backspaces() {
+        let output = Output {
+            erase: Some("記者𥸮".to_owned()),
+            ..output()
+        };
+        let backspace = Signal::Forward(0xff08, 0);
+        assert_eq!(
+            reply(&output, false).signals[..4],
+            [
+                backspace.clone(),
+                backspace.clone(),
+                backspace,
+                Signal::Preedit(String::new(), 0)
             ]
         );
     }

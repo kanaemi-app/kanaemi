@@ -16,7 +16,9 @@ pub trait Learn {
     /// `reading` marks okurigana with `*`, as a text dictionary writes it.
     fn register(&mut self, reading: &str, surface: &str);
     fn delete(&mut self, reading: &str, surface: &str);
+    fn withdraw(&mut self, reading: &str, surface: &str);
     fn type_text(&mut self, text: &str);
+    fn erase(&mut self, text: &str);
     fn move_focus(&mut self);
 }
 
@@ -50,8 +52,20 @@ impl Learn for Engine {
         });
     }
 
+    fn withdraw(&mut self, reading: &str, surface: &str) {
+        self.learn(&Effect::Withdrawn {
+            reading: reading.to_owned(),
+            okurigana: None,
+            surface: surface.to_owned(),
+        });
+    }
+
     fn type_text(&mut self, text: &str) {
         self.learn(&Effect::Typed(text.to_owned()));
+    }
+
+    fn erase(&mut self, text: &str) {
+        self.learn(&Effect::Erased(text.to_owned()));
     }
 
     fn move_focus(&mut self) {

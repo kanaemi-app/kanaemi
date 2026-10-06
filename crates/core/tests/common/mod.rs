@@ -76,6 +76,8 @@ pub struct Learned {
     /// The okurigana's first chunk of each word in `registered`.
     pub registered_heads: Vec<Option<String>>,
     pub deleted: Vec<(String, String)>,
+    pub withdrawn: Vec<(String, String)>,
+    pub erased: Vec<String>,
     pub resets: usize,
 }
 
@@ -101,7 +103,11 @@ impl Learned {
             Effect::Forgotten {
                 reading, surface, ..
             } => self.deleted.push((reading, surface)),
+            Effect::Withdrawn {
+                reading, surface, ..
+            } => self.withdrawn.push((reading, surface)),
             Effect::Typed(text) => self.texts.push(text),
+            Effect::Erased(text) => self.erased.push(text),
             Effect::FocusMoved => self.resets += 1,
         }
     }

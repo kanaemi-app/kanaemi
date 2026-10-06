@@ -87,7 +87,14 @@ impl Shell {
         match handled {
             Ok(output) => {
                 tracing::debug!(?event, ?output, "handled");
-                reply::reply(&output, self.indicator)
+                let mut reply = reply::reply(&output, self.indicator);
+                // The text is erased by keys forwarded ahead of what follows,
+                // which IBus takes without telling whether they arrived.
+                if output.erase.is_some() {
+                    let erased = self.handle(id, Event::Erased(true));
+                    reply.signals.extend(erased.signals);
+                }
+                reply
             }
             Err(_) => {
                 // The event is left out: it may be a key the user typed.

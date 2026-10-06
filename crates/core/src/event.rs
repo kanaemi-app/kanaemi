@@ -88,4 +88,10 @@ pub enum Event {
     /// actions would; already in it, nothing changes. The program shows the
     /// mode itself, so the indicator stays off.
     SetMode(Mode),
+    /// Whether the host took [`crate::Output::erase`] out of the field. Until
+    /// it tells, what was undone stays committed.
+    Erased(bool),
+    /// The caret may have moved without a key the core saw, as on a click:
+    /// what is before it is no longer known. What is being typed stays.
+    CaretMoved,
 }
