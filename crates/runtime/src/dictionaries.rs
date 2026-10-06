@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kanaemi_config::{
-    DictionarySource, MODEL_FILE, SELECTIONS_FILE, USER_CUSTOM_FILE, dictionary_sources,
+    BUILTIN_PREFIX, DictionarySource, MODEL_FILE, SELECTIONS_FILE, USER_CUSTOM_FILE,
+    builtin_dictionary, dictionary_sources,
 };
 use kanaemi_engine::{
     BinaryDictionary, Dictionary, DictionaryError, Engine, FileSink, LineSink, RankingModel,
@@ -37,6 +38,7 @@ pub(crate) fn open_engine(
             DictionarySource::UserCustom => Some(Slot::UserCustom),
             DictionarySource::File(path) => open(&path).map(Slot::Dictionary),
             DictionarySource::Converted { binary, text } => open_converted(&binary, &text),
+            DictionarySource::Builtin(name) => open_builtin(&name),
         })
         .collect::<Vec<_>>();
     let (user, sink): (_, Box<dyn LineSink>) = match access {
@@ -49,6 +51,20 @@ pub(crate) fn open_engine(
     let mut engine = Engine::new(slots, user, sink);
     engine.set_model(read_model(support_dir));
     engine
+}
+
+/// The built-in dictionary of `name`; `None` after a warning when there is
+/// none of it.
+fn open_builtin(name: &str) -> Option<Slot> {
+    let Some(builtin) = builtin_dictionary(name) else {
+        tracing::warn!(name, "no built-in dictionary of the name");
+        return None;
+    };
+    let (dictionary, invalid) = TextDictionary::parse(builtin.text);
+    if !invalid.is_empty() {
+        tracing::warn!(name, ?invalid, "invalid built-in dictionary lines skipped");
+    }
+    Some(Slot::Dictionary(Box::new(dictionary)))
 }
 
 /// The dictionary in `path`, or `None` after a warning when it cannot be read.
@@ -184,6 +200,10 @@ pub(crate) fn stamp(support_dir: &Path, sources: Option<&[DictionarySource]>) ->
             DictionarySource::File(path) => vec![stamped(path)],
             // The text one counts too: it is read when the binary one is not.
             DictionarySource::Converted { binary, text } => vec![stamped(binary), stamped(text)],
+            // In the IME itself: only its place counts.
+            DictionarySource::Builtin(name) => {
+                vec![(PathBuf::from(format!("{BUILTIN_PREFIX}{name}")), None)]
+            }
         })
         .chain(std::iter::once(stamped(support_dir.join(MODEL_FILE))))
         .collect()

@@ -21,7 +21,31 @@ pub const EXTENSION: &str = "luau";
 /// The functions the IME has, and the modules they require, by their path:
 /// written as files of the functions folder would be, so they work copied
 /// there too. A file at the top gives a function of its name.
-const BUILTINS: [(&str, &str); 7] = [
+const BUILTINS: [(&str, &str); 16] = [
+    (
+        "wareki.luau",
+        include_str!("../assets/functions/wareki.luau"),
+    ),
+    (
+        "seireki.luau",
+        include_str!("../assets/functions/seireki.luau"),
+    ),
+    ("eto.luau", include_str!("../assets/functions/eto.luau")),
+    (
+        "choice.luau",
+        include_str!("../assets/functions/choice.luau"),
+    ),
+    ("date.luau", include_str!("../assets/functions/date.luau")),
+    ("uuid.luau", include_str!("../assets/functions/uuid.luau")),
+    ("ulid.luau", include_str!("../assets/functions/ulid.luau")),
+    (
+        "random.luau",
+        include_str!("../assets/functions/random.luau"),
+    ),
+    (
+        "lib/date.luau",
+        include_str!("../assets/functions/lib/date.luau"),
+    ),
     (
         "half-num.luau",
         include_str!("../assets/functions/half-num.luau"),
@@ -161,19 +185,37 @@ pub struct LuauFunctions {
     stopped: RefCell<HashSet<String>>,
 }
 
+/// The functions not to use.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Without {
+    /// Built-in functions, by name.
+    pub builtins: Vec<String>,
+    /// Functions of the folder, by the name of their file without its
+    /// extension. A built-in function of the name is used in its place.
+    pub files: Vec<String>,
+}
+
 impl LuauFunctions {
     /// Reads every function in `dir`. A missing folder has none; a file that
     /// gives something else is a module, and one that cannot be read or run
     /// is left out and reported by [`Self::take_errors`].
     pub fn open(dir: impl AsRef<Path>) -> Self {
+        Self::open_without(dir, &Without::default())
+    }
+
+    /// Like [`Self::open`], leaving out the functions of `without`. A file
+    /// left out is not run for its function, and none of its errors are
+    /// reported; another file may still require it as a module.
+    pub fn open_without(dir: impl AsRef<Path>, without: &Without) -> Self {
         let dir = dir.as_ref();
+        let left_out = |names: &[String], name: &str| names.iter().any(|n| n == name);
         let shared = Rc::new(Shared::default());
         let mut errors = Vec::new();
         let mut functions = HashMap::new();
         let mut read = Vec::new();
         let lua = match sandbox(dir, &shared) {
             Ok(lua) => {
-                for name in builtin_names() {
+                for name in builtin_names().filter(|n| !left_out(&without.builtins, n)) {
                     match builtin(&lua, name, &shared) {
                         Ok(function) => {
                             functions.insert(name.to_owned(), function);
@@ -185,7 +227,12 @@ impl LuauFunctions {
                     }
                 }
                 // A file of a built-in function's name goes in its place.
+                let named =
+                    |path: &PathBuf| path.file_stem().and_then(|s| s.to_str()).map(str::to_owned);
                 for path in files(dir) {
+                    if named(&path).is_some_and(|name| left_out(&without.files, &name)) {
+                        continue;
+                    }
                     match load(&lua, &path, &shared) {
                         Ok(Some((name, function))) => {
                             read.push(name.clone());
@@ -323,8 +370,50 @@ fn kanaemi(lua: &Lua, shared: &Shared) -> mlua::Result<mlua::Table> {
         table.set_readonly(true);
         kanaemi.raw_set(key, table)?;
     }
+    kanaemi.raw_set("random", random(lua)?)?;
+    kanaemi.raw_set("time", time(lua)?)?;
     kanaemi.set_readonly(true);
     Ok(kanaemi)
+}
+
+/// The most bytes `kanaemi.random.bytes` gives at once: more than any ID
+/// needs, and no way around the memory limit.
+const RANDOM_BYTES_LIMIT: usize = 1024;
+
+/// `kanaemi.random`: random bytes from the operating system, fit for what must
+/// not repeat or be guessed, as `math.random` is not.
+fn random(lua: &Lua) -> mlua::Result<mlua::Table> {
+    let random = lua.create_table()?;
+    let bytes = lua.create_function(|lua, count: i64| {
+        let count = usize::try_from(count)
+            .ok()
+            .filter(|&count| count <= RANDOM_BYTES_LIMIT)
+            .ok_or_else(|| {
+                mlua::Error::runtime(format!("asks {count} bytes, not 0 to {RANDOM_BYTES_LIMIT}"))
+            })?;
+        let mut bytes = vec![0; count];
+        getrandom::fill(&mut bytes).map_err(mlua::Error::runtime)?;
+        lua.create_string(bytes)
+    })?;
+    random.raw_set("bytes", bytes)?;
+    random.set_readonly(true);
+    Ok(random)
+}
+
+/// `kanaemi.time`: the clock to the millisecond, as Luau's `os.time` tells
+/// only whole seconds.
+fn time(lua: &Lua) -> mlua::Result<mlua::Table> {
+    let time = lua.create_table()?;
+    let milliseconds = lua.create_function(|_, ()| {
+        let since = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(mlua::Error::runtime)?;
+        // Exact in a Luau number for some 285,000 years.
+        Ok(since.as_millis() as f64)
+    })?;
+    time.raw_set("milliseconds", milliseconds)?;
+    time.set_readonly(true);
+    Ok(time)
 }
 
 /// `print` that keeps each line, with the function that printed it, as Luau's
@@ -352,6 +441,18 @@ fn files(dir: &Path) -> Vec<PathBuf> {
         .collect();
     files.sort();
     files
+}
+
+/// The built-in functions by name, with the source of each, to show what they
+/// do.
+pub fn builtin_sources() -> impl Iterator<Item = (&'static str, &'static str)> {
+    builtin_names().filter_map(|name| {
+        let file = format!("{name}.{EXTENSION}");
+        BUILTINS
+            .iter()
+            .find(|(path, _)| *path == file)
+            .map(|&(_, source)| (name, source))
+    })
 }
 
 /// The names of the built-in functions: their files at the top.

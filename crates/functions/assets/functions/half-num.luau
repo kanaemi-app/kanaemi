@@ -1,3 +1,4 @@
+-- 数を半角の数字で書く（００７ → 007）
 -- half-num: a number in ASCII digits, as typed otherwise (００７ → 007).
 local number = require("./lib/number")
 

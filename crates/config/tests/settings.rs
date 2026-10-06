@@ -162,6 +162,25 @@ fn an_unknown_control_item_is_reported() {
 }
 
 #[test]
+fn functions_are_on_until_listed_as_disabled() {
+    assert_eq!(load("").0.disabled_functions, Vec::<String>::new());
+    assert_eq!(
+        load(&uncommented_template()).0.disabled_functions,
+        Vec::<String>::new()
+    );
+    let (settings, problems) = load("[functions]\ndisabled = [\"dai\", \"builtin:uuid\"]");
+    assert_eq!(problems, Vec::<String>::new());
+    assert_eq!(settings.disabled_functions, ["dai", "builtin:uuid"]);
+}
+
+#[test]
+fn disabled_functions_are_a_list_of_names() {
+    let (settings, problems) = load("[functions]\ndisabled = \"dai\"\nenabled = []");
+    assert_eq!(problems, ["functions.disabled", "functions.enabled"]);
+    assert_eq!(settings.disabled_functions, Vec::<String>::new());
+}
+
+#[test]
 fn romaji_tables_stack_bundled_tables_and_files() {
     let dir = temp_dir("romaji");
     fs::create_dir_all(dir.join("romaji")).unwrap();
@@ -228,6 +247,29 @@ fn dictionaries_are_listed_in_order() {
             DictionarySource::UserCustom,
             DictionarySource::File(dir.join("dictionaries").join("b.tsv")),
         ])
+    );
+}
+
+#[test]
+fn a_built_in_dictionary_is_listed_by_its_name() {
+    let (settings, problems) = load("dictionaries = [\"custom\", \"builtin:date\"]");
+    assert_eq!(problems, Vec::<String>::new());
+    assert_eq!(
+        settings.dictionaries,
+        Some(vec![
+            DictionarySource::UserCustom,
+            DictionarySource::Builtin("date".to_owned()),
+        ])
+    );
+}
+
+#[test]
+fn an_unknown_built_in_dictionary_is_reported_and_left_out() {
+    let (settings, problems) = load("dictionaries = [\"custom\", \"builtin:nothing\"]");
+    assert_eq!(problems, ["dictionaries"]);
+    assert_eq!(
+        settings.dictionaries,
+        Some(vec![DictionarySource::UserCustom])
     );
 }
 

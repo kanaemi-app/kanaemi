@@ -2,7 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use kanaemi_config::{
-    DICTIONARY_DIR, DictionarySource, Settings, binary_name, dictionary_files, dictionary_sources,
+    BUILTIN_DICTIONARIES, DICTIONARY_DIR, DictionarySource, Settings, binary_name,
+    dictionary_files, dictionary_sources,
 };
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -22,8 +23,16 @@ fn files(dir: &std::path::Path, names: &[&str]) -> Vec<DictionarySource> {
         .collect()
 }
 
+/// The built-in dictionaries, as they follow the others when nothing is listed.
+fn builtins() -> impl Iterator<Item = DictionarySource> {
+    BUILTIN_DICTIONARIES
+        .iter()
+        .map(|d| DictionarySource::Builtin(d.name.to_owned()))
+}
+
 #[test]
-fn without_a_list_the_user_custom_dictionary_comes_first_then_the_folder_by_name() {
+fn without_a_list_the_user_custom_dictionary_comes_first_then_the_folder_by_name_then_the_built_in_ones()
+ {
     let dir = temp_dir("default");
     for name in ["b.tsv", "a.tsv", "c.kdic", "notes.txt"] {
         fs::write(dir.join(DICTIONARY_DIR).join(name), "").unwrap();
@@ -33,6 +42,7 @@ fn without_a_list_the_user_custom_dictionary_comes_first_then_the_folder_by_name
 
     let mut expected = vec![DictionarySource::UserCustom];
     expected.extend(files(&dir, &["a.tsv", "b.tsv", "c.kdic"]));
+    expected.extend(builtins());
     assert_eq!(sources, expected);
 }
 
@@ -64,7 +74,9 @@ fn a_missing_folder_has_no_dictionaries() {
     assert_eq!(dictionary_files(&dir), Vec::<String>::new());
     assert_eq!(
         dictionary_sources(&dir, None),
-        [DictionarySource::UserCustom]
+        std::iter::once(DictionarySource::UserCustom)
+            .chain(builtins())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -90,6 +102,7 @@ fn without_a_list_dictionaries_in_sub_folders_are_read_too_in_order_of_their_joi
         &dir,
         &["a.tsv", "b.tsv", "sub/a.kdic", "sub/deeper/c.tsv"],
     ));
+    expected.extend(builtins());
     assert_eq!(sources, expected);
 }
 
@@ -133,7 +146,7 @@ fn without_a_list_a_binary_dictionary_stands_for_its_text_one_which_stays_as_a_f
     let sources = dictionary_sources(&dir, None);
 
     assert_eq!(
-        sources,
+        sources[..2],
         [
             DictionarySource::UserCustom,
             DictionarySource::Converted {

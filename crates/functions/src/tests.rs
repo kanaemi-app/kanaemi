@@ -448,10 +448,6 @@ fn the_examples_of_the_specification_work() {
     assert_eq!(functions.take_errors(), []);
 }
 
-fn write(name: &str, digits: &str) -> Option<String> {
-    call(&open(&[]), name, digits, None)
-}
-
 /// What a Luau test file has besides the functions: `test(name, body)` runs
 /// `body` and keeps how it failed, and `eq(actual, expected)` fails unless
 /// the two are equal.
@@ -562,14 +558,67 @@ fn the_builtin_files_work_copied_into_the_functions_folder() {
         functions.names().collect::<HashSet<_>>(),
         builtin_names().collect::<HashSet<_>>()
     );
+    let builtins = open(&[]);
     for name in builtin_names() {
-        for digits in ["0", "007", "12", "２０２６", "100010", "1111"] {
-            assert_eq!(
-                call(&functions, name, digits, None),
-                write(name, digits),
-                "{name} {digits}"
-            );
+        for source in ["0", "007", "12", "２０２６", "100010", "1111"] {
+            let copied = call(&functions, name, source, None);
+            assert!(copied.is_some() || call(&builtins, name, source, None).is_none());
+            // A function of another value each time is only to give one.
+            if call(&builtins, name, source, None) == call(&builtins, name, source, None) {
+                assert_eq!(
+                    copied,
+                    call(&builtins, name, source, None),
+                    "{name} {source}"
+                );
+            }
         }
     }
     assert_eq!(functions.take_errors(), []);
+}
+
+#[test]
+fn a_function_left_out_of_the_folder_gives_way_to_the_builtin_of_its_name() {
+    let dir = folder(&[
+        ("kanji.luau", "return function() return 'mine' end"),
+        ("dai.luau", "return function() return 'dai' end"),
+        ("broken.luau", "return function("),
+    ]);
+    let without = Without {
+        builtins: Vec::new(),
+        files: vec!["kanji".to_owned(), "dai".to_owned(), "broken".to_owned()],
+    };
+    let functions = LuauFunctions::open_without(&dir, &without);
+    assert_eq!(
+        call(&functions, "kanji", "12", None).as_deref(),
+        Some("十二")
+    );
+    assert!(!functions.has("dai"));
+    assert_eq!(functions.names().count(), 0);
+    assert_eq!(functions.take_errors(), []);
+}
+
+#[test]
+fn a_builtin_left_out_is_no_function() {
+    let without = Without {
+        builtins: vec!["kanji".to_owned()],
+        files: Vec::new(),
+    };
+    let functions = LuauFunctions::open_without(folder(&[]), &without);
+    assert!(!functions.has("kanji"));
+    assert!(functions.has("daiji"));
+    let mine = LuauFunctions::open_without(
+        folder(&[("kanji.luau", "return function() return 'mine' end")]),
+        &without,
+    );
+    assert_eq!(call(&mine, "kanji", "12", None).as_deref(), Some("mine"));
+}
+
+#[test]
+fn the_builtins_are_shown_by_their_sources() {
+    let shown: Vec<&str> = builtin_sources().map(|(name, _)| name).collect();
+    assert_eq!(
+        shown.iter().copied().collect::<HashSet<_>>(),
+        builtin_names().collect::<HashSet<_>>()
+    );
+    assert!(builtin_sources().all(|(_, source)| source.contains("return function")));
 }

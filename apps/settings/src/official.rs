@@ -6,7 +6,7 @@ use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use kanaemi_config::{DICTIONARY_DIR, MODEL_FILE, binary_name};
+use kanaemi_config::{BUILTIN_PREFIX, DICTIONARY_DIR, MODEL_FILE, binary_name};
 use kanaemi_engine::{MODEL_FORMAT_VERSION, replace_file, text_digest};
 use serde::Deserialize;
 
@@ -282,7 +282,7 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
 
 /// The dictionary list with `entry` in it: in place of its text dictionary,
 /// or a base one before the first official dictionary, an additional one
-/// last.
+/// last; either before the built-in dictionaries, which go last.
 pub fn placed(mut list: Vec<String>, entry: &Entry) -> Vec<String> {
     let name = entry.listed_name();
     if list.contains(&name) {
@@ -293,12 +293,16 @@ pub fn placed(mut list: Vec<String>, entry: &Entry) -> Vec<String> {
         return list;
     }
     let official = format!("{FOLDER}/");
+    let builtins = list
+        .iter()
+        .position(|n| n.starts_with(BUILTIN_PREFIX))
+        .unwrap_or(list.len());
     let at = match entry.base {
         true => list
             .iter()
             .position(|n| n.starts_with(&official))
-            .unwrap_or(list.len()),
-        false => list.len(),
+            .map_or(builtins, |at| at.min(builtins)),
+        false => builtins,
     };
     list.insert(at, name);
     list
@@ -585,6 +589,30 @@ mod tests {
                 "kanaemi/base/kanaemi-base.kdic",
                 "kanaemi/it/kanaemi-it.kdic"
             ]
+        );
+    }
+
+    #[test]
+    fn a_dictionary_goes_before_the_built_in_ones() {
+        let it = entry("it", IT, None);
+        assert_eq!(
+            placed(
+                names(&["custom", "a.tsv", "builtin:date", "builtin:time"]),
+                &it
+            ),
+            [
+                "custom",
+                "a.tsv",
+                "kanaemi/it/kanaemi-it.kdic",
+                "builtin:date",
+                "builtin:time"
+            ]
+        );
+        let model = model_bytes();
+        let base = entry("base", BASE, Some(&model));
+        assert_eq!(
+            placed(names(&["custom", "builtin:date"]), &base),
+            ["custom", "kanaemi/base/kanaemi-base.kdic", "builtin:date"]
         );
     }
 

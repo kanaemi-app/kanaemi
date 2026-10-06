@@ -37,9 +37,12 @@ pub fn Input() -> Element {
                 description: text.as_deref().and_then(description),
                 warning: text.as_deref().and_then(romaji_warning),
                 label: name.clone(),
-                name,
                 meta: None,
                 convert: None,
+                chip: bundled_romaji_tables()
+                    .any(|bundled| bundled == name)
+                    .then(|| "組み込み".to_owned()),
+                name,
             }
         })
         .collect();

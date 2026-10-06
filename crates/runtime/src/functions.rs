@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use kanaemi_config::FUNCTIONS_DIR;
-use kanaemi_functions::{EXTENSION, LuauFunctions};
+use kanaemi_config::{BUILTIN_PREFIX, FUNCTIONS_DIR};
+use kanaemi_functions::{EXTENSION, LuauFunctions, Without};
 
 use crate::dictionaries::{FileStamp, file_stamp};
 
@@ -51,9 +51,17 @@ fn collect(dir: &Path, seen: &mut HashSet<PathBuf>, files: &mut Vec<PathBuf>) {
     }
 }
 
-/// The functions in the settings folder, with what was wrong in them logged.
-pub(crate) fn open(support_dir: &Path) -> Rc<LuauFunctions> {
-    let functions = LuauFunctions::open(support_dir.join(FUNCTIONS_DIR));
+/// The functions in the settings folder but those `disabled` names, as the
+/// settings write them, with what was wrong in them logged.
+pub(crate) fn open(support_dir: &Path, disabled: &[String]) -> Rc<LuauFunctions> {
+    let mut without = Without::default();
+    for name in disabled {
+        match name.strip_prefix(BUILTIN_PREFIX) {
+            Some(builtin) => without.builtins.push(builtin.to_owned()),
+            None => without.files.push(name.clone()),
+        }
+    }
+    let functions = LuauFunctions::open_without(support_dir.join(FUNCTIONS_DIR), &without);
     let count = functions.names().count();
     if count > 0 {
         tracing::info!(count, "functions loaded");

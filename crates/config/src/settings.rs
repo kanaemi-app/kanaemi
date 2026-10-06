@@ -12,8 +12,9 @@ use toml::{Table, Value};
 use crate::folder::stays_inside;
 use crate::keys::{Scene, is_modifier, sendable};
 use crate::{
-    APPLICATION_TABLE, DICTIONARY_DIR, DictionarySource, FILE_NAME, UNBOUND, default_romaji_table,
-    parse_action, parse_binding_key, parse_chord, read_romaji_table,
+    APPLICATION_TABLE, BUILTIN_PREFIX, DICTIONARY_DIR, DictionarySource, FILE_NAME, UNBOUND,
+    builtin_dictionary, default_romaji_table, parse_action, parse_binding_key, parse_chord,
+    read_romaji_table,
 };
 
 /// The name the dictionary list gives the user custom dictionary.
@@ -29,6 +30,9 @@ pub struct Settings {
     pub romaji_tables: Option<Vec<String>>,
     /// The port to take requests from other programs on; `None` takes none.
     pub control_port: Option<u16>,
+    /// The functions not to use, as the functions folder names them, or with
+    /// [`BUILTIN_PREFIX`] for a built-in one.
+    pub disabled_functions: Vec<String>,
 }
 
 /// An item that could not be read, named by its path in the file.
@@ -79,6 +83,7 @@ pub enum ProblemKind {
     /// A file named by a path that leaves its folder: absolute, or going up
     /// with `..`.
     OutsideFolder(String),
+    UnknownBuiltinDictionary(String),
 }
 
 impl std::fmt::Display for ProblemKind {
@@ -104,6 +109,7 @@ impl std::fmt::Display for ProblemKind {
             Self::ActionNotHere(name) => write!(f, "{name} does nothing here"),
             Self::NotSendable => write!(f, "only named keys can be sent to the application"),
             Self::OutsideFolder(name) => write!(f, "{name} is outside its folder"),
+            Self::UnknownBuiltinDictionary(name) => write!(f, "no built-in dictionary {name}"),
         }
     }
 }
@@ -121,6 +127,7 @@ impl Settings {
                 dictionaries: None,
                 romaji_tables: None,
                 control_port: None,
+                disabled_functions: Vec::new(),
             },
             problems: Vec::new(),
             dir: dir.as_ref(),
@@ -161,6 +168,7 @@ impl Reader<'_> {
                 "romaji" => self.section(&name, value, Self::romaji),
                 "keys" => self.section(&name, value, Self::keys),
                 "control" => self.section(&name, value, Self::control),
+                "functions" => self.section(&name, value, Self::functions),
                 _ => self.problem(name, ProblemKind::UnknownItem),
             }
         }
@@ -195,16 +203,25 @@ impl Reader<'_> {
         let Some(names) = self.strings("dictionaries", value) else {
             return;
         };
-        if let Some(outside) = names.iter().find(|n| !stays_inside(n)) {
+        let file = |name: &&String| !name.starts_with(BUILTIN_PREFIX);
+        if let Some(outside) = names.iter().filter(file).find(|n| !stays_inside(n)) {
             return self.problem("dictionaries", ProblemKind::OutsideFolder(outside.clone()));
         }
-        let mut sources: Vec<DictionarySource> = names
-            .iter()
-            .map(|name| match name.as_str() {
-                USER_CUSTOM => DictionarySource::UserCustom,
-                file => DictionarySource::File(self.dir.join(DICTIONARY_DIR).join(file)),
-            })
-            .collect();
+        let mut sources = Vec::new();
+        for name in &names {
+            sources.push(match name.strip_prefix(BUILTIN_PREFIX) {
+                Some(builtin) if builtin_dictionary(builtin).is_some() => {
+                    DictionarySource::Builtin(builtin.to_owned())
+                }
+                Some(builtin) => {
+                    let unknown = ProblemKind::UnknownBuiltinDictionary(builtin.to_owned());
+                    self.problem("dictionaries", unknown);
+                    continue;
+                }
+                None if name == USER_CUSTOM => DictionarySource::UserCustom,
+                None => DictionarySource::File(self.dir.join(DICTIONARY_DIR).join(name)),
+            });
+        }
         if !sources.contains(&DictionarySource::UserCustom) {
             sources.insert(0, DictionarySource::UserCustom);
         }
@@ -218,6 +235,15 @@ impl Reader<'_> {
         match value.as_integer().and_then(|port| u16::try_from(port).ok()) {
             Some(port) if port > 0 => self.settings.control_port = Some(port),
             _ => self.problem(item, ProblemKind::NotAPort),
+        }
+    }
+
+    fn functions(&mut self, item: &str, key: &str, value: Value) {
+        if key != "disabled" {
+            return self.problem(item, ProblemKind::UnknownItem);
+        }
+        if let Some(names) = self.strings(item, value) {
+            self.settings.disabled_functions = names;
         }
     }
 

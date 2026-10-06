@@ -12,9 +12,12 @@ futures-channel = "0.3.34"
 kanaemi-config.workspace = true
 kanaemi-core.workspace = true
 kanaemi-engine.workspace = true
+kanaemi-functions.workspace = true
 rfd = "0.17.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+tree-sitter-highlight = "0.27.0"
+tree-sitter-luau = "1.2.0"
 unicode-normalization = "0.1"
 ureq = "3.4.2"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
