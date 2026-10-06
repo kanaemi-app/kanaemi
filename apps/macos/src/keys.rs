@@ -78,15 +78,33 @@ pub struct Keys {
     /// The time of the last key the IME had. Keys reach it in the order
     /// they were typed, so a press the tap saw before this never comes.
     ime_seen_ms: u64,
+    /// The time of the key the IME is about to pass on, which the keys let
+    /// go before it go ahead of.
+    pressing_ms: u64,
 }
 
 /// How long the tap may tell of a press after the IME had it, and a key may
 /// stay down with no release from the tap before the keyboard is asked.
 pub const TAP_GRACE_MS: u64 = 300;
 
+/// Keys let go this close together were lifted as one.
+pub const SIMULTANEOUS_MS: u64 = 20;
+
 /// How long a release waits on a press the tap saw while the IME has no key
 /// after it to say the press will never come.
 pub const TAP_GIVE_UP_MS: u64 = 1000;
+
+/// The flag a modifier key sets while it is down, by key code.
+fn modifier_flag(code: u16) -> Option<usize> {
+    match code {
+        57 => Some(CAPS_LOCK),
+        63 => Some(FUNCTION),
+        _ => SIDED
+            .iter()
+            .find(|(sided, ..)| *sided == code)
+            .map(|&(.., flag)| flag),
+    }
+}
 
 /// Some applications, such as Slack, deliver each `flagsChanged` twice a few
 /// milliseconds apart. No finger presses and releases a key this fast, so a
@@ -142,6 +160,22 @@ impl Keys {
         }
     }
 
+    /// A key the IME is about to pass on: the keys let go before it go first,
+    /// with no wait for others lifted with them.
+    pub fn pressing(&mut self, raw: RawEvent) {
+        let pressed = match raw.kind {
+            RawKind::KeyDown => true,
+            // A modifier let go presses nothing.
+            RawKind::FlagsChanged => {
+                modifier_flag(raw.key_code).is_some_and(|flag| raw.flags & flag != 0)
+            }
+            RawKind::KeyUp | RawKind::Other => false,
+        };
+        if pressed && raw.user_data != POSTED_MARK {
+            self.pressing_ms = self.pressing_ms.max(raw.time_ms);
+        }
+    }
+
     /// Whether the tap saw something not yet settled.
     pub fn waiting(&self) -> bool {
         !self.tapped_downs.is_empty() || !self.tapped_ups.is_empty()
@@ -158,21 +192,61 @@ impl Keys {
         self.tapped_downs
             .retain(|&(_, time)| time >= seen && time + TAP_GIVE_UP_MS >= now_ms);
         let mut released = Vec::new();
-        while let Some(&(code, time)) = self.tapped_ups.first() {
-            if self.tapped_downs.iter().any(|&(_, down)| down <= time) {
+        while let Some(&(_, first)) = self.tapped_ups.first() {
+            // Keys lifted as one reach the tap one at a time: the rest of
+            // them are waited for, as far as a press after the first; a key
+            // pressed since bounds them, and its press must not go first.
+            let pressed_since = self
+                .tapped_downs
+                .iter()
+                .map(|&(_, time)| time)
+                .chain((self.pressing_ms >= first).then_some(self.pressing_ms))
+                // A press in the same millisecond came after: the tap told
+                // of the release first.
+                .filter(|&time| time >= first)
+                .min();
+            let end = pressed_since.map_or(first + SIMULTANEOUS_MS, |pressed| {
+                pressed
+                    .saturating_sub(1)
+                    .max(first)
+                    .min(first + SIMULTANEOUS_MS)
+            });
+            let closed = pressed_since.is_some()
+                || first + SIMULTANEOUS_MS < now_ms
+                || self.tapped_ups.iter().any(|&(_, time)| time > end);
+            let together = self
+                .tapped_ups
+                .iter()
+                .take_while(|&&(_, time)| time <= end)
+                .count();
+            let ups = &self.tapped_ups[..together];
+            let last = ups[together - 1].1;
+            // A press in the same millisecond is after them, unless it is of
+            // a key among them.
+            let earlier = self.tapped_downs.iter().any(|&(code, down)| {
+                down < last || (down == last && ups.iter().any(|&(up, _)| up == code))
+            });
+            if !closed || earlier {
                 break;
             }
             // A key not down here was pressed before the focus came, or in
             // another application: nothing waits on it.
-            if let Some(index) = self.typed.iter().position(|(typed, ..)| *typed == code) {
-                released.push(KeyEvent {
-                    key: self.typed.remove(index).1,
-                    mods: Modifiers::default(),
-                    kind: KeyKind::Release,
-                    time_ms: time,
-                });
+            let mut group: Vec<(u64, Key, u64)> = Vec::new();
+            for (code, time) in self.tapped_ups.drain(..together) {
+                if let Some(index) = self.typed.iter().position(|(typed, ..)| *typed == code) {
+                    let (_, key, at) = self.typed.remove(index);
+                    group.push((at, key, time));
+                }
             }
-            self.tapped_ups.remove(0);
+            // As a chord comes apart, the key pressed last first: a letter
+            // lifted with the key held under it was typed held.
+            group.sort_by_key(|&(at, ..)| std::cmp::Reverse(at));
+            released.extend(group.into_iter().map(|(_, key, time)| KeyEvent {
+                key,
+                mods: Modifiers::default(),
+                kind: KeyKind::Release,
+                time_ms: time,
+            }));
         }
         released
     }
@@ -572,8 +646,10 @@ mod tests {
         RawEvent { time_ms, ..raw }
     }
 
+    /// The releases passed on at `now_ms`, once keys let go with them have
+    /// had time to be told of.
     fn released(keys: &mut Keys, now_ms: u64) -> Vec<(Key, u64)> {
-        keys.tapped_releases(now_ms)
+        keys.tapped_releases(now_ms + SIMULTANEOUS_MS + 1)
             .into_iter()
             .map(|e| {
                 assert_eq!(e.kind, KeyKind::Release);
@@ -600,6 +676,134 @@ mod tests {
             [(Key::Char('k'), 80), (Key::Space, 85)]
         );
         assert_eq!(released(&mut keys, 95), []);
+    }
+
+    #[test]
+    fn keys_let_go_together_go_the_last_pressed_first() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        press(&mut keys, at(down(11, 0, "b"), 218));
+        // Lifted as one: the tap may tell of either first.
+        keys.tapped(49, false, 370);
+        keys.tapped(11, false, 370 + SIMULTANEOUS_MS);
+        assert_eq!(
+            released(&mut keys, 400),
+            [(Key::Char('b'), 370 + SIMULTANEOUS_MS), (Key::Space, 370)]
+        );
+    }
+
+    #[test]
+    fn a_key_let_go_goes_before_a_key_pressed_after_it() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        keys.tapped(49, false, 400);
+        assert_eq!(
+            keys.tapped_releases(410),
+            [],
+            "another may be lifted with it"
+        );
+        keys.pressing(at(down(11, 0, "b"), 410));
+        let released: Vec<_> = keys
+            .tapped_releases(410)
+            .into_iter()
+            .map(|e| (e.key, e.time_ms))
+            .collect();
+        assert_eq!(released, [(Key::Space, 400)]);
+    }
+
+    #[test]
+    fn keys_let_go_on_either_side_of_a_press_are_not_lifted_as_one() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        keys.tapped(49, false, 400);
+        keys.tapped(0, true, 410);
+        keys.tapped(0, false, 415);
+        keys.pressing(at(down(0, 0, "a"), 410));
+        let released: Vec<_> = keys
+            .tapped_releases(412)
+            .into_iter()
+            .map(|e| (e.key, e.time_ms))
+            .collect();
+        assert_eq!(released, [(Key::Space, 400)], "before a goes in");
+    }
+
+    #[test]
+    fn the_release_of_the_key_being_pressed_waits_for_it() {
+        let mut keys = Keys::default();
+        // The tap's clock reads a millisecond off the IME's.
+        keys.tapped(49, true, 409);
+        keys.tapped(49, false, 415);
+        let space = at(down(49, 0, " "), 410);
+        keys.pressing(space);
+        // The main thread got to it late.
+        assert_eq!(keys.tapped_releases(500), []);
+        keys.translate(space);
+        let released: Vec<_> = keys
+            .tapped_releases(500)
+            .into_iter()
+            .map(|e| (e.key, e.time_ms))
+            .collect();
+        assert_eq!(released, [(Key::Space, 415)]);
+    }
+
+    #[test]
+    fn a_modifier_pressed_after_a_key_let_go_bounds_it_too() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        keys.tapped(49, false, 400);
+        keys.pressing(at(flags_changed(56, SHIFT | DEVICE_LEFT_SHIFT), 410));
+        let released: Vec<_> = keys
+            .tapped_releases(412)
+            .into_iter()
+            .map(|e| (e.key, e.time_ms))
+            .collect();
+        assert_eq!(released, [(Key::Space, 400)]);
+    }
+
+    #[test]
+    fn a_modifier_let_go_bounds_nothing() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        press(&mut keys, at(down(11, 0, "b"), 100));
+        keys.tapped(49, false, 195);
+        keys.pressing(at(flags_changed(56, 0), 200));
+        keys.tapped(11, false, 210);
+        assert_eq!(
+            released(&mut keys, 210),
+            [(Key::Char('b'), 210), (Key::Space, 195)]
+        );
+    }
+
+    #[test]
+    fn a_key_pressed_in_the_millisecond_another_is_let_go_bounds_it() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        keys.tapped(49, false, 400);
+        keys.tapped(0, true, 400);
+        keys.tapped(0, false, 410);
+        keys.pressing(at(down(0, 0, "a"), 400));
+        let released: Vec<_> = keys
+            .tapped_releases(401)
+            .into_iter()
+            .map(|e| (e.key, e.time_ms))
+            .collect();
+        assert_eq!(released, [(Key::Space, 400)]);
+    }
+
+    #[test]
+    fn keys_let_go_apart_go_in_the_order_let_go() {
+        let mut keys = Keys::default();
+        press(&mut keys, at(down(49, 0, " "), 0));
+        press(&mut keys, at(down(11, 0, "b"), 218));
+        keys.tapped(49, false, 370);
+        keys.tapped(11, false, 370 + SIMULTANEOUS_MS + 1);
+        assert_eq!(
+            released(&mut keys, 450),
+            [
+                (Key::Space, 370),
+                (Key::Char('b'), 370 + SIMULTANEOUS_MS + 1)
+            ]
+        );
     }
 
     #[test]
@@ -723,12 +927,12 @@ mod tests {
             press(&mut keys, at(down(code, 0, c), time));
         }
         keys.translate(at(up(49, 0, " "), 30));
-        keys.tapped(40, false, 40);
-        keys.tapped(38, false, 40);
-        assert_eq!(
-            released(&mut keys, 50),
-            [(Key::Char('k'), 40), (Key::Char('j'), 40)]
-        );
+        let lifted: Vec<Key> = keys
+            .lifted(|_| false, 40)
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
+        assert_eq!(lifted, [Key::Char('k'), Key::Char('j')]);
     }
 
     #[test]

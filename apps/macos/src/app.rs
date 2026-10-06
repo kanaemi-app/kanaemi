@@ -354,6 +354,7 @@ impl KanaemiController {
         // may get to this event well after it happened.
         let hold = hold_bound();
         if hold {
+            KEYS.with_borrow_mut(|keys| keys.pressing(raw));
             self.release_lifted(sender, raw.time_ms.min(now_ms()));
         }
         if let Some(again) = KEYS.with_borrow_mut(|keys| keys.pressed_again(raw))
