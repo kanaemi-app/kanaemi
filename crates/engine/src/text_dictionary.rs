@@ -197,8 +197,13 @@ impl TextDictionary {
                 push_front(self.words.entry(reading).or_default(), item);
             }
             Record::Okuri { stem, kana, item } => {
-                self.hidden
-                    .remove(&(format!("{stem}{kana}"), item.surface.clone()));
+                // The word brings back its forms going on from the okurigana
+                // (勝った for か*っ), as registered from them.
+                let reading = format!("{stem}{kana}");
+                self.hidden.retain(|(r, s)| {
+                    let rest = r.strip_prefix(&reading);
+                    rest.is_none() || rest != s.strip_prefix(&item.surface)
+                });
                 let kanas = self.okuri_kana.entry(stem.clone()).or_default();
                 if !kanas.contains(&kana) {
                     kanas.push(kana.clone());

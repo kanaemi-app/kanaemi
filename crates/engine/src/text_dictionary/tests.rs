@@ -158,6 +158,17 @@ fn a_later_okurigana_line_of_the_hidden_pair_clears_the_hide_line() {
 }
 
 #[test]
+fn a_later_okurigana_line_clears_the_hide_lines_of_its_forms_going_on_from_it() {
+    let (d, _) = TextDictionary::parse_user_custom(
+        "!かった\t勝った\n!かった\t買った\n!かつ\t勝つ\n!かっ\t勝った\nか*っ\t勝っ",
+    );
+    assert!(!d.is_hidden("かった", "勝った"));
+    assert!(d.is_hidden("かった", "買った"));
+    assert!(d.is_hidden("かつ", "勝つ"));
+    assert!(d.is_hidden("かっ", "勝った"));
+}
+
+#[test]
 fn okurigana_must_start_with_a_kana_of_the_okuri_table() {
     for line in ["か*ク\t書ク", "か*ゔぁ\t書ゔぁ"] {
         assert_eq!(invalid(line), [InvalidReason::Okurigana], "{line}");
