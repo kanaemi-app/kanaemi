@@ -477,12 +477,18 @@ fn key(raw: RawEvent) -> Key {
             // With Control held, `characters` is a control code, and with Option
             // another character (ƒ for F); the core matches the key's own
             // character (Ctrl+Z, Option+F).
-            let characters = if raw.flags & (CONTROL | OPTION) != 0 {
+            let shortcut = raw.flags & (CONTROL | OPTION) != 0;
+            let characters = if shortcut {
                 raw.characters_ignoring_modifiers
             } else {
                 raw.characters
             };
             match characters.and_then(|s| s.chars().next()) {
+                // That character may drop Shift too (r for Ctrl+Shift+R), and
+                // the core takes a shifted letter as its capital.
+                Some(c) if shortcut && raw.flags & SHIFT != 0 && c.is_ascii_lowercase() => {
+                    Key::Char(c.to_ascii_uppercase())
+                }
                 Some(c) if !c.is_control() && !is_function_key(c) => Key::Char(c),
                 _ => Key::Other,
             }
@@ -1029,6 +1035,20 @@ mod tests {
         };
         let e = Keys::default().translate(raw).unwrap();
         assert_eq!((e.key, e.mods.ctrl), (Key::Char('z'), true));
+    }
+
+    #[test]
+    fn control_with_shift_reads_the_capital_letter() {
+        let raw = RawEvent {
+            characters: Some("\u{12}"),
+            characters_ignoring_modifiers: Some("r"),
+            ..down(15, CONTROL | SHIFT, "")
+        };
+        let e = Keys::default().translate(raw).unwrap();
+        assert_eq!(
+            (e.key, e.mods.ctrl, e.mods.shift),
+            (Key::Char('R'), true, true)
+        );
     }
 
     #[test]
