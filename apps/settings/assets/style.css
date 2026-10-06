@@ -155,7 +155,7 @@ main > .title {
 .view-switch button { border: none; background: none; padding: 4px 16px; border-radius: 6px; }
 .view-switch button.selected { background: var(--accent); color: var(--selection-text); }
 .row.intent .row-text { flex: 0 0 38%; }
-.intent-keys { flex: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.intent-keys { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 /* One bordered unit: the key, where it is bound when not everywhere, and
    the button that takes it off, set apart by a line. */
 .key-chip {
@@ -168,6 +168,7 @@ main > .title {
   background: var(--window);
   font-size: 13px;
   white-space: nowrap;
+  max-width: 100%;
 }
 .key-chip.partial { border-style: dashed; }
 .chip-key {
@@ -181,7 +182,9 @@ main > .title {
   cursor: pointer;
 }
 .chip-key:hover { color: var(--accent); }
-.chip-key .chip-where { font-family: inherit; }
+.chip-key { min-width: 0; text-align: left; }
+/* Where a key is bound can be long; it wraps rather than leave the box. */
+.chip-key .chip-where { font-family: inherit; white-space: normal; min-width: 0; }
 .chip-where { color: var(--muted); font-size: 12px; }
 .chip-remove, .chip-add {
   display: inline-flex;
