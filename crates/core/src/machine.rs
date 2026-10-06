@@ -272,14 +272,14 @@ impl<C: Converter> Core<C> {
             (HeldState::Undecided(waiting), true) => {
                 held.state = HeldState::Holding;
                 if let Some(waiting) = waiting {
-                    self.hold(pressed);
+                    self.hold_before_syllable(pressed);
                     self.replay(waiting);
                 }
-                self.hold(pressed);
+                self.hold_before_syllable(pressed);
                 Some(self.press(event.key, event.mods))
             }
             (HeldState::Holding, true) => {
-                self.hold(pressed);
+                self.hold_before_syllable(pressed);
                 Some(self.press(event.key, event.mods))
             }
             (HeldState::Undecided(waiting), false) => {
@@ -320,8 +320,33 @@ impl<C: Converter> Core<C> {
             && waiting.key == event.key
         {
             held.state = HeldState::Holding;
-            self.hold(pressed);
+            self.hold_before_syllable(pressed);
             self.replay(waiting);
+        }
+    }
+
+    /// What a held key is bound to do before a character, but begin as SKK
+    /// reads a capital: held across the letters of one syllable at the start of a
+    /// reading (`nyu`) it begins the reading once, and once the okurigana is
+    /// marked it marks nothing more. Romaji left after kana (`kan` then `j`)
+    /// is made kana first, and the okurigana marked.
+    fn hold_before_syllable(&mut self, pressed: Chord) {
+        let begin = self.bound(pressed, Gesture::Hold) == Some(Action::Begin);
+        if !(begin && self.romaji_goes_on()) {
+            self.hold(pressed);
+        }
+    }
+
+    /// Whether the romaji typed so far is a syllable a letter carries on
+    /// without the held key acting: the first of a reading, or one of the
+    /// okurigana.
+    fn romaji_goes_on(&self) -> bool {
+        match &self.state {
+            State::Reading(word) => {
+                !word.pending.is_empty()
+                    && (word.stem.as_str().is_empty() || word.okurigana.is_some())
+            }
+            State::Idle { .. } | State::Candidates(_) => false,
         }
     }
 

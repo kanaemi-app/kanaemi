@@ -115,6 +115,91 @@ fn a_letter_typed_after_space_has_been_held_long_begins_a_reading_at_once() {
 }
 
 #[test]
+fn a_syllable_typed_while_space_is_held_begins_the_reading_once() {
+    let mut t = kana();
+    t.down(Key::Space);
+    t.ch('n');
+    // Its romaji is not finished: Space acts before the syllable, not each letter.
+    assert_eq!(t.ch('a').preedit, "›な");
+    t.release(Key::Char('n'));
+    t.release(Key::Char('a'));
+    t.release(Key::Space);
+    t.down(Key::Space);
+    t.ch('i');
+    t.release(Key::Char('i'));
+    let out = t.release(Key::Space);
+    assert_eq!(out.preedit, "»ナイ", "converted at the okurigana");
+}
+
+#[test]
+fn a_held_key_bound_to_another_function_acts_in_a_syllable_too() {
+    let mut config = config();
+    config.bindings.reading.push(Binding {
+        from: plain(Key::Space),
+        gesture: Gesture::Hold,
+        to: Action::Abc,
+    });
+    config.bindings.reading.retain(|b| {
+        !(b.from == plain(Key::Space) && b.gesture == Gesture::Hold && b.to == Action::Begin)
+    });
+    let mut t = T::with_config(config);
+    t.kana();
+    t.typ(";k");
+    t.down(Key::Space);
+    t.now += 400;
+    assert_eq!(
+        t.ch('a').mode,
+        Mode::Abc,
+        "only begin waits for the syllable"
+    );
+}
+
+#[test]
+fn a_syllable_goes_on_alike_whichever_key_is_let_go_first() {
+    let mut t = kana();
+    t.typ(";n");
+    t.down(Key::Space);
+    t.ch('a');
+    // Let go before Space: held, as when Space stays down past it.
+    assert_eq!(t.release(Key::Char('a')).preedit, "›な");
+}
+
+#[test]
+fn a_syllable_of_three_letters_typed_while_space_is_held_begins_the_reading_once() {
+    let mut t = kana();
+    t.down(Key::Space);
+    for c in ['k', 'y', 'u'] {
+        t.ch(c);
+    }
+    for c in ['k', 'y', 'u'] {
+        t.release(Key::Char(c));
+    }
+    t.release(Key::Space);
+    let (_, out) = t.typ("uri");
+    assert_eq!(out.preedit, "›きゅうり");
+}
+
+#[test]
+fn romaji_left_after_kana_is_made_kana_when_space_held_marks_the_okurigana() {
+    let mut t = kana();
+    t.typ(";kan");
+    t.down(Key::Space);
+    t.ch('j');
+    // As SKK reads kanJI: the okurigana starts, and converts at its kana.
+    let out = t.ch('i');
+    assert!(out.preedit.starts_with('»'), "{}", out.preedit);
+}
+
+#[test]
+fn a_syllable_typed_while_space_is_held_after_the_okurigana_starts_goes_on() {
+    let mut t = kana();
+    t.typ(";ka");
+    t.down(Key::Space);
+    t.ch('k');
+    assert_eq!(t.ch('u').preedit, "»書く");
+}
+
+#[test]
 fn a_letter_typed_while_space_is_held_in_a_reading_marks_the_okurigana() {
     let mut t = kana();
     t.typ(";ka");
