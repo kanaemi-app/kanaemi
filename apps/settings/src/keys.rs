@@ -289,6 +289,15 @@ fn targets(mode: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Whether the IME said it lacks the Input Monitoring permission, the last
+/// time a field had the focus. Read as the page is shown.
+fn input_monitoring_missing() -> bool {
+    #[cfg(target_os = "macos")]
+    return kanaemi_config::input_monitoring_missing_file().is_some_and(|file| file.exists());
+    #[cfg(not(target_os = "macos"))]
+    return false;
+}
+
 #[component]
 pub fn Keys() -> Element {
     let ctx = use_context::<Ctx>();
@@ -303,7 +312,7 @@ pub fn Keys() -> Element {
     let current = config.bindings.clone();
     let mut filter = use_signal(String::new);
     let mut advanced = use_signal(|| false);
-    let monitoring = (cfg!(target_os = "macos") && current.hold_a_key()).then(|| {
+    let monitoring = (current.hold_a_key() && input_monitoring_missing()).then(|| {
         rsx! {
             div { class: "problems",
                 p {

@@ -383,6 +383,7 @@ impl KanaemiController {
 
     fn make_active(&self) {
         ACTIVE.set(Some(self.retain()));
+        input_monitoring::note();
         follow_hold();
     }
 

@@ -62,6 +62,17 @@ pub fn log_file() -> Option<PathBuf> {
     return None;
 }
 
+/// A file the IME keeps while it lacks the Input Monitoring permission,
+/// which a key bound to be held needs: the settings app, a program of its
+/// own, cannot ask macOS about the IME's permission.
+#[cfg(target_os = "macos")]
+pub fn input_monitoring_missing_file() -> Option<PathBuf> {
+    Some(
+        PathBuf::from(std::env::var_os("HOME")?)
+            .join("Library/Caches/kanaemi/input-monitoring-missing"),
+    )
+}
+
 /// The XDG base directory `variable` names on this system.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn xdg_dir(variable: &str, fallback: &str) -> Option<PathBuf> {
