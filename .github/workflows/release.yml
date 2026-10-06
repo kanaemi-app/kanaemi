@@ -16,6 +16,9 @@ jobs:
     uses: ./.github/workflows/package.yml
     with:
       sign: true
+    # A called workflow reads the secrets of the environment "release" only
+    # when they are inherited; they cannot be passed by name.
+    secrets: inherit
 
   upload:
     needs: package
