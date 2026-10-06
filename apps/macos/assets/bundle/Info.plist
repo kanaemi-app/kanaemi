@@ -18,6 +18,8 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>CFBundleIconFile</key>
+	<string>kanaemi</string>
 	<key>LSBackgroundOnly</key>
 	<true/>
 	<key>NSPrincipalClass</key>

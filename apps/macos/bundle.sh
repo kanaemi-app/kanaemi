@@ -38,13 +38,23 @@ settings="$app/Contents/Resources/KanaemiSettings.app"
 mkdir -p "$settings/Contents/MacOS" "$settings/Contents/Resources"
 plist "$bundle/SettingsInfo.plist" "$settings/Contents/Info.plist"
 cp "$release/kanaemi-settings" "$settings/Contents/MacOS/kanaemi-settings"
+# The app icon Finder, the Dock and the privacy settings show, for both apps.
+# At 32 pixels and below the logo drawn for small sizes, which stays legible.
+icon() {
+  local pixels="$1" out="$2" art="$bundle/app-icon.svg"
+  if [ "$pixels" -le 32 ]; then
+    art="$bundle/app-icon-small.svg"
+  fi
+  rsvg-convert -w "$pixels" -h "$pixels" -o "$out" "$art"
+}
 iconset="$(mktemp -d)/kanaemi.iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-  rsvg-convert -w "$size" -h "$size" -o "$iconset/icon_${size}x${size}.png" "$logo/kanaemi-icon.svg"
-  rsvg-convert -w "$((size * 2))" -h "$((size * 2))" -o "$iconset/icon_${size}x${size}@2x.png" "$logo/kanaemi-icon.svg"
+  icon "$size" "$iconset/icon_${size}x${size}.png"
+  icon "$((size * 2))" "$iconset/icon_${size}x${size}@2x.png"
 done
-iconutil -c icns -o "$settings/Contents/Resources/kanaemi.icns" "$iconset"
+iconutil -c icns -o "$app/Contents/Resources/kanaemi.icns" "$iconset"
+cp "$app/Contents/Resources/kanaemi.icns" "$settings/Contents/Resources/kanaemi.icns"
 rm -rf "$(dirname "$iconset")"
 
 codesign --force --sign - "$settings"
