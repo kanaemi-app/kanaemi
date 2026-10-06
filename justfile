@@ -28,6 +28,10 @@ test:
 install-macos:
     apps/macos/install.sh
 
+# Create the self-signed identity install-macos signs with, so rebuilds keep macOS permissions.
+macos-dev-identity:
+    apps/macos/dev-identity.sh
+
 # Build the IBus input method and install it under /usr/local/lib/kanaemi; asks for sudo.
 install-ibus:
     apps/ibus/install.sh

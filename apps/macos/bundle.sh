@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Assemble Kanaemi.app into target from the built input method and settings
-# app, with the ad-hoc signature Apple silicon needs to run it.
+# app, with the signature Apple silicon needs to run it: ad-hoc, or by the
+# identity KANAEMI_SIGN_IDENTITY names.
 #
 #   bundle.sh [folder of the built binaries, target/release by default]
 set -euo pipefail
@@ -57,5 +58,6 @@ iconutil -c icns -o "$app/Contents/Resources/kanaemi.icns" "$iconset"
 cp "$app/Contents/Resources/kanaemi.icns" "$settings/Contents/Resources/kanaemi.icns"
 rm -rf "$(dirname "$iconset")"
 
-codesign --force --sign - "$settings"
-codesign --force --sign - "$app"
+identity="${KANAEMI_SIGN_IDENTITY:--}"
+codesign --force --sign "$identity" "$settings"
+codesign --force --sign "$identity" "$app"
