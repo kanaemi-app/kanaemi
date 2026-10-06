@@ -10,8 +10,9 @@ pub struct Candidate {
 /// Readings are hiragana. A reading with okurigana includes it: 書く is `かく` with
 /// okurigana `く`.
 pub trait Converter {
-    /// Candidates for `reading`, best first. `okurigana` is the okurigana's
-    /// first chunk when the user marked where it starts.
+    /// Candidates for `reading`, best first. `okurigana` is given when the
+    /// user marked where it starts: its first chunk, then any kana finished
+    /// from romaji that chunk left over (`った` of `;ka;tta`).
     fn convert(&self, reading: &str, okurigana: Option<&str>) -> Vec<Candidate>;
 
     /// The text a word registered as `surface` for `reading` enters the

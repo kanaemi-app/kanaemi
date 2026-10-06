@@ -247,15 +247,66 @@ fn the_rest_of_the_okurigana_carries_on_however_the_candidate_is_committed() {
 }
 
 #[test]
-fn finishing_the_rest_of_the_okurigana_keeps_the_candidates() {
+fn finishing_the_rest_of_the_okurigana_converts_again_with_it() {
     let mut t = T::new();
     t.kana();
     t.typ(";mo;tt");
     let out = t.ch('a');
     assert_eq!((out.commit, out.preedit.as_str()), (None, "»持った"));
-    assert!(out.candidates.is_some());
-    assert_eq!(t.key(Key::Space).preedit, "»モッた");
-    assert_eq!(t.key(Key::Enter).commit.as_deref(), Some("モッた"));
+    assert_eq!(
+        out.candidates
+            .map(|c| c.items[0].surface.clone())
+            .as_deref(),
+        Some("持った")
+    );
+    assert_eq!(
+        t.converter()
+            .okurigana_seen
+            .last()
+            .cloned()
+            .flatten()
+            .as_deref(),
+        Some("った")
+    );
+    assert_eq!(t.key(Key::Space).preedit, "»モッタ");
+    assert_eq!(t.key(Key::Enter).commit.as_deref(), Some("モッタ"));
+    assert_eq!(
+        t.converter().commits.last(),
+        Some(&("もった".to_owned(), "モッタ".to_owned()))
+    );
+}
+
+#[test]
+fn converting_again_keeps_the_candidate_chosen() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";i;tt");
+    assert_eq!(t.key(Key::Space).preedit, "»言っt");
+    let out = t.ch('a');
+    assert_eq!(out.preedit, "»言った");
+    let candidates = out.candidates.expect("candidates");
+    assert_eq!(candidates.items[candidates.selected].surface, "言った");
+}
+
+#[test]
+fn converting_again_keeps_a_form_chosen_that_the_dictionary_also_gave() {
+    let mut t = selecting_forms();
+    t.kana();
+    t.typ(";u;tt");
+    assert_eq!(t.key(Key::F(6)).preedit, "»うっt");
+    assert_eq!(t.ch('a').preedit, "»うった");
+}
+
+#[test]
+fn converting_again_keeps_a_form_of_the_reading_chosen() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";mo;tt");
+    assert_eq!(t.key(Key::Space).preedit, "»モッt");
+    let out = t.ch('a');
+    assert_eq!(out.preedit, "»モッタ");
+    let candidates = out.candidates.expect("candidates");
+    assert_eq!(candidates.items[candidates.selected].surface, "モッタ");
 }
 
 #[test]
@@ -296,15 +347,52 @@ fn backspace_erases_what_was_typed_after_the_okurigana_first() {
     t.kana();
     t.typ(";mo;tta");
     assert_eq!(t.key(Key::Backspace).preedit, "»持っt");
+    assert_eq!(
+        t.converter()
+            .okurigana_seen
+            .last()
+            .cloned()
+            .flatten()
+            .as_deref(),
+        Some("っ")
+    );
     assert_eq!(t.key(Key::Backspace).preedit, "›も*っ");
 }
 
 #[test]
-fn going_back_to_the_reading_drops_what_was_typed_after_the_okurigana() {
+fn backspace_erases_romaji_typed_after_the_okurigana_before_its_kana() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";i;tts");
+    assert_eq!(t.key(Key::Backspace).preedit, "»行っt");
+}
+
+#[test]
+fn going_back_to_the_reading_keeps_the_okurigana_finished_after_it() {
     let mut t = T::new();
     t.kana();
     t.typ(";mo;tta");
-    assert_eq!(t.key(Key::Esc).preedit, "›も*っt");
+    assert_eq!(t.key(Key::Esc).preedit, "›も*った");
+    assert_eq!(t.key(Key::Backspace).preedit, "›も*っt");
+}
+
+#[test]
+fn a_small_tsu_the_okurigana_grew_by_goes_back_to_the_romaji_before_it() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";mo;ttta");
+    assert_eq!(t.key(Key::Esc).preedit, "›も*っった");
+    assert_eq!(t.key(Key::Backspace).preedit, "›も*っっt");
+    assert_eq!(t.key(Key::Backspace).preedit, "›も*っっ");
+    assert_eq!(t.key(Key::Backspace).preedit, "›も*っt");
+}
+
+#[test]
+fn going_back_to_the_reading_drops_romaji_typed_after_the_okurigana() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";i;tts");
+    assert_eq!(t.key(Key::Esc).preedit, "›い*っt");
 }
 
 #[test]

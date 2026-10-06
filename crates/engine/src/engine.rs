@@ -178,8 +178,14 @@ impl Engine {
             Effect::Registered {
                 reading,
                 okurigana,
+                okurigana_head,
                 surface,
-            } => self.register(&nfc(reading), okurigana.as_deref().map(nfc), &nfc(surface)),
+            } => self.register(
+                &nfc(reading),
+                okurigana.as_deref().map(nfc),
+                okurigana_head.as_deref().map(nfc),
+                &nfc(surface),
+            ),
             Effect::Forgotten {
                 reading,
                 okurigana,
@@ -208,7 +214,13 @@ impl Engine {
             .unwrap_or((reading, surface))
     }
 
-    fn register(&mut self, reading: &str, okurigana: Option<String>, surface: &str) {
+    fn register(
+        &mut self,
+        reading: &str,
+        okurigana: Option<String>,
+        head: Option<String>,
+        surface: &str,
+    ) {
         if let Some((numbers, surface)) =
             numeric_registration(reading, okurigana.as_deref(), surface)
         {
@@ -226,10 +238,22 @@ impl Engine {
             let mut chars = kana.chars();
             matches!((chars.next(), chars.next()), (Some(c), None) if okuri_row(c).is_some())
         };
-        let (reading, okurigana) = match okurigana {
-            Some(kana) if markable(&kana) => (reading.to_owned(), Some(kana)),
-            Some(kana) => (format!("{reading}{kana}"), None),
-            None => (reading.to_owned(), None),
+        // An okurigana grown past a markable first chunk is filed under that
+        // chunk (か*っ 勝っ for 勝った), so its other forms find the word too.
+        let grown = |kana: &str, head: &str| {
+            let rest = kana.strip_prefix(head)?;
+            surface.strip_suffix(rest)
+        };
+        let (reading, okurigana, surface) = match (okurigana, head) {
+            (Some(kana), _) if markable(&kana) => (reading.to_owned(), Some(kana), surface),
+            (Some(kana), Some(head))
+                if markable(&head)
+                    && let Some(surface) = grown(&kana, &head) =>
+            {
+                (reading.to_owned(), Some(head), surface)
+            }
+            (Some(kana), _) => (format!("{reading}{kana}"), None, surface),
+            (None, _) => (reading.to_owned(), None, surface),
         };
         let line = ItemLine {
             reading: &reading,

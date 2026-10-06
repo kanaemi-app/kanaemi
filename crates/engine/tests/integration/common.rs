@@ -36,6 +36,7 @@ impl Learn for Engine {
         };
         self.learn(&Effect::Registered {
             reading: reading.to_owned(),
+            okurigana_head: okurigana.clone(),
             okurigana,
             surface: surface.to_owned(),
         });

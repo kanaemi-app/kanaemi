@@ -26,9 +26,13 @@ pub enum Effect {
         surface: String,
     },
     /// A word was registered. `reading` stops before any okurigana.
+    /// `okurigana_head` is the okurigana's first chunk, typed where it was
+    /// marked; the okurigana goes on past it only by romaji that chunk left
+    /// over (`っ` of `った`).
     Registered {
         reading: String,
         okurigana: Option<String>,
+        okurigana_head: Option<String>,
         surface: String,
     },
     /// `surface`, converted from `reading` with `okurigana` as for

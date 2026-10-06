@@ -35,8 +35,8 @@ struct Selection {
     index: usize,
     /// Romaji typed past the okurigana's first kana, carried to the next word.
     rest: String,
-    /// Keys typed while choosing to finish `rest` (the `a` of `;ki;tta`),
-    /// carried with it.
+    /// Keys typed while choosing that go on with `rest` but finish no kana
+    /// yet (the `s` of `;i;tts`), carried with it.
     typed: String,
 }
 
@@ -604,6 +604,34 @@ impl<C: Converter> Core<C> {
         self.state = State::Candidates(selection);
     }
 
+    /// Converts `grown`, the word of `selection` with kana added to its
+    /// okurigana, keeping the candidate chosen with those kana after it. A
+    /// form of the reading chosen, without such a candidate, stays chosen as
+    /// that form of `grown`: the dictionary may give a form too (うっ).
+    fn convert_again(&mut self, selection: Selection, grown: Word) {
+        let chosen = &selection.candidates[selection.index].surface;
+        let form = Form::ALL.into_iter().find(|form| {
+            word_form(&selection.word, *form, &self.config.romaji).as_ref() == Some(chosen)
+        });
+        let added = grown.kana();
+        let added = added
+            .strip_prefix(&selection.word.kana())
+            .unwrap_or_default();
+        let kept = format!("{chosen}{added}");
+        self.convert(grown);
+        let State::Candidates(selection) = &mut self.state else {
+            return;
+        };
+        match selection.candidates.iter().position(|c| c.surface == kept) {
+            Some(index) => selection.index = index,
+            None => {
+                if let Some(form) = form {
+                    self.choose_form(form);
+                }
+            }
+        }
+    }
+
     /// Adds each form of the reading that is not a candidate yet.
     fn offer_forms(&self, selection: &mut Selection) {
         for form in &Form::ALL[1..] {
@@ -650,14 +678,24 @@ impl<C: Converter> Core<C> {
         };
     }
 
-    /// An unbound key while choosing: a character finishing the romaji left
-    /// after the okurigana is typed after the candidate, and any other
-    /// commits the selected candidate and is typed after it.
+    /// An unbound key while choosing: a character going on with the romaji
+    /// left after the okurigana waits after the candidate, and once it
+    /// finishes kana, the okurigana takes the kana and is converted again.
+    /// Any other character commits the selected candidate and is typed after
+    /// it.
     fn candidates(&mut self, mut selection: Selection, key: Key) -> bool {
         match key {
             Key::Char(c) if self.goes_on(&selection, c) => {
-                selection.typed.push(c);
-                self.state = State::Candidates(selection);
+                let mut grown = selection.word.clone();
+                for c in selection.after().chars().chain([c]) {
+                    grown.feed(c, &self.config.romaji);
+                }
+                if grown.okurigana == selection.word.okurigana {
+                    selection.typed.push(c);
+                    self.state = State::Candidates(selection);
+                } else {
+                    self.convert_again(selection, grown);
+                }
                 true
             }
             Key::Char(_) => {
@@ -905,6 +943,11 @@ impl<C: Converter> Core<C> {
             Action::Backspace if selection.typed.pop().is_some() => {
                 self.state = State::Candidates(selection);
             }
+            Action::Backspace if selection.word.okurigana_grown() => {
+                let mut word = selection.into_reading();
+                word.backspace();
+                self.convert(word);
+            }
             Action::Backspace => {
                 let mut word = selection.into_reading();
                 word.backspace();
@@ -1045,6 +1088,7 @@ impl<C: Converter> Core<C> {
         self.effects.push(Effect::Registered {
             reading: word.stem.as_str().to_owned(),
             okurigana: word.okurigana().map(str::to_owned),
+            okurigana_head: word.okurigana_head().map(str::to_owned),
             surface,
         });
         self.effects.push(Effect::Committed {

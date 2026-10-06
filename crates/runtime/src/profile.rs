@@ -499,6 +499,7 @@ mod tests {
         profile.learn(&[Effect::Registered {
             reading: reading.to_owned(),
             okurigana: None,
+            okurigana_head: None,
             surface: surface.to_owned(),
         }]);
     }

@@ -29,6 +29,9 @@ struct Keys {
     group: u32,
     kana: usize,
     keys: String,
+    /// The romaji waiting before the key that made the run, to wait again
+    /// when the run is taken back off a grown okurigana.
+    waiting: String,
 }
 
 impl Word {
@@ -70,6 +73,29 @@ impl Word {
         self.okurigana.as_deref().filter(|o| !o.is_empty())
     }
 
+    /// The okurigana's first chunk, typed where it was marked. The okurigana
+    /// grows past it only by romaji that chunk left over.
+    pub(crate) fn okurigana_head(&self) -> Option<&str> {
+        let okurigana = self.okurigana()?;
+        // What is left of the chunk, as Backspace may have cut it (きゃ to き).
+        let group = self.okurigana_keys.first()?.group;
+        let count = self
+            .okurigana_keys
+            .iter()
+            .take_while(|k| k.group == group)
+            .count();
+        let end = okurigana
+            .char_indices()
+            .nth(count)
+            .map_or(okurigana.len(), |(i, _)| i);
+        Some(&okurigana[..end])
+    }
+
+    /// Whether the okurigana grew past its first chunk.
+    pub(crate) fn okurigana_grown(&self) -> bool {
+        self.okurigana() != self.okurigana_head()
+    }
+
     /// Input the table knows is fed through it; any other character joins the
     /// kana as it is.
     pub(crate) fn feed(&mut self, c: char, table: &RomajiTable) {
@@ -80,28 +106,35 @@ impl Word {
             if opening && self.okurigana().is_some() {
                 self.pending.push(c);
             } else {
-                self.push(c.encode_utf8(&mut [0; 4]), c.to_string());
+                self.push(c.encode_utf8(&mut [0; 4]), c.to_string(), String::new());
             }
             return;
         }
+        let waiting = self.pending.clone();
         let mut typed = self.pending.clone();
         typed.push(c);
         let made = table.feed_parts(&mut self.pending, c);
         // What is still pending is the end of what was typed.
         let used = typed.len() - self.pending.len();
-        self.place(made, &typed, used);
+        self.place(made, &typed, used, waiting);
     }
 
     pub(crate) fn flush(&mut self, table: &RomajiTable) {
         let typed = mem::take(&mut self.pending);
         let made = table.flush_parts(&mut typed.clone());
-        self.place(made, &typed, typed.len());
+        self.place(made, &typed, typed.len(), typed.clone());
     }
 
     /// Places kana made from the first `used` bytes of `typed`: an okurigana
     /// starts with one kana. What was made after that kana is given back as
     /// its keys, to be typed again after the word.
-    fn place(&mut self, mut made: Vec<(usize, String)>, typed: &str, mut used: usize) {
+    fn place(
+        &mut self,
+        mut made: Vec<(usize, String)>,
+        typed: &str,
+        mut used: usize,
+        waiting: String,
+    ) {
         if self.okurigana.as_deref() == Some("") && !made.is_empty() {
             made.truncate(1);
             // っ is made from a letter still pending, too.
@@ -110,10 +143,10 @@ impl Word {
             used = end;
         }
         let kana: String = made.into_iter().map(|(_, kana)| kana).collect();
-        self.push(&kana, typed[..used].to_owned());
+        self.push(&kana, typed[..used].to_owned(), waiting);
     }
 
-    fn push(&mut self, kana: &str, keys: String) {
+    fn push(&mut self, kana: &str, keys: String, waiting: String) {
         let count = kana.chars().count();
         if count == 0 {
             self.loose.push_str(&keys);
@@ -125,6 +158,7 @@ impl Word {
             group: self.groups,
             kana: count,
             keys: keys.clone(),
+            waiting: waiting.clone(),
         });
         match &mut self.okurigana {
             Some(okurigana) => {
@@ -230,10 +264,15 @@ impl Word {
     }
 
     /// Removes pending romaji first, then okurigana, then the okurigana mark, then the stem.
+    /// Kana the okurigana grew by go back to the romaji they were finished from.
     pub(crate) fn backspace(&mut self) {
         // Unseen, the loose keys are not what Backspace is for.
         self.loose.clear();
         if self.pending.pop().is_some() {
+            return;
+        }
+        if self.okurigana_grown() {
+            self.unfinish_okurigana();
             return;
         }
         match &mut self.okurigana {
@@ -251,6 +290,30 @@ impl Word {
                 }
             }
         }
+    }
+
+    /// Takes the last run of kana off the okurigana, leaving the romaji that
+    /// waited before it pending again (た back to `t`, the second っ of
+    /// `ttt` back to `t`).
+    fn unfinish_okurigana(&mut self) {
+        let (Some(okurigana), Some(last)) = (&mut self.okurigana, self.okurigana_keys.last())
+        else {
+            return;
+        };
+        let group = last.group;
+        let waiting = last.waiting.clone();
+        let run = self
+            .okurigana_keys
+            .iter()
+            .rev()
+            .take_while(|k| k.group == group)
+            .count();
+        self.okurigana_keys
+            .truncate(self.okurigana_keys.len() - run);
+        for _ in 0..run {
+            okurigana.pop();
+        }
+        self.pending = waiting;
     }
 }
 

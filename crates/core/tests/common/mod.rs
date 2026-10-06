@@ -73,6 +73,8 @@ pub struct Learned {
     pub texts: Vec<String>,
     /// Readings mark okurigana with `*`, as a text dictionary writes them.
     pub registered: Vec<(String, String)>,
+    /// The okurigana's first chunk of each word in `registered`.
+    pub registered_heads: Vec<Option<String>>,
     pub deleted: Vec<(String, String)>,
     pub resets: usize,
 }
@@ -86,6 +88,7 @@ impl Learned {
             Effect::Registered {
                 reading,
                 okurigana,
+                okurigana_head,
                 surface,
             } => {
                 let reading = match okurigana {
@@ -93,6 +96,7 @@ impl Learned {
                     None => reading,
                 };
                 self.registered.push((reading, surface));
+                self.registered_heads.push(okurigana_head);
             }
             Effect::Forgotten {
                 reading, surface, ..
@@ -155,6 +159,11 @@ impl T {
         fake.table.insert("たべ", vec!["食べ"]);
         fake.table.insert("かな", vec!["カナ", "仮名"]);
         fake.table.insert("もっ", vec!["持っ"]);
+        fake.table.insert("もった", vec!["持った"]);
+        fake.table.insert("いっ", vec!["行っ", "言っ"]);
+        fake.table.insert("いった", vec!["行った", "言った"]);
+        fake.table.insert("うっ", vec!["売っ", "うっ"]);
+        fake.table.insert("うった", vec!["売った"]);
         // As numeric items fill their placeholders with the typed number.
         fake.table.insert("１こ", vec!["1個", "１個", "一個"]);
         fake.table.insert(

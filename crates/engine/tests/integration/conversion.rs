@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::io;
 use std::rc::Rc;
 
-use kanaemi_core::Converter;
+use kanaemi_core::{Converter, Effect};
 use kanaemi_engine::{Engine, LineSink, Slot, TextDictionary};
 
 use crate::common::{Learn, Lines, dictionary};
@@ -124,6 +124,19 @@ fn okurigana_picks_entries_from_the_same_row() {
 }
 
 #[test]
+fn okurigana_grown_past_its_first_kana_finds_words_by_that_kana() {
+    let (e, _) = engine(
+        vec![
+            Slot::UserCustom,
+            text("か*つ\t勝つ\nか\t書\t五段-カ行\nき\t切\t五段-ラ行"),
+        ],
+        "",
+    );
+    assert_eq!(surfaces(&e, "かった", Some("った")), ["勝った"]);
+    assert_eq!(surfaces(&e, "きった", Some("った")), ["切った"]);
+}
+
+#[test]
 fn okurigana_keeps_only_surfaces_ending_in_it() {
     let (e, _) = engine(vec![Slot::UserCustom, text("かく\t角\nかく\t書く")], "");
     assert_eq!(surfaces(&e, "かく", Some("く")), ["書く"]);
@@ -200,6 +213,26 @@ fn registering_writes_a_line_and_offers_the_word() {
     assert_eq!(*lines.0.borrow(), ["ぬ*ぬ\txぬ", "きしゃ\t記者"]);
     assert_eq!(surfaces(&e, "ぬぬ", Some("ぬ")), ["xぬ"]);
     assert_eq!(surfaces(&e, "きしゃ", None), ["記者"]);
+}
+
+#[test]
+fn an_okurigana_grown_past_its_first_chunk_is_written_under_that_chunk_if_it_can_be() {
+    let (mut e, lines) = engine(vec![Slot::UserCustom], "");
+    let grown = |head: &str, okurigana: &str, surface: &str| Effect::Registered {
+        reading: "か".to_owned(),
+        okurigana: Some(okurigana.to_owned()),
+        okurigana_head: Some(head.to_owned()),
+        surface: surface.to_owned(),
+    };
+    e.learn(&grown("っ", "った", "勝った"));
+    e.learn(&grown("ー", "ーった", "xーった"));
+    e.learn(&grown("きゃ", "きゃった", "xきゃった"));
+    assert_eq!(
+        *lines.0.borrow(),
+        ["か*っ\t勝っ", "かーった\txーった", "かきゃった\txきゃった"]
+    );
+    assert_eq!(surfaces(&e, "かって", Some("って")), ["勝って"]);
+    assert_eq!(surfaces(&e, "かーった", Some("ーった")), ["xーった"]);
 }
 
 #[test]
