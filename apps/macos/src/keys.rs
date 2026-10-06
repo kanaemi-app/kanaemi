@@ -75,6 +75,53 @@ pub struct Keys {
 const REPEAT_MS: u64 = 15;
 
 impl Keys {
+    /// Whether a key is down whose release has not been seen.
+    pub fn watching(&self) -> bool {
+        !self.typed.is_empty()
+    }
+
+    /// Releases the keys `down` says are no longer down, as of `time_ms`.
+    /// Input Method Kit never passes a key-up on, so a key let go is found
+    /// by asking the keyboard; the modifiers it was let go with are unknown
+    /// and left out, as the core reads only the key of a release.
+    pub fn lifted(&mut self, down: impl Fn(u16) -> bool, time_ms: u64) -> Vec<KeyEvent> {
+        let mut lifted = Vec::new();
+        self.typed.retain(|(code, key)| {
+            let still = down(*code);
+            if !still {
+                lifted.push(KeyEvent {
+                    key: *key,
+                    mods: Modifiers::default(),
+                    kind: KeyKind::Release,
+                    time_ms,
+                });
+            }
+            still
+        });
+        lifted
+    }
+
+    /// The release of a key pressed anew while its last press was never seen
+    /// let go: let go and pressed again between two looks at the keyboard,
+    /// or across a focus change. Without it the new press reads as a repeat
+    /// to a key held.
+    pub fn pressed_again(&mut self, raw: RawEvent) -> Option<KeyEvent> {
+        if raw.kind != RawKind::KeyDown || raw.repeat || raw.user_data == POSTED_MARK {
+            return None;
+        }
+        let index = self
+            .typed
+            .iter()
+            .position(|(code, _)| *code == raw.key_code)?;
+        Some(KeyEvent {
+            // Kept in the order pressed, which `lifted` lets go in.
+            key: self.typed.remove(index).1,
+            mods: Modifiers::default(),
+            kind: KeyKind::Release,
+            time_ms: raw.time_ms,
+        })
+    }
+
     /// `None` means the event is not a key press or release the core needs.
     pub fn translate(&mut self, raw: RawEvent) -> Option<KeyEvent> {
         // A key the IME posted is already what the core asked for; remapped
@@ -365,6 +412,48 @@ mod tests {
         let mut keys = Keys::default();
         keys.translate(down(0, SHIFT, "A"));
         assert_eq!(keys.translate(down(0, 0, "a")).unwrap().key, Key::Char('a'));
+    }
+
+    #[test]
+    fn a_key_found_up_is_let_go_once() {
+        let mut keys = Keys::default();
+        keys.translate(down(0, SHIFT, "A"));
+        keys.translate(down(49, 0, " "));
+        assert!(keys.watching());
+        assert_eq!(keys.lifted(|_| true, 20), []);
+        let lifted = keys.lifted(|code| code == 49, 30);
+        assert_eq!(
+            lifted,
+            [KeyEvent {
+                key: Key::Char('A'),
+                mods: Modifiers::default(),
+                kind: KeyKind::Release,
+                time_ms: 30,
+            }]
+        );
+        assert!(keys.watching(), "space is still down");
+        let lifted = keys.lifted(|_| false, 40);
+        assert_eq!(
+            lifted.iter().map(|e| (e.key, e.kind)).collect::<Vec<_>>(),
+            [(Key::Space, KeyKind::Release)]
+        );
+        assert!(!keys.watching());
+        assert_eq!(keys.lifted(|_| false, 50), []);
+    }
+
+    #[test]
+    fn a_key_pressed_again_before_it_was_found_up_is_let_go_first() {
+        let mut keys = Keys::default();
+        keys.translate(down(49, 0, " "));
+        let e = keys.pressed_again(down(49, 0, " ")).unwrap();
+        assert_eq!((e.key, e.kind), (Key::Space, KeyKind::Release));
+        keys.translate(down(49, 0, " "));
+        let repeat = RawEvent {
+            repeat: true,
+            ..down(49, 0, " ")
+        };
+        assert_eq!(keys.pressed_again(repeat), None, "still held");
+        assert_eq!(keys.pressed_again(down(0, 0, "a")), None, "never down");
     }
 
     #[test]

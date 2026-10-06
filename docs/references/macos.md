@@ -23,6 +23,9 @@ macOS の入力方式を作るときに知っておく、InputMethodKit とシ�
 - Ctrl を押していると `characters` は制御文字に、Option を押していると別の文字になる。どちらのときも、押したキーの文字は `charactersIgnoringModifiers` で取る。
 - パスワードの入力欄では、OS が入力方式を切る。
 - 合成したキーを `CGEventPost` で送るには、アクセシビリティの許可が要る。
+- `recognizedEvents` に `keyUp` を入れても、Input Method Kit は文字のキーを離したイベントを渡さない。離したことは `CGEventSourceKeyState`（`kCGEventSourceStateHIDSystemState`）を見て知る。
+- 入力監視の許可がないプロセスには、`CGEventSourceKeyState` は文字を打つキー（Space を含む）をいつも離しているものとして返す。Backspace や修飾キーは許可がなくても読める。許可は `CGPreflightListenEventAccess` で確かめる。アドホック署名の入力方式からは、`CGRequestListenEventAccess`・`IOHIDRequestAccess`・聞くだけのイベントタップのどれでも、ふつうのアプリとして起動しても `LSUIElement` にしても、確かめる画面は出ず、入力監視の一覧にも載らない。利用者が一覧に `.app` を足してオンにする。アドホック署名の `.app` は、組み直すと許可が外れる。
+- `CGEventSourceKeyState` に `kCGEventSourceStatePrivate` を渡すと戻ってこない。入力方式のメインスレッドが止まり、入力先のアプリも固まる。
 
 ## 候補パネル（IMKCandidates）
 

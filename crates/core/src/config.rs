@@ -176,6 +176,21 @@ impl Bindings {
             Scene::Abc => &self.abc,
         }
     }
+
+    /// Whether any scene binds a key to be held, which needs the host to
+    /// tell when keys are let go.
+    pub fn hold_a_key(&self) -> bool {
+        [
+            &self.reading,
+            &self.candidates,
+            &self.registration,
+            &self.kana,
+            &self.abc,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|binding| binding.gesture == Gesture::Hold)
+    }
 }
 
 /// The keys an IME is expected to have, with the Emacs keys SKK users

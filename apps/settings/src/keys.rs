@@ -303,7 +303,22 @@ pub fn Keys() -> Element {
     let current = config.bindings.clone();
     let mut filter = use_signal(String::new);
     let mut advanced = use_signal(|| false);
+    let monitoring = (cfg!(target_os = "macos") && current.hold_a_key()).then(|| {
+        rsx! {
+            div { class: "problems",
+                p {
+                    "押さえたままに割り当てたキーを使うには、macOS の「入力監視」で Kanaemi を許可します。一覧にないときは、一緒に開く Finder の Kanaemi.app を一覧にドラッグします。かなえみを新しくしたあとは、許可し直す必要があることがあります。"
+                }
+                div { class: "actions",
+                    button { onclick: move |_| crate::open_input_monitoring(),
+                        "入力監視の設定を開く"
+                    }
+                }
+            }
+        }
+    });
     let switcher = rsx! {
+        {monitoring}
         div { class: "view-switch", role: "tablist",
             button {
                 class: if !advanced() { "selected" },

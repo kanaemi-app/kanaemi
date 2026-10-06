@@ -3,10 +3,12 @@
 //! beyond what talking to the client needs.
 
 use std::cell::{Cell, RefCell};
+use std::ffi::OsStr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::time::Duration;
 
-use dispatch2::DispatchQueue;
+use dispatch2::{DispatchQueue, DispatchTime};
 use kanaemi_core::{Chord, Event, Output};
 use kanaemi_runtime::{Field, Profile};
 use objc2::rc::{Allocated, Retained};
@@ -19,10 +21,12 @@ use objc2_app_kit::{
     NSApplication, NSEvent, NSEventMask, NSEventType, NSMenu, NSMenuItem,
     NSUnderlineStyleAttributeName,
 };
-use objc2_core_graphics::{CGEvent, CGEventField, CGEventFlags, CGEventTapLocation};
+use objc2_core_graphics::{
+    CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
+};
 use objc2_foundation::{
-    NSArray, NSAttributedString, NSBundle, NSDictionary, NSNotFound, NSNumber, NSRange, NSString,
-    NSUInteger,
+    NSArray, NSAttributedString, NSBundle, NSDictionary, NSNotFound, NSNumber, NSProcessInfo,
+    NSRange, NSString, NSUInteger,
 };
 use objc2_input_method_kit::{
     IMKCandidates, IMKCandidatesSendServerKeyEventFirst, IMKInputController, IMKServer,
@@ -30,7 +34,7 @@ use objc2_input_method_kit::{
 };
 
 use crate::keys::{Keys, POSTED_MARK, RawEvent, RawKind, key_to_send, utf16_offset};
-use crate::{candidates, indicator, secure_input};
+use crate::{candidates, indicator, input_monitoring, secure_input};
 
 const CONNECTION_NAME: &str = "io.github.kanaemi-app.inputmethod.Kanaemi_Connection";
 
@@ -45,6 +49,8 @@ thread_local! {
     static ACTIVE: RefCell<Option<Retained<KanaemiController>>> = const { RefCell::new(None) };
     /// The row the candidate panel highlights.
     static PANEL_ROW: Cell<usize> = const { Cell::new(0) };
+    /// Whether the keys down are to be looked at again soon.
+    static WATCHING: Cell<bool> = const { Cell::new(false) };
 }
 
 fn with_profile<T>(f: impl FnOnce(&mut Profile) -> T) -> T {
@@ -53,6 +59,53 @@ fn with_profile<T>(f: impl FnOnce(&mut Profile) -> T) -> T {
             .as_mut()
             .expect("the profile is opened before any controller"))
     })
+}
+
+/// How often the keys down are looked at for one let go: well within the
+/// time that tells a key held from one pressed alone.
+const LIFT_POLL: Duration = Duration::from_millis(10);
+
+/// Whether the keyboard has the key down now. Input Method Kit passes on
+/// presses but not releases, which a key bound to be held needs.
+fn key_down(code: u16) -> bool {
+    CGEventSource::key_state(CGEventSourceStateID::HIDSystemState, code)
+}
+
+/// Now, on the clock of `NSEvent`'s timestamps.
+fn now_ms() -> u64 {
+    (NSProcessInfo::processInfo().systemUptime() * 1000.0) as u64
+}
+
+/// Whether a key is bound to be held, the only use of the keys let go.
+fn hold_bound() -> bool {
+    with_profile(|profile| profile.config().bindings.hold_a_key())
+}
+
+/// Looks at the keys down again soon, and on until each is let go.
+fn watch_keys() {
+    if WATCHING.get() || !KEYS.with_borrow(Keys::watching) || !hold_bound() {
+        return;
+    }
+    let Ok(when) = DispatchTime::try_from(LIFT_POLL) else {
+        return;
+    };
+    WATCHING.set(true);
+    let _ = DispatchQueue::main().after(when, look_at_keys);
+}
+
+fn look_at_keys() {
+    WATCHING.set(false);
+    guarded((), || match ACTIVE.with_borrow(Clone::clone) {
+        Some(controller) => {
+            let client: Option<Retained<AnyObject>> = unsafe { msg_send![&*controller, client] };
+            controller.release_lifted(client.as_deref(), now_ms());
+        }
+        // No field has the focus to tell: the keys are only forgotten.
+        None => {
+            KEYS.with_borrow_mut(|keys| keys.lifted(key_down, now_ms()));
+        }
+    });
+    watch_keys();
 }
 
 fn new_field() -> Field {
@@ -107,6 +160,28 @@ define_class!(
                 menu.addItem(&warning);
                 menu.addItem(&NSMenuItem::separatorItem(mtm));
             }
+            if with_profile(|profile| input_monitoring::missing(profile.config())) {
+                let warning = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &NSString::from_str(input_monitoring::WARNING),
+                        None,
+                        &NSString::from_str(""),
+                    )
+                };
+                warning.setEnabled(false);
+                menu.addItem(&warning);
+                let item = unsafe {
+                    NSMenuItem::initWithTitle_action_keyEquivalent(
+                        NSMenuItem::alloc(mtm),
+                        &NSString::from_str("入力監視の設定を開く…"),
+                        Some(sel!(openInputMonitoring:)),
+                        &NSString::from_str(""),
+                    )
+                };
+                menu.addItem(&item);
+                menu.addItem(&NSMenuItem::separatorItem(mtm));
+            }
             let item = unsafe {
                 NSMenuItem::initWithTitle_action_keyEquivalent(
                     NSMenuItem::alloc(mtm),
@@ -122,6 +197,11 @@ define_class!(
         #[unsafe(method(openSettings:))]
         fn open_settings(&self, _sender: Option<&AnyObject>) {
             guarded((), open_settings_app);
+        }
+
+        #[unsafe(method(openInputMonitoring:))]
+        fn open_input_monitoring(&self, _sender: Option<&AnyObject>) {
+            guarded((), open_input_monitoring);
         }
 
         #[unsafe(method(recognizedEvents:))]
@@ -210,14 +290,49 @@ impl KanaemiController {
             repeat: typed && event.isARepeat(),
         };
         tracing::debug!(?raw, "key");
-        match KEYS.with_borrow_mut(|keys| keys.translate(raw)) {
-            Some(key) => Bool::new(self.dispatch(Event::Key(key), sender)),
-            None => Bool::NO,
+        // A field focused before Kanaemi was started or replaced is never
+        // activated, yet its keys come here; the keys let go are its too.
+        if !ACTIVE.with_borrow(|active| {
+            active
+                .as_deref()
+                .is_some_and(|active| std::ptr::eq(active, self))
+        }) {
+            self.make_active();
+        }
+        // A key let go before this one goes first, as it did on the keyboard,
+        // so it was let go no later than this one was pressed: the main thread
+        // may get to this event well after it happened.
+        let hold = hold_bound();
+        if hold {
+            self.release_lifted(sender, raw.time_ms.min(now_ms()));
+        }
+        if let Some(again) = KEYS.with_borrow_mut(|keys| keys.pressed_again(raw))
+            && hold
+        {
+            self.dispatch(Event::Key(again), sender);
+        }
+        let consumed = match KEYS.with_borrow_mut(|keys| keys.translate(raw)) {
+            Some(key) => self.dispatch(Event::Key(key), sender),
+            None => false,
+        };
+        watch_keys();
+        Bool::new(consumed)
+    }
+
+    /// Feeds the core the release of each key let go since the keys were
+    /// last looked at, as of `time_ms`.
+    fn release_lifted(&self, client: Option<&AnyObject>, time_ms: u64) {
+        for event in KEYS.with_borrow_mut(|keys| keys.lifted(key_down, time_ms)) {
+            self.dispatch(Event::Key(event), client);
         }
     }
 
-    fn activate(&self, sender: Option<&AnyObject>) {
+    fn make_active(&self) {
         ACTIVE.set(Some(self.retain()));
+    }
+
+    fn activate(&self, sender: Option<&AnyObject>) {
+        self.make_active();
         secure_input::check();
         // macOS turns input methods off in a secure field, so a field the
         // IME sees is never a password field.
@@ -431,20 +546,34 @@ fn open_settings_app() {
         tracing::warn!(app = %app.display(), "settings app missing from the bundle");
         return;
     }
+    open(&[app.as_os_str()]);
+}
+
+/// Opens the Input Monitoring settings, with Kanaemi.app selected in Finder
+/// beside them to drag in: an input method is not listed there until it is
+/// added by hand.
+fn open_input_monitoring() {
+    open(&[OsStr::new(input_monitoring::SETTINGS_URL)]);
+    let bundle = NSBundle::mainBundle().bundlePath().to_string();
+    open(&[OsStr::new("-R"), OsStr::new(&bundle)]);
+}
+
+/// Runs `open` with `args`, without waiting on the main thread.
+fn open(args: &[&OsStr]) {
     match std::process::Command::new("/usr/bin/open")
-        .arg(&app)
+        .args(args)
         .spawn()
     {
         // Waited for on a thread of its own, so no finished `open` lingers.
         Ok(mut open) => {
             let waiting = std::thread::Builder::new()
-                .name("settings-launcher".to_owned())
+                .name("launcher".to_owned())
                 .spawn(move || open.wait());
             if let Err(error) = waiting {
-                tracing::warn!(%error, "settings launcher not waited for");
+                tracing::warn!(%error, "launcher not waited for");
             }
         }
-        Err(error) => tracing::warn!(app = %app.display(), %error, "settings app not opened"),
+        Err(error) => tracing::warn!(?args, %error, "not opened"),
     }
 }
 

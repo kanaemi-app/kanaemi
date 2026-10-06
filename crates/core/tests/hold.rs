@@ -63,6 +63,12 @@ fn a_letter_typed_and_let_go_while_space_is_held_begins_a_reading() {
 }
 
 #[test]
+fn bindings_tell_whether_a_key_is_bound_to_be_held() {
+    assert!(config().bindings.hold_a_key());
+    assert!(!unheld().bindings.hold_a_key());
+}
+
+#[test]
 fn a_held_key_shows_its_mark_until_it_is_known_held_or_alone() {
     let mut t = kana();
     // An application that sees no preedit takes a kept key for its own.
@@ -366,15 +372,6 @@ fn a_held_space_is_forgotten_when_the_focus_moves() {
 }
 
 #[test]
-fn a_letter_waiting_when_the_focus_moves_is_typed_after_a_space() {
-    let mut t = kana();
-    t.down(Key::Space);
-    t.ch('a');
-    let out = t.handle(Event::FocusOut);
-    assert_eq!(out.commit.as_deref(), Some(" あ"));
-}
-
-#[test]
 fn a_held_space_is_forgotten_when_the_mode_changes() {
     let mut t = kana();
     t.down(Key::Space);
@@ -402,6 +399,15 @@ fn a_letter_waiting_when_the_mode_changes_is_typed_first() {
     t.down(Key::Space);
     t.ch('a');
     let out = t.handle(Event::SetMode(Mode::Abc));
+    assert_eq!(out.commit.as_deref(), Some(" あ"));
+}
+
+#[test]
+fn a_letter_waiting_when_the_focus_moves_is_typed_after_a_space() {
+    let mut t = kana();
+    t.down(Key::Space);
+    t.ch('a');
+    let out = t.handle(Event::FocusOut);
     assert_eq!(out.commit.as_deref(), Some(" あ"));
 }
 

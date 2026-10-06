@@ -252,6 +252,27 @@ pub fn open_url(url: &str) {
     open(OsStr::new(url));
 }
 
+/// Opens the Input Monitoring settings, with Kanaemi.app selected in Finder
+/// beside them to drag in: an input method is not listed there until it is
+/// added by hand.
+pub fn open_input_monitoring() {
+    open(OsStr::new(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
+    ));
+    // This app ships inside Kanaemi.app.
+    let bundle = std::env::current_exe().ok().and_then(|exe| {
+        exe.ancestors()
+            .find(|dir| dir.file_name() == Some(OsStr::new("Kanaemi.app")))
+            .map(Path::to_path_buf)
+    });
+    if let Some(bundle) = bundle {
+        let _ = std::process::Command::new("open")
+            .arg("-R")
+            .arg(bundle)
+            .spawn();
+    }
+}
+
 fn open(target: &OsStr) {
     #[cfg(windows)]
     let opener = "explorer";

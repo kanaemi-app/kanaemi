@@ -107,7 +107,8 @@ impl Profile {
         profile
     }
 
-    pub(crate) fn config(&self) -> &Config {
+    /// The configuration read last.
+    pub fn config(&self) -> &Config {
         &self.config
     }
 
