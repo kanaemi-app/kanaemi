@@ -242,6 +242,26 @@ fn keys_typed_before_the_host_could_not_erase_go_after_the_commit() {
 }
 
 #[test]
+fn keys_waiting_for_the_host_are_not_sent_as_other_keys() {
+    let mut t = committed();
+    undo(&mut t);
+    t.ctrl('n');
+    let out = t.handle(Event::Erased(false));
+    assert_eq!(out.send, None);
+}
+
+#[test]
+fn keys_waiting_for_the_host_leave_what_they_commit_undoable() {
+    let mut t = committed();
+    undo(&mut t);
+    t.key(Key::Enter);
+    t.ctrl('n');
+    let out = t.handle(Event::Erased(true));
+    assert_eq!(out.commit.as_deref(), Some("記者"));
+    assert_eq!(undo(&mut t).erase.as_deref(), Some("記者"));
+}
+
+#[test]
 fn the_text_after_what_is_chosen_again_does_not_follow_the_focus() {
     let mut t = committed();
     t.typ("suru");

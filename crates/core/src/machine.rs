@@ -194,16 +194,19 @@ impl<C: Converter> Core<C> {
             Event::Erased(erased) => {
                 self.choose_again(erased);
                 // Taken from the application already, they can no longer
-                // pass on to it. One undoing again starts another wait, and
-                // the keys after it wait for that.
+                // pass on to it, so they leave the caret where it is. One
+                // undoing again starts another wait, and the keys after it
+                // wait for that.
                 let mut keys = mem::take(&mut self.keys_waiting).into_iter();
                 for key in keys.by_ref() {
-                    self.key_in_field(key);
+                    self.key(key);
                     if self.erasing.is_some() {
                         break;
                     }
                 }
                 self.keys_waiting.extend(keys);
+                // Nor can they be sent as other keys.
+                self.send = None;
                 true
             }
             Event::FocusIn { password } => {
