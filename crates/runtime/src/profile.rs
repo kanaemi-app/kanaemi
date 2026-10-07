@@ -221,8 +221,9 @@ impl Profile {
         }
     }
 
-    /// Writes the picks not yet written, unless the record on disk could
-    /// not be read or changed since it was. A sandbox keeps no record.
+    /// Writes the picks not yet written, on the record on disk as another
+    /// profile may have written it since it was read, unless that record
+    /// could not be read or was erased. A sandbox keeps no record.
     pub(crate) fn save_selections(&mut self) {
         if !self.access.is_full() {
             return;
@@ -230,10 +231,9 @@ impl Profile {
         let shared = self.engine.0.clone();
         let mut engine = shared.borrow_mut();
         if dictionaries::selections_stamp(&self.dir) != self.selections_stamp {
-            // Erased or changed elsewhere since it was read: that wins over
-            // the picks held here, which would otherwise undo it.
             self.read_selections(&mut engine);
-        } else if self.selections_read
+        }
+        if self.selections_read
             // The engine's record holds every pick, so a newer one replaces
             // what failed to be written, which must then never be written.
             && let Some(selections) = {
@@ -243,6 +243,7 @@ impl Profile {
         {
             if dictionaries::save_selections(&self.dir, &selections) {
                 self.selections_stamp = dictionaries::selections_stamp(&self.dir);
+                engine.selections_written(&selections);
             } else {
                 self.unsaved = Some(selections);
             }
@@ -250,7 +251,7 @@ impl Profile {
     }
 
     /// Puts the record of picks on disk in place of the one held here, when
-    /// it can be read.
+    /// it can be read, with the picks not yet written made on it.
     fn read_selections(&mut self, engine: &mut Engine) {
         if !self.access.is_full() {
             return;
@@ -260,7 +261,13 @@ impl Profile {
         let read = dictionaries::read_selections(&self.dir);
         self.selections_read = read.is_some();
         if let Some(selections) = read {
-            engine.replace_selections(selections);
+            if self.selections_stamp.is_none() {
+                // Erased: that wins over the picks held here, which would
+                // otherwise undo it.
+                engine.replace_selections(selections);
+            } else {
+                engine.merge_selections(selections);
+            }
             self.unsaved = None;
         }
     }
@@ -821,6 +828,28 @@ mod tests {
         )
         .unwrap();
         dir
+    }
+
+    #[test]
+    fn picks_of_two_profiles_on_one_folder_are_all_kept() {
+        let dir = picks_dir("two-profiles");
+        let mut one = Profile::open(&dir);
+        let mut other = Profile::open(&dir);
+        pick(&mut one, "貴社", 2);
+        pick(&mut other, "貴社", 1);
+        assert_eq!(surfaces(&Profile::open(&dir), "きしゃ"), ["貴社", "記者"]);
+    }
+
+    #[test]
+    fn picks_not_yet_written_are_kept_when_another_profile_s_record_is_read() {
+        let dir = picks_dir("two-profiles-focus");
+        let mut one = Profile::open(&dir);
+        let mut other = Profile::open(&dir);
+        one.learn(&[commit("きしゃ", "貴社")]);
+        pick(&mut other, "貴社", 2);
+        one.reload_if_changed();
+        one.learn(&[Effect::FocusMoved]);
+        assert_eq!(surfaces(&Profile::open(&dir), "きしゃ"), ["貴社", "記者"]);
     }
 
     const NOT_UTF8: &[u8] = b"\xff\xfe\xfd\n";

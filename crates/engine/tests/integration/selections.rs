@@ -80,3 +80,36 @@ fn an_engine_opened_again_keeps_the_picks_not_yet_saved() {
     new.take_over(old);
     assert_eq!(first(&new), "貴社");
 }
+
+#[test]
+fn picks_not_yet_written_are_made_again_on_a_record_written_elsewhere() {
+    let mut e = engine(Selections::default());
+    pick(&mut e, "貴社", 1);
+    e.take_selections();
+    e.merge_selections(Selections::parse("きしゃ\t貴社\t2.000\n"));
+    assert_eq!(first(&e), "貴社");
+    assert!(e.take_selections().is_some(), "to be written");
+}
+
+#[test]
+fn picks_written_are_not_made_again_on_a_record_read_later() {
+    let mut e = engine(Selections::default());
+    pick(&mut e, "貴社", 2);
+    let written = e.take_selections().unwrap();
+    e.selections_written(&written);
+    e.merge_selections(Selections::parse(written.to_text()));
+    assert_eq!(first(&e), "記者");
+    assert_eq!(e.take_selections(), None);
+}
+
+#[test]
+fn picks_made_after_the_record_written_was_taken_are_made_again() {
+    let mut e = engine(Selections::default());
+    pick(&mut e, "貴社", 2);
+    let written = e.take_selections().unwrap();
+    pick(&mut e, "記者", 1);
+    e.selections_written(&written);
+    e.merge_selections(Selections::parse(written.to_text()));
+    let merged = e.take_selections().expect("to be written");
+    assert!(merged.to_text().contains("\nきしゃ\t記者\t"));
+}

@@ -18,6 +18,16 @@ pub struct Selections {
     pairs: HashMap<(String, String), (f64, u64)>,
     /// How many picks were recorded since the record was read.
     tick: u64,
+    /// The picks recorded and taken back since the record was read or
+    /// written, in order, to be made again on a record written elsewhere
+    /// meanwhile.
+    unwritten: Vec<Pick>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum Pick {
+    Recorded(String, String),
+    Withdrawn(String, String),
 }
 
 impl Selections {
@@ -27,6 +37,8 @@ impl Selections {
     const MAX_PAIRS: usize = 5000;
 
     pub(crate) fn record(&mut self, reading: &str, surface: &str) {
+        self.unwritten
+            .push(Pick::Recorded(reading.to_owned(), surface.to_owned()));
         self.tick += 1;
         let key = (reading.to_owned(), surface.to_owned());
         let weight = self.weight_of(self.pairs.get(&key));
@@ -36,6 +48,8 @@ impl Selections {
     /// Takes back a pick recorded, as never made. The picks since it faded
     /// it a little; a pick taken back at once takes back all of it.
     pub(crate) fn withdraw(&mut self, reading: &str, surface: &str) {
+        self.unwritten
+            .push(Pick::Withdrawn(reading.to_owned(), surface.to_owned()));
         let key = (reading.to_owned(), surface.to_owned());
         let weight = self.weight_of(self.pairs.get(&key)) - 1.0;
         if weight > 0.0 {
@@ -43,6 +57,31 @@ impl Selections {
         } else {
             self.pairs.remove(&key);
         }
+    }
+
+    /// `newer`, a record written elsewhere since this one was read, with
+    /// the picks not yet written from here made on it after its own, as if
+    /// they had been made there.
+    pub(crate) fn merged_into(&self, mut newer: Self) -> Self {
+        for pick in &self.unwritten {
+            match pick {
+                Pick::Recorded(reading, surface) => newer.record(reading, surface),
+                Pick::Withdrawn(reading, surface) => newer.withdraw(reading, surface),
+            }
+        }
+        newer
+    }
+
+    /// Tells that `written`, this record as it was earlier, was written, so
+    /// its picks are not made again on a record read later. The picks made
+    /// since follow its own, also after a merge, which makes them in order.
+    pub(crate) fn mark_written(&mut self, written: &Self) {
+        let n = written.unwritten.len().min(self.unwritten.len());
+        self.unwritten.drain(..n);
+    }
+
+    pub(crate) fn has_unwritten(&self) -> bool {
+        !self.unwritten.is_empty()
     }
 
     /// The pair's weight now, after the picks since it faded it.
@@ -73,7 +112,11 @@ impl Selections {
                     .then_some(((reading, surface), (weight, 0)))
             })
             .collect();
-        Self { pairs, tick: 0 }
+        Self {
+            pairs,
+            tick: 0,
+            unwritten: Vec::new(),
+        }
     }
 
     pub fn to_text(&self) -> String {
@@ -151,6 +194,36 @@ mod tests {
         let read = Selections::parse("# comment\nきしゃ\t貴社\t2.5\nbroken\nきしゃ\t記者\tx\n");
         assert!((read.weight("きしゃ", "貴社") - 2.5).abs() < 0.01);
         assert_eq!(read.weight("きしゃ", "記者"), 0.0);
+    }
+
+    #[test]
+    fn picks_made_since_the_record_was_read_are_made_again_on_a_newer_one() {
+        let mut here = Selections::parse("きしゃ\t記者\t2.000\n");
+        here.record("きしゃ", "貴社");
+        here.record("きしゃ", "汽車");
+        here.withdraw("きしゃ", "汽車");
+        let newer = Selections::parse("きしゃ\t記者\t3.000\nきしゃ\t帰社\t1.000\n");
+        let mut expected = newer.clone();
+        expected.record("きしゃ", "貴社");
+        expected.record("きしゃ", "汽車");
+        expected.withdraw("きしゃ", "汽車");
+        let merged = here.merged_into(newer);
+        assert_eq!(merged.to_text(), expected.to_text());
+        assert!(merged.weight("きしゃ", "記者") > 2.9, "the newer record's");
+        assert_eq!(merged.weight("きしゃ", "汽車"), 0.0);
+    }
+
+    #[test]
+    fn picks_written_are_not_made_again() {
+        let mut here = Selections::default();
+        here.record("きしゃ", "貴社");
+        let written = here.clone();
+        here.mark_written(&written);
+        let written = written.to_text();
+        here.record("きしゃ", "記者");
+        let merged = here.merged_into(Selections::parse(written));
+        assert!((merged.weight("きしゃ", "貴社") - 1.0).abs() < 0.01);
+        assert!((merged.weight("きしゃ", "記者") - 1.0).abs() < 0.01);
     }
 
     #[test]

@@ -205,6 +205,20 @@ impl Engine {
         self.selections_changed = false;
     }
 
+    /// Puts a record of picks written elsewhere since this engine's was read
+    /// in place, with the picks not yet written from here made on it.
+    pub fn merge_selections(&mut self, selections: Selections) {
+        self.selections = self.selections.merged_into(selections);
+        self.selections_changed = self.selections.has_unwritten();
+    }
+
+    /// Tells that `written`, a record handed over since this engine's was
+    /// last put in place, was written, so its picks are not made again on a
+    /// record merged later. Picks made since it was handed over still are.
+    pub fn selections_written(&mut self, written: &Selections) {
+        self.selections.mark_written(written);
+    }
+
     /// The record of picks to keep, when it changed since the last call.
     pub fn take_selections(&mut self) -> Option<Selections> {
         std::mem::take(&mut self.selections_changed).then(|| self.selections.clone())
