@@ -9,6 +9,7 @@ license = "MIT"
 repository = "https://github.com/kanaemi-app/kanaemi"
 
 [workspace.dependencies]
+kanaemi-bench-support = { path = "crates/bench-support" }
 kanaemi-config = { path = "crates/config" }
 kanaemi-core = { path = "crates/core" }
 kanaemi-engine = { path = "crates/engine" }

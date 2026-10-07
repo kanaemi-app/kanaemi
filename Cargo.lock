@@ -2543,6 +2543,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanaemi-bench-support"
+version = "0.0.0"
+dependencies = [
+ "kanaemi-engine",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "kanaemi-config"
 version = "0.0.0"
 dependencies = [
