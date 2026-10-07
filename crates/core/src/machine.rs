@@ -1207,6 +1207,14 @@ impl<C: Converter> Core<C> {
         if !erased {
             return;
         }
+        // Candidates are chosen in kana mode only: out of it meanwhile, the
+        // commit goes back as it was, as `abc` commits what is chosen.
+        if self.mode == Mode::Abc {
+            self.effects.push(Effect::Erased(undoable.text()));
+            self.emit(&undoable.text());
+            self.undoable = Some(undoable);
+            return;
+        }
         self.effects.push(undoable.withdrawn());
         self.effects.push(Effect::Erased(undoable.text()));
         self.state = State::Candidates(undoable.selection.clone());

@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Event, Key, Modifiers, Output};
+use kanaemi_core::{Event, Key, Mode, Modifiers, Output};
 
 fn undo(t: &mut T) -> Output {
     t.press(
@@ -138,6 +138,24 @@ fn nothing_changes_when_the_host_could_not_erase() {
     assert!(t.converter().withdrawn.is_empty());
     let out = undo(&mut t);
     assert_eq!((out.consumed, out.erase), (false, None));
+}
+
+#[test]
+fn a_commit_undone_as_the_mode_leaves_kana_goes_back_as_it_was() {
+    let mut t = committed();
+    t.typ("suru");
+    undo(&mut t);
+    t.handle(Event::SetMode(Mode::Abc));
+    let out = t.handle(Event::Erased(true));
+    assert_eq!(
+        (out.commit.as_deref(), out.preedit.as_str(), out.mode),
+        (Some("記者する"), "", Mode::Abc)
+    );
+    assert_eq!(out.candidates, None);
+    let learned = t.converter();
+    assert!(learned.withdrawn.is_empty());
+    assert_eq!(learned.commits.len(), 1, "committed once");
+    assert_eq!(learned.erased, ["記者する"]);
 }
 
 #[test]
