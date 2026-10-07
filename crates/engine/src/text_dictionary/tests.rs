@@ -1,6 +1,9 @@
+use proptest::collection::vec;
+use proptest::prelude::*;
+
 use super::*;
 use crate::placeholder::{CLOSE, OPEN};
-use crate::test_support::{Words, entry, stems};
+use crate::test_support::{Words, dictionary_text, entry, stems};
 
 fn parse(text: &str) -> TextDictionary {
     let (dictionary, invalid) = TextDictionary::parse(text);
@@ -490,4 +493,71 @@ fn a_numeric_line_reads_back_as_it_was_written() {
         parse(&line.to_string()).words(&reading),
         [entry(&surface, 2)]
     );
+}
+
+// Robustness: whatever the text, reading it never panics and every line it
+// could not read is told.
+
+/// Looks up everything the dictionary holds, as conversion may.
+fn look_through(dictionary: &TextDictionary) {
+    let readings: Vec<String> = dictionary.readings().map(str::to_owned).collect();
+    for reading in &readings {
+        dictionary.lookup(reading);
+    }
+    let keys: Vec<(String, char)> = dictionary
+        .okuri_keys()
+        .map(|(stem, row)| (stem.to_owned(), row))
+        .collect();
+    for (stem, row) in keys {
+        dictionary.okuri(&stem, row);
+    }
+    assert_eq!(
+        dictionary.readings_from("", usize::MAX).len(),
+        readings.len()
+    );
+    for (reading, surface) in dictionary.hidden() {
+        assert!(dictionary.is_hidden(reading, surface));
+    }
+}
+
+/// The invalid lines are told once each, in order, by numbers of lines the
+/// file has.
+fn assert_lines_within(invalid: &[InvalidLine], bytes: &[u8]) {
+    let lines = bytes.split(|&b| b == b'\n').count();
+    assert!(invalid.windows(2).all(|pair| pair[0].line < pair[1].line));
+    assert!(invalid.iter().all(|i| (1..=lines).contains(&i.line)));
+}
+
+proptest! {
+    #[test]
+    fn any_bytes_read_as_a_dictionary_with_the_lines_it_could_not_read(
+        bytes in vec(any::<u8>(), 0..512),
+        user_custom: bool,
+    ) {
+        let (dictionary, invalid) = TextDictionary::parse_bytes(&bytes, user_custom);
+        assert_lines_within(&invalid, &bytes);
+        look_through(&dictionary);
+    }
+
+    #[test]
+    fn any_text_of_dictionary_lines_reads_without_panicking(
+        text in dictionary_text(),
+        user_custom: bool,
+    ) {
+        let (dictionary, invalid) = TextDictionary::parse_bytes(text.as_bytes(), user_custom);
+        assert_lines_within(&invalid, text.as_bytes());
+        look_through(&dictionary);
+    }
+
+    #[test]
+    fn any_line_is_told_as_a_registration_or_a_hide_line_without_panicking(
+        line in dictionary_text(),
+        reading in dictionary_text(),
+        surface in dictionary_text(),
+    ) {
+        TextDictionary::hides(&line, &reading, &surface);
+        if let Some(registration) = TextDictionary::registration(&line) {
+            registration.gives(&reading, &surface);
+        }
+    }
 }
