@@ -13,6 +13,7 @@ mod candidates;
 #[cfg(windows)]
 pub mod com;
 pub mod control;
+mod focus;
 #[cfg(windows)]
 mod indicator;
 mod keys;

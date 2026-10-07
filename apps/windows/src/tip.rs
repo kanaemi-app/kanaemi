@@ -23,6 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::*;
 
 use crate::control::Tracker;
+use crate::focus::{self, Change};
 use crate::keys::{self, Keys, RawKey};
 use crate::pipe::{self, PipeSink};
 use crate::ui_element::{CandidateList, Listed};
@@ -116,6 +117,8 @@ struct State {
     compositions: RefCell<Vec<(ITfContext, ITfComposition)>>,
     /// The field with the focus, while active.
     field: RefCell<Option<Field>>,
+    /// The context the field last took the focus in.
+    focused: RefCell<Option<ITfContext>>,
     /// The field as other programs see it, to tell the server of changes.
     tracker: RefCell<Tracker>,
     /// The key last handled in a test callback, which applications that
@@ -567,6 +570,7 @@ impl State {
     /// The field reads what changed in the settings folder as the focus
     /// comes in, so it is made only once per activation.
     fn focus_in(self: &Rc<Self>, context: Option<&ITfContext>) {
+        *self.focused.borrow_mut() = context.cloned();
         if self.field.borrow().is_none() {
             *self.field.borrow_mut() = with_profile(|profile| Field::new(profile));
         }
@@ -574,6 +578,43 @@ impl State {
         // the text service sees is never one. The context shows the switch
         // to the mode a field starts in.
         self.dispatch(Event::FocusIn { password: false }, context, false);
+    }
+
+    /// The focus leaves `context`; the core forgets what it was erasing.
+    fn focus_out(self: &Rc<Self>, context: Option<&ITfContext>) {
+        self.erasing.set(0);
+        *self.focused.borrow_mut() = None;
+        self.dispatch(Event::FocusOut, context, false);
+        indicator::hide();
+    }
+
+    /// A context was pushed onto a document's stack, or `popped` off it.
+    /// Applications such as Word cover the document with a context of their
+    /// own for a while: when the top of the focused document changes, what
+    /// is visible is committed in the context it was typed in, and the field
+    /// goes on in the new top in the mode it was in.
+    fn stack_changed(self: &Rc<Self>, popped: Option<&ITfContext>) {
+        let document = self
+            .thread_mgr
+            .borrow()
+            .as_ref()
+            .and_then(|thread_mgr| unsafe { thread_mgr.GetFocus() }.ok());
+        let stack = document
+            .map(|document| unsafe { [document.GetTop().ok(), document.GetBase().ok()] })
+            .into_iter()
+            .flatten()
+            .flatten();
+        let held = self.focused.borrow().clone();
+        match focus::change(stack, popped, held) {
+            Change::Stays => {}
+            Change::Comes(context) => self.focus_in(Some(&context)),
+            Change::Goes(context) => self.focus_out(Some(&context)),
+            Change::Passes { from, to } => {
+                self.erasing.set(0);
+                self.dispatch(Event::Flush, Some(&from), false);
+                *self.focused.borrow_mut() = Some(to);
+            }
+        }
     }
 
     fn element_manager(&self) -> Option<ITfUIElementMgr> {
@@ -798,6 +839,7 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             // keep it alive.
             *state.sink.borrow_mut() = None;
             *state.field.borrow_mut() = None;
+            *state.focused.borrow_mut() = None;
             remote::detach();
             stop_watching_clicks();
             Ok(())
@@ -916,11 +958,7 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
     fn OnSetFocus(&self, focus: Ref<ITfDocumentMgr>, previous: Ref<ITfDocumentMgr>) -> Result<()> {
         guarded(Ok(()), || {
             let previous = previous.as_ref().and_then(|d| unsafe { d.GetTop() }.ok());
-            // The core forgets what it was erasing once the focus goes.
-            self.state.erasing.set(0);
-            self.state
-                .dispatch(Event::FocusOut, previous.as_ref(), false);
-            indicator::hide();
+            self.state.focus_out(previous.as_ref());
             if let Some(focus) = focus.as_ref() {
                 let context = unsafe { focus.GetTop() }.ok();
                 self.state.focus_in(context.as_ref());
@@ -930,11 +968,17 @@ impl ITfThreadMgrEventSink_Impl for TextService_Impl {
     }
 
     fn OnPushContext(&self, _context: Ref<ITfContext>) -> Result<()> {
-        Ok(())
+        guarded(Ok(()), || {
+            self.state.stack_changed(None);
+            Ok(())
+        })
     }
 
-    fn OnPopContext(&self, _context: Ref<ITfContext>) -> Result<()> {
-        Ok(())
+    fn OnPopContext(&self, context: Ref<ITfContext>) -> Result<()> {
+        guarded(Ok(()), || {
+            self.state.stack_changed(context.as_ref());
+            Ok(())
+        })
     }
 }
 
