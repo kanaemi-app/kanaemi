@@ -24,6 +24,10 @@ lint:
 test:
     cargo test --workspace
 
+# Run the Rust tests with `cases` generated inputs for each property test instead of proptest's default.
+test-thorough cases="20000":
+    PROPTEST_CASES={{cases}} cargo test --workspace
+
 # Build the macOS input method and install it into ~/Library/Input Methods.
 install-macos:
     apps/macos/install.sh
