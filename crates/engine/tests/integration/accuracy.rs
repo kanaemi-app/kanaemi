@@ -3,13 +3,15 @@
 //!
 //! With the small dictionary and the tiny model there, the misses must be the
 //! ones recorded there, so a change that loses a case fails, and one that wins
-//! a case updates the record on purpose.
+//! a case updates the record on purpose. With real dictionaries the misses are
+//! only reported.
 
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use kanaemi_config::{binary_name, dictionary_files};
 use kanaemi_core::Converter;
 use kanaemi_engine::{
     Dictionary, Engine, RankingModel, Selections, Slot, TextDictionary, open_dictionary,
@@ -199,4 +201,32 @@ fn the_cases_miss_only_as_recorded() {
          regressed, missed now but not recorded:\n{regressed}\
          improved, recorded but hit now:\n{improved}",
     );
+}
+
+/// The dictionaries in the folder `KANAEMI_ACCURACY_DICTIONARIES`, read as the
+/// IME reads its dictionary folder without a list, and the ranking model
+/// `KANAEMI_ACCURACY_MODEL` too when it is set. Skipped without the folder.
+#[test]
+fn the_cases_with_the_dictionaries_given() {
+    let Some(folder) = std::env::var_os("KANAEMI_ACCURACY_DICTIONARIES") else {
+        return;
+    };
+    let folder = Path::new(&folder);
+    let shown = folder.display().to_string();
+    let files = dictionary_files(folder);
+    let mut e = engine(
+        files
+            .iter()
+            .filter(|name| {
+                let binary = binary_name(name);
+                **name == binary || !files.contains(&binary)
+            })
+            .map(|name| open_dictionary(folder.join(name)).unwrap().0),
+    );
+    let cases = cases();
+    measure(&shown, "rules", &mut e, &cases);
+    if let Some(path) = std::env::var_os("KANAEMI_ACCURACY_MODEL") {
+        e.set_model(Some(Arc::new(RankingModel::open(path).unwrap())));
+        measure(&shown, "model", &mut e, &cases);
+    }
 }
