@@ -3,7 +3,9 @@
 
 #![allow(non_snake_case)]
 
-use std::ffi::c_void;
+use std::ffi::{OsString, c_void};
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 use windows::Win32::Foundation::*;
@@ -15,6 +17,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
 use windows::Win32::UI::TextServices::*;
 use windows::core::*;
 
+use crate::registration::registered_dll;
 use crate::tip::TextService;
 
 pub const CLSID_KANAEMI: GUID = GUID::from_u128(0x04448b65_d29f_4f36_84c7_5fdba91ef4b9);
@@ -162,7 +165,11 @@ fn register() -> Result<()> {
         )
         .ok()?;
     }
-    let written = set_value(key, PCWSTR::null(), &module_wide_path()).and_then(|()| {
+    let dll: Vec<u16> = {
+        let module = PathBuf::from(OsString::from_wide(&module_wide_path()));
+        registered_dll(&module).as_os_str().encode_wide().collect()
+    };
+    let written = set_value(key, PCWSTR::null(), &dll).and_then(|()| {
         let model: Vec<u16> = "Apartment".encode_utf16().collect();
         set_value(key, w!("ThreadingModel"), &model)
     });
