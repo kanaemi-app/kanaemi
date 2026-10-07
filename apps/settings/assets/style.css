@@ -547,3 +547,12 @@ table.rules td { padding: 6px 8px; border-top: 1px solid var(--separator); }
   white-space: pre-wrap;
   word-break: break-all;
 }
+.log > div { min-height: 1.5em; padding: 0 4px; border-radius: 3px; }
+.log-time { color: var(--muted); }
+.log-level { font-weight: 600; }
+.log-target { color: var(--name); }
+.log-key { color: var(--number); }
+.log-value { color: var(--string); }
+.log-warn { background: var(--warn-bg); box-shadow: inset 3px 0 var(--warn-border); }
+.log-error { background: color-mix(in srgb, var(--error) 12%, transparent); box-shadow: inset 3px 0 var(--error); }
+.log-error .log-level, .log-error .log-message { color: var(--error); }
