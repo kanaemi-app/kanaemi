@@ -11,3 +11,12 @@ getrandom = "0.4.3"
 kanaemi-engine.workspace = true
 mlua = { version = "0.12", features = ["luau"] }
 thiserror = "2.0.21"
+
+[dev-dependencies]
+criterion.workspace = true
+kanaemi-bench-support.workspace = true
+kanaemi-core.workspace = true
+
+[[bench]]
+name = "functions"
+harness = false
