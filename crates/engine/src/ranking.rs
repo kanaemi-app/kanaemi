@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 
 /// How much of the field's committed text a conversion looks back on.
@@ -10,6 +12,8 @@ const MAGIC: &[u8; 8] = b"KANAEMIM";
 pub const MODEL_FORMAT_VERSION: u32 = 3;
 const HEADER_LEN: usize = 32;
 const BITS: std::ops::RangeInclusive<u8> = 10..=28;
+/// The length of a file of the most weights, each of the widest type.
+const MAX_LEN: u64 = HEADER_LEN as u64 + (4 << *BITS.end());
 /// Joins a feature's name and values; no reading or surface holds it.
 const SEPARATOR: char = '\u{1f}';
 
@@ -227,7 +231,16 @@ pub struct RankingModel {
 
 impl RankingModel {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ModelError> {
-        Self::from_bytes(std::fs::read(path)?)
+        let file = File::open(path)?;
+        // Refused before reading, so whatever lies in the model's place takes
+        // no more memory than a model can; a file that grows meanwhile is cut
+        // at that and refused for its length.
+        if file.metadata()?.len() > MAX_LEN {
+            return Err(ModelError::Malformed("larger than any model"));
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_LEN + 1).read_to_end(&mut bytes)?;
+        Self::from_bytes(bytes)
     }
 
     fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self, ModelError> {
@@ -587,6 +600,27 @@ mod tests {
         old[8..12].copy_from_slice(&2u32.to_le_bytes());
         assert!(RankingModel::from_bytes(old).is_err());
     }
+
+    // Extending a file leaves the new length sparse on Unix file systems,
+    // while NTFS reserves room for all of it.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_larger_than_any_model_is_refused_without_being_read() {
+        let path =
+            std::env::temp_dir().join(format!("kanaemi-engine-huge-{}.model", std::process::id()));
+        let file = std::fs::File::create(&path).unwrap();
+        // Reading it whole would take 64 GiB of memory.
+        file.set_len(1 << 36).unwrap();
+        let (done, refused) = std::sync::mpsc::channel();
+        std::thread::spawn({
+            let path = path.clone();
+            move || done.send(RankingModel::open(&path).is_err())
+        });
+        let refused = refused.recv_timeout(std::time::Duration::from_secs(5));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(refused, Ok(true));
+    }
+
     // Robustness: whatever the bytes, reading them either refuses them or
     // gives a model that scores every candidate.
 
