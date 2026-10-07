@@ -2566,6 +2566,7 @@ dependencies = [
  "encoding_rs",
  "fst",
  "kanaemi-core",
+ "kanaemi-functions",
  "memmap2",
  "proptest",
  "sha2 0.11.0",
