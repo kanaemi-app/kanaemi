@@ -689,6 +689,11 @@ impl<C: Converter> Core<C> {
             key if !self.registrations.is_empty() && named(key) && key != Key::Space => {
                 self.state = State::Idle { pending };
             }
+            // Passed on, a key leaves the text to register as it is.
+            key if !self.registrations.is_empty() && key != Key::Space => {
+                self.state = State::Idle { pending };
+                return false;
+            }
             _ => {
                 let kana = self.flush_unfinished(&mut pending);
                 self.emit(&kana);
