@@ -1,6 +1,61 @@
-//! Okurigana by row: dictionaries file an okurigana word under the letter of
-//! the row its okurigana starts in (書く under か and k), since the kana
-//! itself changes as the word conjugates.
+//! Okurigana by kana or by row: a dictionary files an okurigana word under the
+//! first kana of its okurigana (書く under か and く), or under only the
+//! letter of that kana's row (書 under か and k) where the kana is not known,
+//! as with SKK, which keeps only the okurigana's consonant.
+
+/// What an okurigana word is filed under after its stem.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum OkuriHead {
+    /// The first kana of the okurigana, one with a row: found only by
+    /// okurigana starting with that kana.
+    Kana(char),
+    /// The letter of a row: found by okurigana starting with any kana of it.
+    Row(char),
+}
+
+impl OkuriHead {
+    /// The head a text dictionary writes after the `*`: a kana with a row, or
+    /// the letter of a row.
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        let mut chars = text.chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else {
+            return None;
+        };
+        if okuri_row(c).is_some() {
+            Some(Self::Kana(c))
+        } else {
+            is_okuri_row(c).then_some(Self::Row(c))
+        }
+    }
+
+    /// The heads okurigana starting with `kana` is found under: the kana
+    /// itself, then its row. None for a kana no row has.
+    pub(crate) fn of(kana: char) -> impl Iterator<Item = Self> {
+        okuri_row(kana)
+            .map(|row| [Self::Kana(kana), Self::Row(row)])
+            .into_iter()
+            .flatten()
+    }
+
+    /// Whether `okurigana` starts as this head files it.
+    pub(crate) fn starts(self, okurigana: &str) -> bool {
+        let Some(first) = okurigana.chars().next() else {
+            return false;
+        };
+        match self {
+            Self::Kana(kana) => first == kana,
+            Self::Row(row) => okuri_row(first) == Some(row),
+        }
+    }
+
+    /// The character written after the stem, in a text dictionary and in the
+    /// binary dictionary's index alike.
+    pub(crate) fn as_char(self) -> char {
+        match self {
+            Self::Kana(c) | Self::Row(c) => c,
+        }
+    }
+}
 
 /// The letter that files okurigana starting with `kana`, or `None` for a kana
 /// no row has.
@@ -10,16 +65,15 @@ pub(crate) fn okuri_row(kana: char) -> Option<char> {
         .map(|(row, _)| *row)
 }
 
-/// The first kana of a row, standing for the row where only the row is known.
-pub(crate) fn row_kana(row: char) -> Option<char> {
-    ROWS.iter()
-        .find(|(letter, _)| *letter == row)
-        .and_then(|(_, kanas)| kanas.chars().next())
+/// Whether `letter` names a row okurigana is filed under.
+pub(crate) fn is_okuri_row(letter: char) -> bool {
+    ROWS.iter().any(|&(row, _)| row == letter)
 }
 
-/// The key a stem and an okurigana row are filed under.
-pub(crate) fn okuri_key(stem: &str, row: char) -> String {
-    format!("{stem}{row}")
+/// The key a stem and a head are filed under. A kana and a row's letter never
+/// meet, so the two kinds of key stay apart.
+pub(crate) fn okuri_key(stem: &str, head: OkuriHead) -> String {
+    format!("{stem}{}", head.as_char())
 }
 
 /// Small kana have a row of their own, by the `x` that types them (ゃ of

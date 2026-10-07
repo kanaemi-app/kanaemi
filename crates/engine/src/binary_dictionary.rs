@@ -10,7 +10,7 @@ use fst::raw::{CompiledAddr, Fst};
 use fst::{IntoStreamer, Map, Streamer};
 use memmap2::Mmap;
 
-use crate::{Dictionary, Entry, InvalidLine, TextDictionary, okuri_key};
+use crate::{Dictionary, Entry, InvalidLine, OkuriHead, TextDictionary, okuri_key};
 
 #[cfg(test)]
 mod tests;
@@ -310,8 +310,8 @@ impl Dictionary for BinaryDictionary {
         self.found(Some(&self.index), key)
     }
 
-    fn okuri(&self, stem: &str, row: char) -> Vec<Entry> {
-        self.found(self.okuri.as_ref(), &okuri_key(stem, row))
+    fn okuri(&self, stem: &str, head: OkuriHead) -> Vec<Entry> {
+        self.found(self.okuri.as_ref(), &okuri_key(stem, head))
     }
 
     fn readings_from(&self, prefix: &str, limit: usize) -> Vec<String> {

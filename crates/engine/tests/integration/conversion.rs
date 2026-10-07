@@ -110,11 +110,11 @@ fn a_surface_in_several_dictionaries_is_kept_where_it_ranks_highest() {
 }
 
 #[test]
-fn okurigana_picks_entries_from_the_same_row() {
+fn okurigana_written_with_its_row_picks_entries_by_any_kana_of_the_row() {
     let (e, _) = engine(
         vec![
             Slot::UserCustom,
-            text("か*く\t書く\nか*く\t欠く\nか*つ\t勝つ\nかき\t柿"),
+            text("か*k\t書\nか*k\t欠\nか*t\t勝\nかき\t柿"),
         ],
         "",
     );
@@ -124,11 +124,38 @@ fn okurigana_picks_entries_from_the_same_row() {
 }
 
 #[test]
+fn okurigana_written_with_its_kana_picks_entries_by_that_kana_only() {
+    let (e, _) = engine(
+        vec![
+            Slot::UserCustom,
+            text(
+                "き*た\t着た\nき*て\t来て\nき*て\t著て\nき*と\t祈と\nき*て\t衣て\n\
+                 き*た\t黄た\nき*っ\t切っ\nき*ら\t切ら",
+            ),
+        ],
+        "",
+    );
+    assert_eq!(surfaces(&e, "きった", Some("った")), ["切った"]);
+    assert_eq!(surfaces(&e, "きた", Some("た")), ["黄た", "着た"]);
+    assert_eq!(surfaces(&e, "きち", Some("ち")), Vec::<String>::new());
+}
+
+#[test]
+fn okurigana_picks_entries_by_their_kana_and_by_their_row_alike() {
+    let (e, _) = engine(
+        vec![Slot::UserCustom, text("か*く\t書く\t\t2\nか*k\t欠\t\t1")],
+        "",
+    );
+    assert_eq!(surfaces(&e, "かく", Some("く")), ["欠く", "書く"]);
+    assert_eq!(surfaces(&e, "かけ", Some("け")), ["欠け"]);
+}
+
+#[test]
 fn okurigana_grown_past_its_first_kana_finds_words_by_that_kana() {
     let (e, _) = engine(
         vec![
             Slot::UserCustom,
-            text("か*つ\t勝つ\nか\t書\t五段-カ行\nき\t切\t五段-ラ行"),
+            text("か*っ\t勝っ\nか\t書\t五段-カ行\nき\t切\t五段-ラ行"),
         ],
         "",
     );
@@ -336,7 +363,7 @@ fn readings_are_looked_up_in_nfc() {
 fn registered_and_committed_text_is_compared_in_nfc() {
     let (mut e, _) = engine(vec![text("が\t我\nが\tガ")], "");
     e.register("およ*か\u{3099}", "泳か\u{3099}");
-    assert_eq!(surfaces(&e, "およぎ", Some("ぎ")), ["泳ぎ"]);
+    assert_eq!(surfaces(&e, "およが", Some("が")), ["泳が"]);
     e.commit("ほか", "カ\u{3099}");
     assert_eq!(surfaces(&e, "が", None), ["ガ", "我"]);
 }
@@ -476,7 +503,7 @@ fn costs_from_the_dictionary_rank_candidates_of_different_readings() {
     let (e, _) = engine(
         vec![
             Slot::UserCustom,
-            text("おも*ち\tお持ち\t\t900\nおも*っ\t思っ\t\t200"),
+            text("おも*t\tお持\t\t900\nおも*っ\t思っ\t\t200"),
         ],
         "",
     );
@@ -486,7 +513,7 @@ fn costs_from_the_dictionary_rank_candidates_of_different_readings() {
 #[test]
 fn without_costs_each_reading_starts_from_zero_and_ties_go_by_surface() {
     let (e, _) = engine(
-        vec![Slot::UserCustom, text("おも*ち\tお持ち\nおも*っ\t思っ")],
+        vec![Slot::UserCustom, text("おも*t\tお持\nおも*っ\t思っ")],
         "",
     );
     assert_eq!(surfaces(&e, "おもっ", Some("っ")), ["お持っ", "思っ"]);

@@ -1,3 +1,4 @@
+use kanaemi_engine::OkuriHead::Row;
 use kanaemi_engine::{Dictionary, Entry, SkkError, TextDictionary, skk_to_text};
 
 fn read(skk: impl AsRef<[u8]>) -> TextDictionary {
@@ -42,15 +43,22 @@ fn an_okuri_ari_heading_becomes_okurigana_words_of_its_row() {
         "{UTF8};; okuri-ari entries.\nかk /書/欠/\nおもt /思/\n"
     ));
 
-    assert_eq!(d.okuri("か", 'k'), [entry("書", 0), entry("欠", 1)]);
-    assert_eq!(d.okuri("おも", 't'), [entry("思", 0)]);
+    assert_eq!(d.okuri("か", Row('k')), [entry("書", 0), entry("欠", 1)]);
+    assert_eq!(d.okuri("おも", Row('t')), [entry("思", 0)]);
+}
+
+#[test]
+fn an_okuri_ari_heading_is_written_with_its_row_and_bare_surfaces() {
+    let text = skk_to_text(format!("{UTF8}かk /書/欠/\n")).unwrap();
+
+    assert_eq!(text, "か*k\t書\t\t0\nか*k\t欠\t\t1\n");
 }
 
 #[test]
 fn the_c_of_ち_is_read_as_t() {
     let d = read(format!("{UTF8}もc /持/\n"));
 
-    assert_eq!(d.okuri("も", 't'), [entry("持", 0)]);
+    assert_eq!(d.okuri("も", Row('t')), [entry("持", 0)]);
 }
 
 #[test]
@@ -73,7 +81,7 @@ fn s_expressions_strict_okurigana_and_affix_headings_are_left_out() {
         "{UTF8}かk /書/[け/描/]/\nよる /(concat \"夜\\057\")/夜/\nお> /御/\n>さん /さん/\n"
     ));
 
-    assert_eq!(d.okuri("か", 'k'), [entry("書", 0)]);
+    assert_eq!(d.okuri("か", Row('k')), [entry("書", 0)]);
     assert_eq!(d.lookup("よる"), [entry("夜", 0)]);
     assert_eq!(d.lookup("お>"), []);
     assert_eq!(d.lookup(">さん"), []);

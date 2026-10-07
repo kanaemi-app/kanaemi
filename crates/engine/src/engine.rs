@@ -9,7 +9,7 @@ use crate::placeholder::{Functions, OPEN, fill, fits};
 use crate::{
     CONTEXT_CHARS, CandidateFacts, ConjugationTable, Dictionary, HISTORY_LEN, ItemLine, LineSink,
     MAX_SUFFIX_KANA, RankingInput, RankingModel, Selections, TextDictionary, UserCustom,
-    WriteError, mark_placeholders, nfc, okuri_row,
+    WriteError, mark_placeholders, nfc, okuri_lookup, okuri_row,
 };
 
 /// On a frequency scale (100 per factor of e) this ranks a built form after
@@ -364,7 +364,8 @@ impl Engine {
             matches!((chars.next(), chars.next()), (Some(c), None) if okuri_row(c).is_some())
         };
         // An okurigana grown past a markable first chunk is filed under that
-        // chunk (か*っ 勝っ for 勝った), so its other forms find the word too.
+        // chunk (か*っ 勝っ for 勝った), so its other forms going on from that
+        // chunk (勝って) find the word too.
         let grown = |kana: &str, head: &str| {
             let rest = kana.strip_prefix(head)?;
             surface.strip_suffix(rest)
@@ -673,8 +674,7 @@ fn found_in(
         for o in okurigana
             .chars()
             .next()
-            .and_then(okuri_row)
-            .map(|row| dictionary.okuri(stem, row))
+            .map(|kana| okuri_lookup(dictionary, stem, kana))
             .unwrap_or_default()
         {
             add(

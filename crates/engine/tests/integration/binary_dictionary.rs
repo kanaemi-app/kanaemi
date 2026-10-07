@@ -1,13 +1,14 @@
 use std::fs;
 
+use kanaemi_engine::OkuriHead::{Kana, Row};
 use kanaemi_engine::{
-    BinaryDictionary, BinaryError, Dictionary, TextDictionary, convert_text, is_binary,
-    open_dictionary, text_digest,
+    BinaryDictionary, BinaryError, Dictionary, Entry, TextDictionary, convert_text, is_binary,
+    okuri_lookup, open_dictionary, text_digest,
 };
 
 use crate::common::temp_path;
 
-const TEXT: &str = "きしゃ\t記者\nきしゃ\t汽車\nか*く\t欠く\n";
+const TEXT: &str = "きしゃ\t記者\nきしゃ\t汽車\nか*く\t欠く\nか*k\t書\n";
 
 /// The text converted and written to a file, as the settings app ships it.
 fn converted(text: impl AsRef<[u8]>) -> std::path::PathBuf {
@@ -25,7 +26,32 @@ fn a_converted_dictionary_finds_what_the_text_finds() {
 
     let (text, _) = TextDictionary::parse(TEXT);
     assert_eq!(binary.lookup("きしゃ"), text.lookup("きしゃ"));
-    assert_eq!(binary.okuri("か", 'k'), text.okuri("か", 'k'));
+    assert_eq!(binary.okuri("か", Kana('く')), text.okuri("か", Kana('く')));
+    assert_eq!(binary.okuri("か", Row('k')), text.okuri("か", Row('k')));
+}
+
+/// A file written before okurigana words were filed under their kana, from
+/// `か*く 書く`, `か*つ 勝つ`, `き*た 着た` and `き*っ 切っ`: each is filed
+/// under its row alone.
+const FILED_BY_ROW: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/okuri-by-row.kdic"
+);
+
+#[test]
+fn a_file_filing_okurigana_words_by_row_finds_them_by_any_kana_of_the_row() {
+    let binary = BinaryDictionary::open(FILED_BY_ROW).unwrap();
+
+    let surfaces = |stem, kana| -> Vec<String> {
+        okuri_lookup(&binary, stem, kana)
+            .into_iter()
+            .map(|e: Entry| e.surface)
+            .collect()
+    };
+    assert_eq!(surfaces("か", 'け'), ["書"]);
+    assert_eq!(surfaces("か", 'っ'), ["勝"]);
+    assert_eq!(surfaces("き", 'っ'), ["着", "切"]);
+    assert_eq!(binary.okuri("か", Kana('く')), []);
 }
 
 #[test]
