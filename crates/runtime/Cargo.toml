@@ -15,3 +15,11 @@ serde_json = "1"
 tracing = { version = "0.1", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 unicode-segmentation = "1"
+
+[dev-dependencies]
+criterion.workspace = true
+kanaemi-bench-support.workspace = true
+
+[[bench]]
+name = "keys"
+harness = false

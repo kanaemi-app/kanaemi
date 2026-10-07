@@ -2755,6 +2755,8 @@ dependencies = [
 name = "kanaemi-runtime"
 version = "0.0.0"
 dependencies = [
+ "criterion",
+ "kanaemi-bench-support",
  "kanaemi-config",
  "kanaemi-core",
  "kanaemi-engine",
