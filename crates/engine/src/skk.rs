@@ -11,7 +11,8 @@ use crate::{ItemLine, row_kana};
 /// okurigana of that row. A heading with `#` becomes numeric items. What the
 /// format cannot hold is left out: Lisp expressions, strict okurigana blocks,
 /// affix headings, okuri-ari numeric headings, numbers in a notation
-/// Kanaemi lacks, and the noncharacters an item holds placeholders as.
+/// Kanaemi lacks, the noncharacters an item holds placeholders as, and a heading
+/// starting with a byte order mark.
 ///
 /// Bytes the dictionary's encoding cannot decode fail the import rather than
 /// leave replacement characters in the words.
@@ -25,7 +26,12 @@ pub fn skk_to_text(bytes: impl AsRef<[u8]>) -> Result<String, SkkError> {
         let Some((heading, candidates)) = line.split_once(" /") else {
             continue;
         };
-        if heading.is_empty() || heading.contains(['>', OPEN, CLOSE]) {
+        // A text dictionary takes a U+FEFF that starts its first line for a
+        // byte order mark.
+        if heading.is_empty()
+            || heading.contains(['>', OPEN, CLOSE])
+            || heading.starts_with('\u{feff}')
+        {
             continue;
         }
         let (stem, okurigana) = match okuri_ari(heading) {
