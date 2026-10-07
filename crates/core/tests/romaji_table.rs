@@ -2,6 +2,8 @@ mod common;
 
 use common::*;
 use kanaemi_core::{Config, Event, Key, RomajiTable};
+use proptest::collection::vec;
+use proptest::prelude::*;
 
 #[test]
 fn romaji_is_typed_by_the_longest_rule_and_the_ways_around_the_rules() {
@@ -288,4 +290,43 @@ fn unfinished_romaji_can_be_dropped_outside_a_reading_too() {
     t.kana();
     t.typ("arew");
     assert_eq!(t.key(Key::Enter).commit, None);
+}
+
+// Robustness: whatever a table file holds, applying it never panics, and
+// typing with what it made never does either.
+
+/// Pieces of a table line that the format gives a meaning to.
+#[rustfmt::skip]
+const PIECES: &[&str] = &[
+    // Input and output.
+    "k", "a", "n", "ka", "nn", "A", "1", ";", "~", "か", "ん", "っ", "ー", " ",
+    // Separators, marks and escapes.
+    "\t", "\r", "!", "#", "\\", "\\\\", "\\#", "\\!", "\\t", "\u{FEFF}", "\u{7F}",
+];
+
+fn table_text() -> impl Strategy<Value = String> {
+    let line = prop_oneof![
+        9 => vec(proptest::sample::select(PIECES), 0..6).prop_map(|pieces| pieces.concat()),
+        1 => any::<String>(),
+    ];
+    vec(line, 0..12).prop_map(|lines| lines.join("\n"))
+}
+
+proptest! {
+    #[test]
+    fn any_table_file_applies_and_types_without_panicking(
+        text in table_text(),
+        input in "[a-zA-Z0-9;:'~!@ -]{1,12}",
+    ) {
+        let mut table = romaji();
+        let invalid = table.apply(&text);
+        let lines = text.split('\n').count();
+        prop_assert!(invalid.windows(2).all(|pair| pair[0] < pair[1]));
+        prop_assert!(invalid.iter().all(|line| (1..=lines).contains(line)));
+
+        let mut t = T::with_config(Config { romaji: table, ..config() });
+        t.kana();
+        t.typ(&input);
+        t.key(Key::Enter);
+    }
 }
