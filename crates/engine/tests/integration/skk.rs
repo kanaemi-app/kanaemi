@@ -131,6 +131,16 @@ fn braces_and_number_signs_outside_numeric_headings_stay_as_they_are() {
 }
 
 #[test]
+fn a_heading_or_candidate_holding_a_placeholder_mark_is_left_out() {
+    let text = skk_to_text(format!(
+        "{UTF8}\u{FDD0} /か/\nか /\u{FDD0}kanji\u{FDD1}/蚊/\n"
+    ))
+    .unwrap();
+
+    assert_eq!(text, "か\t蚊\t\t0\n");
+}
+
+#[test]
 fn comments_and_broken_lines_are_skipped() {
     let d = read(format!("{UTF8};; a comment\nnot an entry\nきしゃ /記者/\n"));
 
