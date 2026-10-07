@@ -140,8 +140,12 @@ impl Selections {
 
 #[cfg(test)]
 mod tests {
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
     use super::*;
     use crate::placeholder::{CLOSE, OPEN};
+    use crate::test_support::dictionary_text;
 
     #[test]
     fn the_record_reads_back_without_when_anything_was_picked() {
@@ -236,5 +240,61 @@ mod tests {
         let read = Selections::parse(picked.to_text());
         assert_eq!(read.pairs.len(), Selections::MAX_PAIRS);
         assert!(read.weight("よみ0", "x") > 1.0);
+    }
+
+    // Robustness: whatever the text, the record reads without panicking,
+    // holds only weights it can count with, and is written again readably.
+
+    fn record_text() -> impl Strategy<Value = String> {
+        let weight = prop_oneof![
+            Just("2.5".to_owned()),
+            Just("0".to_owned()),
+            Just("-1".to_owned()),
+            Just("1e308".to_owned()),
+            Just("inf".to_owned()),
+            Just("NaN".to_owned()),
+            Just("0.0001".to_owned()),
+            any::<f64>().prop_map(|w| w.to_string()),
+        ];
+        let line = prop_oneof![
+            3 => (dictionary_text(), dictionary_text(), weight)
+                .prop_map(|(reading, surface, weight)| format!("{reading}\t{surface}\t{weight}")),
+            1 => dictionary_text(),
+        ];
+        vec(line, 0..12).prop_map(|lines| lines.join("\n"))
+    }
+
+    fn assert_counts_with_every_weight(record: &Selections) {
+        for &(weight, _) in record.pairs.values() {
+            assert!(weight.is_finite() && weight > 0.0, "{weight}");
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn any_record_reads_and_is_written_again_readably(text in record_text()) {
+            let mut record = Selections::parse(&text);
+            assert_counts_with_every_weight(&record);
+            let pairs: Vec<(String, String)> = record.pairs.keys().cloned().collect();
+            for (reading, surface) in &pairs {
+                record.record(reading, surface);
+                record.withdraw(reading, surface);
+                assert!(record.weight(reading, surface).is_finite());
+            }
+            let read = Selections::parse(record.to_text());
+            assert_counts_with_every_weight(&read);
+            for (reading, surface) in &pairs {
+                let weight = record.weight(reading, surface);
+                if weight >= 0.001 {
+                    let back = read.weight(reading, surface);
+                    prop_assert!(
+                        (back - weight).abs() <= weight * 1e-6 + 0.001,
+                        "{} {}",
+                        back,
+                        weight
+                    );
+                }
+            }
+        }
     }
 }
