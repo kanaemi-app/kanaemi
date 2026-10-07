@@ -337,6 +337,9 @@ impl RankingModel {
 
 #[cfg(test)]
 mod tests {
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
     use super::*;
 
     /// The features of a candidate as strings, whose indices
@@ -583,5 +586,109 @@ mod tests {
             .to_bytes();
         old[8..12].copy_from_slice(&2u32.to_le_bytes());
         assert!(RankingModel::from_bytes(old).is_err());
+    }
+    // Robustness: whatever the bytes, reading them either refuses them or
+    // gives a model that scores every candidate.
+
+    fn score_some(model: &RankingModel) {
+        let history = history(&[("きしゃ", "汽車"), ("かんじ", "漢字")]);
+        let input = RankingInput {
+            reading: "きしゃ",
+            history: &history,
+            context: "今日の漢字は",
+        };
+        for candidate in [facts("記者", 0, 0, false), facts("汽車", 3, u32::MAX, true)] {
+            model.score_candidate(&input, &candidate);
+        }
+    }
+
+    fn read_and_score(bytes: &[u8]) {
+        if let Ok(model) = RankingModel::from_bytes(bytes) {
+            score_some(&model);
+        }
+    }
+
+    fn models() -> impl Strategy<Value = Vec<u8>> {
+        let f32_model = vec(
+            any::<f32>().prop_filter("finite", |w| w.is_finite()),
+            1 << 10,
+        )
+        .prop_map(|weights| {
+            RankingModel::new(10, Weights::F32(weights))
+                .unwrap()
+                .to_bytes()
+        });
+        let i8_model = (-4.0f32..4.0, vec(any::<i8>(), 1 << 10)).prop_map(|(scale, weights)| {
+            RankingModel::new(10, Weights::I8 { scale, weights })
+                .unwrap()
+                .to_bytes()
+        });
+        prop_oneof![f32_model, i8_model]
+    }
+
+    proptest! {
+        #[test]
+        fn any_bytes_are_refused_or_score_without_panicking(
+            bytes in vec(any::<u8>(), 0..256),
+        ) {
+            read_and_score(&bytes);
+        }
+
+        #[test]
+        fn any_header_is_refused_or_scores_without_panicking(
+            version in prop_oneof![Just(MODEL_FORMAT_VERSION), any::<u32>()],
+            bits in prop_oneof![10..=11u8, any::<u8>()],
+            kind in prop_oneof![0..=1u8, any::<u8>()],
+            reserved in prop_oneof![Just([0u8; 6]), any::<[u8; 6]>()],
+            scale in prop_oneof![Just(1.0f32), any::<f32>()],
+            body in prop_oneof![
+                vec(any::<u8>(), 1 << 10),
+                vec(any::<u8>(), 4 << 10),
+                vec(any::<u8>(), 0..(4 << 10) + 8),
+            ],
+            checksum in proptest::option::of(any::<u64>()),
+        ) {
+            let mut bytes = MAGIC.to_vec();
+            bytes.extend_from_slice(&version.to_le_bytes());
+            bytes.extend_from_slice(&[bits, kind, reserved[0], reserved[1]]);
+            bytes.extend_from_slice(&scale.to_le_bytes());
+            bytes.extend_from_slice(&reserved[2..]);
+            let checksum = checksum.unwrap_or_else(|| xxhash_rust::xxh3::xxh3_64(&body));
+            bytes.extend_from_slice(&checksum.to_le_bytes());
+            bytes.extend(body);
+            read_and_score(&bytes);
+        }
+
+        #[test]
+        fn a_changed_model_is_refused_or_scores_without_panicking(
+            model in models(),
+            at in any::<prop::sample::Index>(),
+            byte: u8,
+            cut in any::<prop::sample::Index>(),
+            truncate: bool,
+        ) {
+            let mut bytes = model;
+            let at = at.index(bytes.len());
+            bytes[at] = byte;
+            if truncate {
+                bytes.truncate(cut.index(bytes.len()));
+            }
+            read_and_score(&bytes);
+        }
+
+        #[test]
+        fn a_changed_weight_fails_the_checksum(
+            model in models(),
+            at in any::<prop::sample::Index>(),
+            bit in 0..8u8,
+        ) {
+            let mut bytes = model;
+            let at = HEADER_LEN + at.index(bytes.len() - HEADER_LEN);
+            bytes[at] ^= 1 << bit;
+            prop_assert!(matches!(
+                RankingModel::from_bytes(bytes),
+                Err(ModelError::Checksum)
+            ));
+        }
     }
 }
