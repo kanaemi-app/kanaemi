@@ -13,7 +13,6 @@ fn LogView(path: PathBuf, on_close: EventHandler<()>) -> Element {
         .rev()
         .filter(|line| query.is_empty() || line.contains(&query))
         .collect();
-    let shown = lines.join("\n");
     rsx! {
         div { class: "modal-backdrop", onclick: move |_| on_close.call(()),
             div {
@@ -39,7 +38,15 @@ fn LogView(path: PathBuf, on_close: EventHandler<()>) -> Element {
                     if lines.is_empty() {
                         p { class: "description", "記録はありません" }
                     } else {
-                        pre { class: "log", "{shown}" }
+                        div { class: "log",
+                            for styled in lines.iter().map(|line| logs::style(line)) {
+                                div { class: styled.alert.unwrap_or_default(),
+                                    for (class, text) in styled.pieces {
+                                        span { class: class.unwrap_or_default(), "{text}" }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
