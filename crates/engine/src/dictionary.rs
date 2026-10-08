@@ -1,8 +1,7 @@
 use std::io::{self, Read};
 use std::path::Path;
 
-use crate::okuri::okuri_row;
-use crate::{BINARY_MAGIC, BinaryDictionary, BinaryError, InvalidLine, TextDictionary};
+use crate::{BINARY_MAGIC, BinaryDictionary, BinaryError, InvalidLine, OkuriHead, TextDictionary};
 
 /// One item of a dictionary.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,11 +22,11 @@ pub trait Dictionary {
     /// conjugating words whose stem reads `key`. Each kind comes cheapest first.
     fn lookup(&self, key: &str) -> Vec<Entry>;
 
-    /// Words with okurigana whose reading before the okurigana is `stem` and
-    /// whose okurigana starts in `row`, cheapest first. A row is the letter
-    /// the binary dictionary format files it under: `k` for か through こ.
-    /// Their surfaces stop before the okurigana.
-    fn okuri(&self, stem: &str, row: char) -> Vec<Entry>;
+    /// Words with okurigana whose reading before the okurigana is `stem`,
+    /// filed under `head`, cheapest first. A row is the letter the binary
+    /// dictionary format files it under: `k` for か through こ. Their surfaces
+    /// stop before the okurigana.
+    fn okuri(&self, stem: &str, head: OkuriHead) -> Vec<Entry>;
 
     /// Up to `limit` readings of words that start with `prefix`, in order,
     /// to look through a dictionary. None by default.
@@ -44,8 +43,8 @@ impl<D: Dictionary + ?Sized> Dictionary for std::sync::Arc<D> {
         (**self).lookup(key)
     }
 
-    fn okuri(&self, stem: &str, row: char) -> Vec<Entry> {
-        (**self).okuri(stem, row)
+    fn okuri(&self, stem: &str, head: OkuriHead) -> Vec<Entry> {
+        (**self).okuri(stem, head)
     }
 
     fn readings_from(&self, prefix: &str, limit: usize) -> Vec<String> {
@@ -54,12 +53,15 @@ impl<D: Dictionary + ?Sized> Dictionary for std::sync::Arc<D> {
 }
 
 /// Words with okurigana whose reading before the okurigana is `stem` and
-/// whose okurigana starts with `kana`, as a text dictionary writes them
-/// (`か*く`); none when `kana` starts no okurigana.
+/// whose okurigana starts with `kana`, cheapest first: those filed under the
+/// kana itself (`か*く`) and those filed under only its row (`か*k`). None
+/// when `kana` starts no okurigana.
 pub fn okuri_lookup(dictionary: &(impl Dictionary + ?Sized), stem: &str, kana: char) -> Vec<Entry> {
-    okuri_row(kana)
-        .map(|row| dictionary.okuri(stem, row))
-        .unwrap_or_default()
+    let mut found: Vec<Entry> = OkuriHead::of(kana)
+        .flat_map(|head| dictionary.okuri(stem, head))
+        .collect();
+    found.sort_by_key(|e| e.cost);
+    found
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,14 +114,15 @@ mod tests {
 
     #[test]
     fn an_okurigana_word_is_looked_up_by_its_stem_and_first_kana() {
-        let (text, _) = TextDictionary::parse("か*く\t書く\nか*つ\t勝つ");
+        let (text, _) = TextDictionary::parse("か*く\t書く\t\t1\nか*t\t勝\t\t0\nか*k\t欠\t\t2");
         let surfaces = |kana| {
             okuri_lookup(&text, "か", kana)
                 .into_iter()
                 .map(|e| e.surface)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(surfaces('き'), ["書"], "any kana of the row");
+        assert_eq!(surfaces('く'), ["書", "欠"], "by the kana, then the row");
+        assert_eq!(surfaces('き'), ["欠"], "any kana of the row");
         assert_eq!(surfaces('っ'), ["勝"]);
         assert_eq!(surfaces('ア'), Vec::<String>::new(), "no row has it");
     }

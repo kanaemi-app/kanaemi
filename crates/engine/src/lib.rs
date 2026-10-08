@@ -21,6 +21,7 @@ pub use binary_dictionary::*;
 pub use conjugation::*;
 pub use dictionary::*;
 pub use engine::*;
+pub use okuri::*;
 pub use placeholder::*;
 pub use ranking::*;
 pub use selections::*;
@@ -28,8 +29,6 @@ pub use skk::*;
 pub use stamp::*;
 pub use text_dictionary::*;
 pub use user_custom::*;
-
-use okuri::*;
 
 #[cfg(test)]
 mod test_support;

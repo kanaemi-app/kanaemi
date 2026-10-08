@@ -194,14 +194,23 @@ fn a_hidden_pair_is_registered_when_a_word_line_of_the_file_gives_it() {
 }
 
 #[test]
-fn an_okurigana_word_registers_every_okurigana_of_its_row() {
+fn an_okurigana_word_of_a_row_registers_every_okurigana_of_its_row() {
     let path = temp_path("registered-row.tsv");
-    fs::write(&path, "か*く\t書く\n!かけ\t書け\n").unwrap();
+    fs::write(&path, "か*k\t書\n!かけ\t書け\n").unwrap();
 
     let pairs = [("かけ", "書け"), ("かさ", "書さ")];
     assert_eq!(registered(&path, &pairs).unwrap(), [true, false]);
     unregister(&path, "かけ", "書け").unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "");
+}
+
+#[test]
+fn an_okurigana_word_of_a_kana_registers_okurigana_starting_with_it() {
+    let path = temp_path("registered-kana.tsv");
+    fs::write(&path, "か*く\t書く\n").unwrap();
+
+    let pairs = [("かくと", "書くと"), ("かけ", "書け")];
+    assert_eq!(registered(&path, &pairs).unwrap(), [true, false]);
 }
 
 #[test]

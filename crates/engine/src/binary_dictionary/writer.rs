@@ -9,7 +9,7 @@ use super::{
     BINARY_MAGIC, ENTRIES, FORMAT_VERSION, HEADER_LEN, INDEX, OKURI, SECTION_ENTRY_LEN, SOURCE,
     STRINGS,
 };
-use crate::{Dictionary, Entry, TextDictionary, okuri_key};
+use crate::{Dictionary, Entry, OkuriHead, TextDictionary, okuri_key};
 
 const ALIGN: usize = 64;
 
@@ -32,13 +32,13 @@ pub(crate) fn encode(text: &TextDictionary, source: Option<[u8; 32]>) -> Vec<u8>
             (reading.to_owned(), range)
         })
         .collect();
-    let mut keys: Vec<(&str, char)> = text.okuri_keys().collect();
-    keys.sort_unstable_by_key(|&(stem, row)| okuri_key(stem, row));
+    let mut keys: Vec<(&str, OkuriHead)> = text.okuri_keys().collect();
+    keys.sort_unstable_by_key(|&(stem, head)| okuri_key(stem, head));
     let okuri: Vec<(String, Range<u32>)> = keys
         .into_iter()
-        .map(|(stem, row)| {
-            let range = writer.entries(text.okuri(stem, row).into_iter());
-            (okuri_key(stem, row), range)
+        .map(|(stem, head)| {
+            let range = writer.entries(text.okuri(stem, head).into_iter());
+            (okuri_key(stem, head), range)
         })
         .collect();
     writer.finish(&index, &okuri, source)

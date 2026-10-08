@@ -2,6 +2,7 @@ use proptest::collection::vec;
 use proptest::prelude::*;
 
 use super::*;
+use crate::OkuriHead::{Kana, Row};
 use crate::placeholder::{CLOSE, OPEN};
 use crate::test_support::{Words, dictionary_text, entry, stems};
 
@@ -68,13 +69,20 @@ fn readings_and_surfaces_are_normalized_to_nfc() {
 #[test]
 fn an_okurigana_line_is_found_by_its_stem() {
     let d = parse("か*く\t書く\nか*く\t欠く\nか*け\t掛け\nか*つ\t勝つ");
-    assert_eq!(
-        d.okuri("か", 'k'),
-        [entry("欠", 0), entry("掛", 0), entry("書", 1)]
-    );
-    assert_eq!(d.okuri("か", 't'), [entry("勝", 0)]);
-    assert_eq!(d.okuri("か", 's'), []);
+    assert_eq!(d.okuri("か", Kana('く')), [entry("欠", 0), entry("書", 1)]);
+    assert_eq!(d.okuri("か", Kana('け')), [entry("掛", 0)]);
+    assert_eq!(d.okuri("か", Kana('つ')), [entry("勝", 0)]);
+    assert_eq!(d.okuri("か", Kana('き')), [], "another kana of the row");
+    assert_eq!(d.okuri("か", Row('k')), [], "the row alone");
     assert_eq!(d.words("かく"), []);
+}
+
+#[test]
+fn an_okurigana_line_of_a_row_is_found_by_its_stem_and_row() {
+    let d = parse("か*k\t書\nか*k\t欠\t\t5\nか*く\t掻く");
+    assert_eq!(d.okuri("か", Row('k')), [entry("書", 1), entry("欠", 5)]);
+    assert_eq!(d.okuri("か", Kana('く')), [entry("掻", 0)]);
+    assert_eq!(d.okuri("か", Row('t')), []);
 }
 
 #[test]
@@ -109,6 +117,10 @@ fn reasons_for_invalid_lines() {
     assert_eq!(invalid("か*\t書く"), [Okurigana]);
     assert_eq!(invalid("か*く\t書け"), [Okurigana]);
     assert_eq!(invalid("か*く\t書く\t五段-カ行"), [Okurigana]);
+    assert_eq!(invalid("か*k\t書\t五段-カ行"), [Okurigana]);
+    assert_eq!(invalid("か*q\t書"), [Okurigana]);
+    assert_eq!(invalid("か*K\t書"), [Okurigana]);
+    assert_eq!(invalid("か*kk\t書"), [Okurigana]);
     assert_eq!(invalid("!きしゃ\t汽車"), [Hide]);
 }
 
@@ -169,6 +181,12 @@ fn a_later_okurigana_line_clears_the_hide_lines_of_its_forms_going_on_from_it() 
     assert!(d.is_hidden("かった", "買った"));
     assert!(d.is_hidden("かつ", "勝つ"));
     assert!(d.is_hidden("かっ", "勝った"));
+
+    let (d, _) =
+        TextDictionary::parse_user_custom("!かった\t勝った\n!かつ\t勝つ\n!かる\t勝る\nか*t\t勝");
+    assert!(!d.is_hidden("かった", "勝った"));
+    assert!(!d.is_hidden("かつ", "勝つ"));
+    assert!(d.is_hidden("かる", "勝る"));
 }
 
 #[test]
@@ -177,16 +195,16 @@ fn okurigana_must_start_with_a_kana_of_the_okuri_table() {
         assert_eq!(invalid(line), [InvalidReason::Okurigana], "{line}");
     }
     let d = parse("か*っ\t勝っ\nい*ゐ\t居ゐ\nう*ゔ\t鵜ゔ");
-    assert_eq!(d.okuri("か", 't'), [entry("勝", 0)]);
-    assert_eq!(d.okuri("い", 'w'), [entry("居", 0)]);
-    assert_eq!(d.okuri("う", 'v'), [entry("鵜", 0)]);
+    assert_eq!(d.okuri("か", Kana('っ')), [entry("勝", 0)]);
+    assert_eq!(d.okuri("い", Kana('ゐ')), [entry("居", 0)]);
+    assert_eq!(d.okuri("う", Kana('ゔ')), [entry("鵜", 0)]);
 }
 
 #[test]
 fn small_kana_start_okurigana_of_their_own_row() {
     let d = parse("たち*ゃ\t達ゃ\nたち*や\t立ちや");
-    assert_eq!(d.okuri("たち", 'x'), [entry("達", 0)]);
-    assert_eq!(d.okuri("たち", 'y'), [entry("立ち", 0)]);
+    assert_eq!(d.okuri("たち", Kana('ゃ')), [entry("達", 0)]);
+    assert_eq!(d.okuri("たち", Kana('や')), [entry("立ち", 0)]);
     for line in ["か*ぁ\t書ぁ", "か*ょ\t書ょ", "か*ゎ\t書ゎ", "か*ゖ\t書ゖ"] {
         assert_eq!(invalid(line), [], "{line}");
     }
@@ -269,7 +287,7 @@ fn every_line_reads_back_as_it_was_written() {
         };
         let (d, invalid) = TextDictionary::parse(okuri.to_string());
         assert_eq!(invalid, [], "{okuri}");
-        assert_eq!(d.okuri(reading, 'k'), [entry("書", 0)], "{okuri}");
+        assert_eq!(d.okuri(reading, Kana('く')), [entry("書", 0)], "{okuri}");
     }
 }
 
@@ -303,7 +321,7 @@ fn a_cost_column_sets_the_cost() {
 fn a_cost_column_applies_to_stems_and_okurigana_lines() {
     let d = parse("か\t書\t五段-カ行\t300\nか*く\t欠く\t\t40");
     assert_eq!(stems(&d, "か")[0].cost, 300);
-    assert_eq!(d.okuri("か", 'k')[0].cost, 40);
+    assert_eq!(d.okuri("か", Kana('く'))[0].cost, 40);
 }
 
 #[test]
@@ -504,12 +522,12 @@ fn look_through(dictionary: &TextDictionary) {
     for reading in &readings {
         dictionary.lookup(reading);
     }
-    let keys: Vec<(String, char)> = dictionary
+    let keys: Vec<(String, OkuriHead)> = dictionary
         .okuri_keys()
-        .map(|(stem, row)| (stem.to_owned(), row))
+        .map(|(stem, head)| (stem.to_owned(), head))
         .collect();
-    for (stem, row) in keys {
-        dictionary.okuri(&stem, row);
+    for (stem, head) in keys {
+        dictionary.okuri(&stem, head);
     }
     assert_eq!(
         dictionary.readings_from("", usize::MAX).len(),

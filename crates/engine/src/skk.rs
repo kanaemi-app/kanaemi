@@ -3,16 +3,16 @@
 use encoding_rs::Encoding;
 
 use crate::placeholder::{CLOSE, OPEN};
-use crate::{ItemLine, row_kana};
+use crate::{ItemLine, is_okuri_row};
 
 /// Converts an SKK dictionary into the text dictionary format. Each candidate
 /// becomes a line costed by its place in its heading; an okuri-ari heading
-/// files its candidates under the first kana of its row, which matches every
-/// okurigana of that row. A heading with `#` becomes numeric items. What the
-/// format cannot hold is left out: Lisp expressions, strict okurigana blocks,
-/// affix headings, okuri-ari numeric headings, numbers in a notation
-/// Kanaemi lacks, the noncharacters an item holds placeholders as, and a heading
-/// starting with a byte order mark.
+/// files its candidates under its row, as SKK knows the okurigana's consonant
+/// only. A heading with `#` becomes numeric items. What the format cannot hold
+/// is left out: Lisp expressions, strict okurigana blocks, affix headings,
+/// okuri-ari numeric headings, numbers in a notation Kanaemi lacks, the
+/// noncharacters an item holds placeholders as, and a heading starting with a
+/// byte order mark.
 ///
 /// Bytes the dictionary's encoding cannot decode fail the import rather than
 /// leave replacement characters in the words.
@@ -35,7 +35,7 @@ pub fn skk_to_text(bytes: impl AsRef<[u8]>) -> Result<String, SkkError> {
             continue;
         }
         let (stem, okurigana) = match okuri_ari(heading) {
-            Some((stem, kana)) => (stem, Some(kana)),
+            Some((stem, row)) => (stem, Some(row)),
             None if heading
                 .chars()
                 .last()
@@ -70,12 +70,11 @@ pub fn skk_to_text(bytes: impl AsRef<[u8]>) -> Result<String, SkkError> {
                 continue;
             }
             let written = match okurigana {
-                Some(kana) => format!("{surface}{kana}"),
                 None if numbers > 0 => match numeric_surface(surface) {
                     Some(written) if written.matches(OPEN).count() <= numbers => written,
                     _ => continue,
                 },
-                None => surface.to_owned(),
+                _ => surface.to_owned(),
             };
             let cost = seen.len();
             seen.push(surface);
@@ -134,8 +133,7 @@ fn numeric_surface(candidate: &str) -> Option<String> {
     Some(out)
 }
 
-/// An okuri-ari heading (`かk`) split into its stem and the kana standing for
-/// its row.
+/// An okuri-ari heading (`かk`) split into its stem and the letter of its row.
 fn okuri_ari(heading: &str) -> Option<(&str, char)> {
     let letter = heading.chars().last()?;
     let stem = &heading[..heading.len() - letter.len_utf8()];
@@ -149,7 +147,7 @@ fn okuri_ari(heading: &str) -> Option<(&str, char)> {
         'x' => return None,
         letter => letter,
     };
-    Some((stem, row_kana(row)?))
+    is_okuri_row(row).then_some((stem, row))
 }
 
 fn decode(bytes: &[u8]) -> Result<String, SkkError> {

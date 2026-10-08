@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::placeholder::{CLOSE, OPEN, Placeholder, fits};
-use crate::{ConjugationTable, Dictionary, Entry, okuri_row};
+use crate::{ConjugationTable, Dictionary, Entry, OkuriHead};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InvalidReason {
@@ -51,20 +51,34 @@ pub(crate) struct Registration(Record);
 impl Registration {
     /// Whether the word gives (`reading`, `surface`): a word line of that
     /// pair, or an okurigana word whose stems the pair goes on from with
-    /// okurigana of its row, as conversion finds it (`か*く` and `書く` for
-    /// `かけ` and `書け`).
+    /// okurigana the word is found by, as conversion finds it (`か*っ` and
+    /// `勝っ` for `かった` and `勝った`; `か*k` and `書` for `かけ` and `書け`).
     pub(crate) fn gives(&self, reading: &str, surface: &str) -> bool {
         match &self.0 {
             Record::Word { reading: r, item } => r == reading && item.surface == surface,
-            Record::Okuri { stem, kana, item } => {
-                let surface_stem = item.surface.strip_suffix(kana.as_str());
-                let rest = reading.strip_prefix(stem.as_str());
-                let row = |kana: &str| kana.chars().next().and_then(okuri_row);
-                surface_stem.is_some_and(|s| surface.strip_prefix(s) == rest)
-                    && rest.is_some_and(|rest| row(rest).is_some() && row(rest) == row(kana))
+            Record::Okuri { stem, head, item } => {
+                okuri_gives(stem, *head, &item.surface, reading, surface)
             }
             Record::Hide { .. } => false,
         }
+    }
+}
+
+/// Whether the okurigana word of `stem` and `head`, written `word`, gives
+/// (`reading`, `surface`): both go on from its stems with the same okurigana,
+/// one the word is found by.
+fn okuri_gives(stem: &str, head: OkuriHead, word: &str, reading: &str, surface: &str) -> bool {
+    let rest = reading.strip_prefix(stem);
+    rest.is_some_and(|rest| head.starts(rest))
+        && surface.strip_prefix(okuri_surface_stem(head, word)) == rest
+}
+
+/// The surface of an okurigana word before its okurigana: a word filed under
+/// a kana is written ending in it (書く), one filed under a row without it (書).
+fn okuri_surface_stem(head: OkuriHead, word: &str) -> &str {
+    match head {
+        OkuriHead::Kana(kana) => word.strip_suffix(kana).unwrap_or(word),
+        OkuriHead::Row(_) => word,
     }
 }
 
@@ -75,7 +89,7 @@ enum Record {
     },
     Okuri {
         stem: String,
-        kana: String,
+        head: OkuriHead,
         item: Item,
     },
     Hide {
@@ -90,7 +104,8 @@ enum Record {
 pub struct ItemLine<'a> {
     /// The reading before any okurigana; a `*` in it is a literal `*`.
     pub reading: &'a str,
-    /// The first kana of the okurigana, written after the `*` that marks it.
+    /// What is written after the `*` that marks okurigana: its first kana,
+    /// or the letter of that kana's row where only the row is known.
     pub okurigana: Option<&'a str>,
     pub surface: &'a str,
     pub conjugation: Option<&'a str>,
@@ -126,8 +141,8 @@ impl std::fmt::Display for ItemLine<'_> {
 pub struct TextDictionary {
     user_custom: bool,
     words: HashMap<String, Vec<Item>>,
-    okuri: HashMap<(String, String), Vec<Item>>,
-    okuri_kana: HashMap<String, Vec<String>>,
+    okuri: HashMap<(String, OkuriHead), Vec<Item>>,
+    okuri_heads: HashMap<String, Vec<OkuriHead>>,
     hidden: HashSet<(String, String)>,
 }
 
@@ -232,19 +247,16 @@ impl TextDictionary {
                 }
                 push_front(self.words.entry(reading).or_default(), item);
             }
-            Record::Okuri { stem, kana, item } => {
+            Record::Okuri { stem, head, item } => {
                 // The word brings back its forms going on from the okurigana
                 // (勝った for か*っ), as registered from them.
-                let reading = format!("{stem}{kana}");
-                self.hidden.retain(|(r, s)| {
-                    let rest = r.strip_prefix(&reading);
-                    rest.is_none() || rest != s.strip_prefix(&item.surface)
-                });
-                let kanas = self.okuri_kana.entry(stem.clone()).or_default();
-                if !kanas.contains(&kana) {
-                    kanas.push(kana.clone());
+                self.hidden
+                    .retain(|(r, s)| !okuri_gives(&stem, head, &item.surface, r, s));
+                let heads = self.okuri_heads.entry(stem.clone()).or_default();
+                if !heads.contains(&head) {
+                    heads.push(head);
                 }
-                push_front(self.okuri.entry((stem, kana)).or_default(), item);
+                push_front(self.okuri.entry((stem, head)).or_default(), item);
             }
             Record::Hide { reading, surface } => {
                 if let Some(items) = self.words.get_mut(&reading) {
@@ -263,23 +275,17 @@ impl Dictionary for TextDictionary {
             .collect()
     }
 
-    fn okuri(&self, stem: &str, row: char) -> Vec<Entry> {
-        let Some(kanas) = self.okuri_kana.get(stem) else {
+    fn okuri(&self, stem: &str, head: OkuriHead) -> Vec<Entry> {
+        let Some(items) = self.okuri.get(&(stem.to_owned(), head)) else {
             return Vec::new();
         };
-        let mut found: Vec<Entry> = kanas
-            .iter()
-            .filter(|kana| kana.chars().next().and_then(okuri_row) == Some(row))
-            .flat_map(|kana| {
-                let items = &self.okuri[&(stem.to_owned(), kana.clone())];
-                entries(items).into_iter().map(move |mut entry| {
-                    entry.surface.truncate(entry.surface.len() - kana.len());
-                    entry
-                })
+        entries(items)
+            .into_iter()
+            .map(|mut entry| {
+                entry.surface = okuri_surface_stem(head, &entry.surface).to_owned();
+                entry
             })
-            .collect();
-        found.sort_by_key(|e| e.cost);
-        found
+            .collect()
     }
 
     fn readings_from(&self, prefix: &str, limit: usize) -> Vec<String> {
@@ -302,17 +308,11 @@ impl TextDictionary {
             .map(|(reading, _)| reading.as_str())
     }
 
-    /// Every stem and okurigana row with okurigana lines, once each.
-    pub(crate) fn okuri_keys(&self) -> impl Iterator<Item = (&str, char)> {
-        self.okuri_kana.iter().flat_map(|(stem, kanas)| {
-            let mut rows: Vec<char> = kanas
-                .iter()
-                .filter_map(|kana| kana.chars().next().and_then(okuri_row))
-                .collect();
-            rows.sort_unstable();
-            rows.dedup();
-            rows.into_iter().map(move |row| (stem.as_str(), row))
-        })
+    /// Every stem and head with okurigana lines, once each.
+    pub(crate) fn okuri_keys(&self) -> impl Iterator<Item = (&str, OkuriHead)> {
+        self.okuri_heads
+            .iter()
+            .flat_map(|(stem, heads)| heads.iter().map(move |&head| (stem.as_str(), head)))
     }
 }
 
@@ -394,16 +394,19 @@ fn parse_line(line: &str, user_custom: bool) -> Result<Record, InvalidReason> {
     };
     match reading.okurigana {
         Some(at) => {
-            let kana = &reading.text[at..];
-            // Only a kana with an okurigana row can ever be looked up.
-            let single_kana =
-                kana.chars().count() == 1 && kana.chars().all(|c| okuri_row(c).is_some());
-            if hide || conjugation.is_some() || !single_kana || !item.surface.ends_with(kana) {
+            // Only a kana with an okurigana row, or a row, can ever be looked
+            // up.
+            let head = match OkuriHead::parse(&reading.text[at..]) {
+                Some(head @ OkuriHead::Kana(kana)) if item.surface.ends_with(kana) => head,
+                Some(head @ OkuriHead::Row(_)) => head,
+                _ => return Err(InvalidReason::Okurigana),
+            };
+            if hide || conjugation.is_some() {
                 return Err(InvalidReason::Okurigana);
             }
             Ok(Record::Okuri {
                 stem: reading.text[..at].to_owned(),
-                kana: kana.to_owned(),
+                head,
                 item,
             })
         }

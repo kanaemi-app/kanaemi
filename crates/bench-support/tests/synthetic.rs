@@ -1,7 +1,9 @@
 use std::fs;
 
 use kanaemi_bench_support::{fresh_dir, ranking_model, reading, text_dictionary};
-use kanaemi_engine::{BinaryDictionary, Dictionary, RankingModel, TextDictionary, convert_text};
+use kanaemi_engine::{
+    BinaryDictionary, Dictionary, OkuriHead, RankingModel, TextDictionary, convert_text,
+};
 
 const READINGS: usize = 2_000;
 
@@ -39,7 +41,7 @@ fn the_text_dictionary_has_the_words_the_benchmarks_type() {
     };
     assert!(surfaces("かんじ").contains(&"漢字".to_owned()));
     assert!(surfaces("こう").len() > 30, "enough to page through");
-    assert!(!dictionary.okuri("か", 'k').is_empty());
+    assert!(!dictionary.okuri("か", OkuriHead::Kana('く')).is_empty());
 }
 
 #[test]

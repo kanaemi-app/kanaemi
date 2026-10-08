@@ -4,6 +4,7 @@ use proptest::prelude::*;
 
 use super::writer::encode;
 use super::*;
+use crate::OkuriHead::{Kana, Row};
 use crate::test_support::{Discard, Words, stems};
 use crate::{Engine, Slot, TextDictionary};
 
@@ -17,6 +18,8 @@ const TEXT: &str = "\
 か*く\t欠く
 か*け\t賭け
 か*つ\t勝つ
+か*k\t描
+か*t\t買
 おも*ち\tお持ち\t\t900
 おも*っ\t思っ\t\t200
 \\!\t感嘆
@@ -41,11 +44,18 @@ fn a_converted_dictionary_finds_what_the_text_finds() {
     for reading in READINGS {
         assert_eq!(binary.words(reading), text.words(reading), "{reading}");
         assert_eq!(stems(&binary, reading), stems(&text, reading), "{reading}");
-        for row in ['k', 't', 's'] {
+        for head in [
+            Kana('く'),
+            Kana('つ'),
+            Kana('っ'),
+            Row('k'),
+            Row('t'),
+            Row('s'),
+        ] {
             assert_eq!(
-                binary.okuri(reading, row),
-                text.okuri(reading, row),
-                "{reading} {row}"
+                binary.okuri(reading, head),
+                text.okuri(reading, head),
+                "{reading} {head:?}"
             );
         }
     }
@@ -188,7 +198,8 @@ fn the_okuri_section_may_be_missing() {
         .filter(|(kind, _)| *kind != OKURI)
         .collect();
     let binary = BinaryDictionary::from_bytes(file(&parts)).unwrap();
-    assert_eq!(binary.okuri("か", 'k'), []);
+    assert_eq!(binary.okuri("か", Kana('く')), []);
+    assert_eq!(binary.okuri("か", Row('k')), []);
     assert_eq!(binary.words("きしゃ"), text().words("きしゃ"));
 }
 
@@ -375,7 +386,7 @@ fn an_okurigana_line_whose_surface_is_the_okurigana_converts() {
     let (text, invalid) = TextDictionary::parse("か*く\tく\nきしゃ\t記者");
     assert_eq!(invalid, []);
     let binary = binary(&text);
-    assert_eq!(binary.okuri("か", 'k'), text.okuri("か", 'k'));
+    assert_eq!(binary.okuri("か", Kana('く')), text.okuri("か", Kana('く')));
     assert_eq!(binary.words("きしゃ"), text.words("きしゃ"));
 }
 
@@ -486,8 +497,15 @@ fn look_through(binary: &BinaryDictionary) {
     let readings = binary.readings_from("", usize::MAX);
     for reading in readings.iter().map(String::as_str).chain(READINGS) {
         binary.lookup(reading);
-        for row in ['k', 's', 't', 'x'] {
-            binary.okuri(reading, row);
+        for head in [
+            Row('k'),
+            Row('s'),
+            Row('t'),
+            Row('x'),
+            Kana('く'),
+            Kana('っ'),
+        ] {
+            binary.okuri(reading, head);
         }
     }
 }
@@ -667,8 +685,8 @@ proptest! {
             prop_assert_eq!(binary.words(reading), text.words(reading), "{}", reading);
             prop_assert_eq!(stems(&binary, reading), stems(&text, reading), "{}", reading);
         }
-        for (stem, row) in text.okuri_keys() {
-            prop_assert_eq!(binary.okuri(stem, row), text.okuri(stem, row), "{} {}", stem, row);
+        for (stem, head) in text.okuri_keys() {
+            prop_assert_eq!(binary.okuri(stem, head), text.okuri(stem, head), "{} {:?}", stem, head);
         }
         look_through(&binary);
     }
