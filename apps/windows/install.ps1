@@ -63,10 +63,20 @@ Copy-Item -Force (Join-Path $root 'target\release\kanaemi-settings.exe') $settin
 # Its Japanese name is spelled by code point: Windows PowerShell reads a
 # script without a byte order mark in the system's code page.
 $name = -join [char[]](0x304B, 0x306A, 0x3048, 0x307F, 0x8A2D, 0x5B9A)
-$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut(
-    (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\$name.lnk"))
-$shortcut.TargetPath = $settings
-$shortcut.Save()
+# WScript.Shell passes the shortcut's path through the system's code page too,
+# where the name becomes question marks and the save fails, so it saves under
+# an ASCII name and PowerShell renames it. Without the shortcut the input
+# method still works: a failure warns and the install goes on.
+try {
+    $programs = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'
+    $saved = Join-Path $programs 'kanaemi-settings.lnk'
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($saved)
+    $shortcut.TargetPath = $settings
+    $shortcut.Save()
+    Move-Item -Force $saved (Join-Path $programs "$name.lnk")
+} catch {
+    Write-Warning "no Start menu shortcut to the settings app: $_"
+}
 $server = Join-Path $dest 'kanaemi-server.exe'
 Copy-Item -Force (Join-Path $root 'target\release\kanaemi-server.exe') $server
 
