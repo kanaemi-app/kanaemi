@@ -32,6 +32,10 @@ test-thorough cases="20000":
 accuracy:
     cargo test -p kanaemi-engine --test integration accuracy -- --nocapture
 
+# Run the benchmarks, passing args to Criterion (a name to filter by, --save-baseline name); lint only builds them.
+bench *args:
+    cargo bench --workspace --bench '*' -- {{args}}
+
 # Build the macOS input method and install it into ~/Library/Input Methods.
 install-macos:
     apps/macos/install.sh

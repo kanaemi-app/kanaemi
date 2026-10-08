@@ -1,0 +1,13 @@
+[package]
+name = "kanaemi-bench-support"
+description = "Synthetic dictionaries and ranking models the benchmarks run on"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+
+[dev-dependencies]
+kanaemi-engine.workspace = true
