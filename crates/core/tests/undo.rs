@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Event, Key, Modifiers, Output};
+use kanaemi_core::{Event, Key, Mode, Modifiers, Output};
 
 fn undo(t: &mut T) -> Output {
     t.press(
@@ -141,6 +141,24 @@ fn nothing_changes_when_the_host_could_not_erase() {
 }
 
 #[test]
+fn a_commit_undone_as_the_mode_leaves_kana_goes_back_as_it_was() {
+    let mut t = committed();
+    t.typ("suru");
+    undo(&mut t);
+    t.handle(Event::SetMode(Mode::Abc));
+    let out = t.handle(Event::Erased(true));
+    assert_eq!(
+        (out.commit.as_deref(), out.preedit.as_str(), out.mode),
+        (Some("記者する"), "", Mode::Abc)
+    );
+    assert_eq!(out.candidates, None);
+    let learned = t.converter();
+    assert!(learned.withdrawn.is_empty());
+    assert_eq!(learned.commits.len(), 1, "committed once");
+    assert_eq!(learned.erased, ["記者する"]);
+}
+
+#[test]
 fn with_nothing_to_undo_the_key_passes_on() {
     let mut t = T::new();
     t.kana();
@@ -221,6 +239,26 @@ fn keys_typed_before_the_host_could_not_erase_go_after_the_commit() {
     t.ch('a');
     let out = t.handle(Event::Erased(false));
     assert_eq!(out.commit.as_deref(), Some("あ"));
+}
+
+#[test]
+fn keys_waiting_for_the_host_are_not_sent_as_other_keys() {
+    let mut t = committed();
+    undo(&mut t);
+    t.ctrl('n');
+    let out = t.handle(Event::Erased(false));
+    assert_eq!(out.send, None);
+}
+
+#[test]
+fn keys_waiting_for_the_host_leave_what_they_commit_undoable() {
+    let mut t = committed();
+    undo(&mut t);
+    t.key(Key::Enter);
+    t.ctrl('n');
+    let out = t.handle(Event::Erased(true));
+    assert_eq!(out.commit.as_deref(), Some("記者"));
+    assert_eq!(undo(&mut t).erase.as_deref(), Some("記者"));
 }
 
 #[test]

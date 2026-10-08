@@ -279,6 +279,21 @@ fn up_and_down_in_the_text_to_register_keep_unfinished_romaji() {
 }
 
 #[test]
+fn keys_without_a_meaning_pass_on_and_keep_unfinished_romaji_in_the_text_to_register() {
+    for key in [Key::F(1), Key::Other] {
+        let mut t = T::new();
+        t.kana();
+        t.typ(";nunu");
+        t.go_past_the_candidates();
+        t.ch('k');
+        let out = t.key(key);
+        assert!(!out.consumed, "{key:?}");
+        assert_eq!(out.commit, None, "{key:?}");
+        assert_eq!(t.ch('a').preedit, "»ぬぬ « か", "{key:?}");
+    }
+}
+
+#[test]
 fn zero_in_candidate_mode_registers_the_reading_straight_away() {
     let mut t = reading_kanji();
     t.key(Key::Space);

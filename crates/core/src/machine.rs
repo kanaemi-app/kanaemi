@@ -194,16 +194,19 @@ impl<C: Converter> Core<C> {
             Event::Erased(erased) => {
                 self.choose_again(erased);
                 // Taken from the application already, they can no longer
-                // pass on to it. One undoing again starts another wait, and
-                // the keys after it wait for that.
+                // pass on to it, so they leave the caret where it is. One
+                // undoing again starts another wait, and the keys after it
+                // wait for that.
                 let mut keys = mem::take(&mut self.keys_waiting).into_iter();
                 for key in keys.by_ref() {
-                    self.key_in_field(key);
+                    self.key(key);
                     if self.erasing.is_some() {
                         break;
                     }
                 }
                 self.keys_waiting.extend(keys);
+                // Nor can they be sent as other keys.
+                self.send = None;
                 true
             }
             Event::FocusIn { password } => {
@@ -688,6 +691,11 @@ impl<C: Converter> Core<C> {
             // romaji stays.
             key if !self.registrations.is_empty() && named(key) && key != Key::Space => {
                 self.state = State::Idle { pending };
+            }
+            // Passed on, a key leaves the text to register as it is.
+            key if !self.registrations.is_empty() && key != Key::Space => {
+                self.state = State::Idle { pending };
+                return false;
             }
             _ => {
                 let kana = self.flush_unfinished(&mut pending);
@@ -1200,6 +1208,14 @@ impl<C: Converter> Core<C> {
             return;
         };
         if !erased {
+            return;
+        }
+        // Candidates are chosen in kana mode only: out of it meanwhile, the
+        // commit goes back as it was, as `abc` commits what is chosen.
+        if self.mode == Mode::Abc {
+            self.effects.push(Effect::Erased(undoable.text()));
+            self.emit(&undoable.text());
+            self.undoable = Some(undoable);
             return;
         }
         self.effects.push(undoable.withdrawn());
