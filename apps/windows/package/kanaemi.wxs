@@ -20,7 +20,13 @@
          can read the DLL only under Program Files. -->
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Kanaemi">
-        <File Id="Dll" Source="$(Release)\kanaemi.dll" />
+        <File Id="Dll" Source="$(Dlls)\kanaemi.dll" />
+        <?if $(sys.BUILDARCH) = arm64 ?>
+        <!-- On ARM64 the DLL registered forwards each kind of process to the
+             DLL built for it. -->
+        <File Id="DllArm64" Source="$(Dlls)\kanaemi_arm64.dll" />
+        <File Id="DllX64" Source="$(Dlls)\kanaemi_x64.dll" />
+        <?endif?>
         <File Id="Server" Source="$(Release)\kanaemi-server.exe" />
         <!-- It opens from the Start menu too, not only from the input
              method's options in the Windows settings. -->

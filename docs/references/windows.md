@@ -10,6 +10,8 @@ Windows の入力方式を作るときに知っておく、Text Services Framewo
 - 未確定文字列：編集セッションの中で、初回は `InsertTextAtSelection(TF_IAS_QUERYONLY)` で得た範囲で `StartComposition` する。そのたびに composition の範囲に `SetText` し、キャレットを末尾に置く。確定は `EndComposition`。
 - x64・arm64 に加え、32 ビットのアプリ向けに x86 の DLL が要る。32 ビットの DLL は、32 ビットの `regsvr32` で登録すると、レジストリの 32 ビット側（`WOW6432Node`）に入る。
 - ARM64 の Windows で x64 のアプリが読み込むには、ARM64X か ARM64EC の DLL が要る。x64 の DLL を 64 ビット側に登録すると、ARM64 のアプリが読み込めなくなる。
+- コードを持たず転送するだけの ARM64X の DLL を 64 ビット側に登録すると、ARM64 のアプリ（Notepad など）は ARM64 の DLL を、x64 のアプリは x64 の DLL を読み込み、どちらでも入力できる。`regsvr32` で登録すると、ARM64 の DLL の `DllRegisterServer` が呼ばれる。
+- 転送用の DLL をリンクするには、転送先の DLL の名前で作った import library が要る。ないと転送する名前が解決できない（LNK2001）。`lib /def` は出力先に残った古い import library を読もうとして失敗する（LNK1136）。
 - 読み込み中の DLL は削除できないが改名はできる。改名して新しい DLL を置けば、アプリを起動し直したときに読み込まれる。
 
 ## フォーカス

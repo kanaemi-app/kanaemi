@@ -2,7 +2,8 @@
 # target\package. Needs the WiX toolset (the `wix` .NET tool).
 #
 # The package is for this machine's architecture, and carries the x86 DLL
-# that 32-bit applications load.
+# that 32-bit applications load. On ARM64 it carries the DLLs arm64x.ps1
+# makes, so that x64 applications load the text service too.
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -37,11 +38,17 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     'ARM64' { 'arm64' }
     default { throw "no package architecture for $env:PROCESSOR_ARCHITECTURE" }
 }
+$dlls = $release
+if ($arch -eq 'arm64') {
+    $dlls = Join-Path $root 'target\arm64x'
+    & (Join-Path $PSScriptRoot 'arm64x.ps1') $dlls
+}
 
 New-Item -ItemType Directory -Force $out | Out-Null
 Invoke-Checked wix build (Join-Path $PSScriptRoot 'package\kanaemi.wxs') `
     -arch $arch `
     -d "Version=$packageVersion" `
     -d "Release=$release" `
+    -d "Dlls=$dlls" `
     -d "ReleaseX86=$(Join-Path $root "target\$x86\release")" `
     -o (Join-Path $out "Kanaemi-$version-$arch.msi")

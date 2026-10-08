@@ -24,6 +24,7 @@ pub mod pipe;
 mod placement;
 #[cfg(windows)]
 mod popup;
+mod registration;
 #[cfg(windows)]
 mod remote;
 #[cfg(windows)]

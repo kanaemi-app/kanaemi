@@ -3,7 +3,8 @@
 #
 # The DLL goes into Program Files because processes in an AppContainer, such as
 # the Start menu's search box, can read only there. A 32-bit application loads
-# the x86 DLL beside it, registered by the 32-bit regsvr32.
+# the x86 DLL beside it, registered by the 32-bit regsvr32. On ARM64 the DLLs
+# are the ones arm64x.ps1 makes, so that x64 applications load it too.
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -20,21 +21,34 @@ Invoke-Checked cargo build --release -p kanaemi-windows -p kanaemi-settings --bi
 Invoke-Checked rustup target add $x86
 Invoke-Checked cargo build --release -p kanaemi-windows --lib --target $x86 --manifest-path $manifest
 
-# Applications keep the DLL loaded, so it cannot be replaced, but it can be
-# renamed: each application loads the new one when it starts again.
+# Applications keep the DLLs loaded, so they cannot be replaced, but they can
+# be renamed: each application loads the new ones when it starts again.
+# kanaemi.dll among them is the one registered.
 function Install-Dll($from, $folder, $regsvr32) {
     New-Item -ItemType Directory -Force $folder | Out-Null
-    Get-ChildItem $folder -Filter 'kanaemi.old.*.dll' | Remove-Item -ErrorAction SilentlyContinue
-    $dll = Join-Path $folder 'kanaemi.dll'
-    if (Test-Path $dll) {
-        Move-Item -Force $dll (Join-Path $folder ('kanaemi.old.' + [guid]::NewGuid() + '.dll'))
+    Get-ChildItem $folder -Filter 'kanaemi*.old.*.dll' | Remove-Item -ErrorAction SilentlyContinue
+    foreach ($file in $from) {
+        $name = Split-Path -Leaf $file
+        $installed = Join-Path $folder $name
+        if (Test-Path $installed) {
+            $old = [IO.Path]::GetFileNameWithoutExtension($name) + '.old.' + [guid]::NewGuid() + '.dll'
+            Move-Item -Force $installed (Join-Path $folder $old)
+        }
+        Copy-Item $file $installed
     }
-    Copy-Item $from $dll
+    $dll = Join-Path $folder 'kanaemi.dll'
     $registered = Start-Process $regsvr32 -ArgumentList '/s', "`"$dll`"" -Wait -PassThru
     if ($registered.ExitCode -ne 0) { throw "$regsvr32 failed with $($registered.ExitCode)" }
 }
 
-Install-Dll (Join-Path $root 'target\release\kanaemi.dll') $dest 'regsvr32'
+if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
+    $arm64x = Join-Path $root 'target\arm64x'
+    & (Join-Path $PSScriptRoot 'arm64x.ps1') $arm64x
+    $dlls = 'kanaemi.dll', 'kanaemi_arm64.dll', 'kanaemi_x64.dll' | ForEach-Object { Join-Path $arm64x $_ }
+} else {
+    $dlls = Join-Path $root 'target\release\kanaemi.dll'
+}
+Install-Dll $dlls $dest 'regsvr32'
 Install-Dll (Join-Path $root "target\$x86\release\kanaemi.dll") (Join-Path $dest 'x86') (Join-Path $env:windir 'SysWOW64\regsvr32.exe')
 
 # Running programs keep their files: the new ones replace them once stopped.
