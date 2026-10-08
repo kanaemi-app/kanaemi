@@ -76,6 +76,9 @@ const KANAEMI: [(&str, &str); 1] = [("number", include_str!("../assets/kanaemi/n
 /// Long enough for any function that writes a word, short enough that typing
 /// does not stall on one that never ends.
 const TIME_LIMIT: Duration = Duration::from_millis(50);
+/// Times in a row a function or a file may run past the time limit before it
+/// is given up: a moment the machine stalls passes, a loop does not.
+const TIMES_TOO_LONG: u32 = 3;
 const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 /// Bytes of printed text kept between two reads of them: plenty for
 /// debugging, and no way around the memory limit.
@@ -123,6 +126,20 @@ impl Shared {
         let result = run();
         self.deadline.set(None);
         result
+    }
+
+    /// Runs `read` as `name` like [`Self::run`], again while it is stopped at
+    /// the time limit, up to [`TIMES_TOO_LONG`] times: a file is read only
+    /// once, so a stall then would leave it out until it is read again.
+    fn read<T>(&self, name: &str, mut read: impl FnMut() -> mlua::Result<T>) -> mlua::Result<T> {
+        let mut times = 1;
+        loop {
+            let result = self.run(name, &mut read);
+            if result.is_ok() || !self.timed_out.get() || times == TIMES_TOO_LONG {
+                return result;
+            }
+            times += 1;
+        }
     }
 
     /// Keeps the line `parts` make, joined with tabs, unless it would pass the
@@ -180,9 +197,10 @@ pub struct LuauFunctions {
     /// Functions whose failure is already reported, so one that fails at
     /// every conversion is reported once.
     reported: RefCell<HashSet<String>>,
-    /// Functions stopped at the time limit, never run again: each run would
-    /// stall typing as long.
-    stopped: RefCell<HashSet<String>>,
+    /// How many times in a row each function was stopped at the time limit.
+    /// One stopped [`TIMES_TOO_LONG`] times is never run again: each run
+    /// would stall typing as long.
+    too_long: RefCell<HashMap<String, u32>>,
 }
 
 /// The functions not to use.
@@ -260,7 +278,7 @@ impl LuauFunctions {
             shared,
             errors: RefCell::new(errors),
             reported: RefCell::new(HashSet::new()),
-            stopped: RefCell::new(HashSet::new()),
+            too_long: RefCell::new(HashMap::new()),
         }
     }
 
@@ -290,6 +308,19 @@ impl LuauFunctions {
             });
         }
     }
+
+    /// How many times in a row `name` has run too long, counting the run
+    /// just ended.
+    fn ran_too_long(&self, name: &str) -> u32 {
+        let mut too_long = self.too_long.borrow_mut();
+        if !self.shared.timed_out.get() {
+            too_long.remove(name);
+            return 0;
+        }
+        let times = too_long.entry(name.to_owned()).or_default();
+        *times += 1;
+        *times
+    }
 }
 
 impl Functions for LuauFunctions {
@@ -299,12 +330,23 @@ impl Functions for LuauFunctions {
 
     fn call(&self, call: &Call) -> Option<String> {
         let function = self.functions.get(call.name)?;
-        if self.stopped.borrow().contains(call.name) {
+        if self.too_long.borrow().get(call.name) == Some(&TIMES_TOO_LONG) {
             return None;
         }
         let result = self.shared.run(call.name, || {
             function.call::<Value>((call.source, call.argument))
         });
+        if self.ran_too_long(call.name) == TIMES_TOO_LONG {
+            // Reported even after its first failure was: it is never run again.
+            self.errors.borrow_mut().push(FunctionError::Failed {
+                name: call.name.to_owned(),
+                message: format!(
+                    "ran too long {TIMES_TOO_LONG} times in a row; not run again until read again"
+                ),
+            });
+            let _ = self.lua.gc_collect();
+            return None;
+        }
         let text = match result {
             Ok(Value::Nil) => return None,
             Ok(Value::String(text)) => text.to_str().map(|text| text.to_owned()),
@@ -317,9 +359,6 @@ impl Functions for LuauFunctions {
         // Leftovers of a failed call go now, not at some later conversion.
         if text.is_err() {
             let _ = self.lua.gc_collect();
-        }
-        if self.shared.timed_out.get() {
-            self.stopped.borrow_mut().insert(call.name.to_owned());
         }
         text.map_err(|error| self.fail(call.name, error.to_string()))
             .ok()
@@ -348,9 +387,7 @@ fn sandbox(dir: &Path, shared: &Rc<Shared>) -> mlua::Result<Lua> {
         move |_| match shared.deadline.get() {
             Some(deadline) if Instant::now() > deadline => {
                 shared.timed_out.set(true);
-                Err(mlua::Error::runtime(
-                    "ran too long; not run again until read again",
-                ))
+                Err(mlua::Error::runtime("ran too long"))
             }
             _ => Ok(VmState::Continue),
         }
@@ -466,7 +503,7 @@ fn builtin_names() -> impl Iterator<Item = &'static str> {
 /// Through `require`, as a file of the folder is, so the modules it shares
 /// run once.
 fn builtin(lua: &Lua, name: &str, shared: &Shared) -> mlua::Result<Function> {
-    shared.run(name, || {
+    shared.read(name, || {
         lua.load("return require(...)")
             .set_name(format!("{BUILTIN_CHUNK}{name}.{EXTENSION}"))
             .call::<Function>(format!("./{name}"))
@@ -487,7 +524,7 @@ fn load(
         })?;
     // Through `require`, so a file other functions require too is run once.
     let value = shared
-        .run(name, || {
+        .read(name, || {
             lua.load("return require(...)")
                 .set_name(format!("@{}", path.display()))
                 .call::<Value>(format!("./{name}"))

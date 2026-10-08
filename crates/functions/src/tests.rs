@@ -277,13 +277,71 @@ fn a_file_that_never_ends_is_stopped() {
     assert_eq!(functions.take_errors().len(), 1);
 }
 
+/// A function that counts its calls in `lib/calls`, and runs forever on
+/// those `stalls` says, as a moment the machine stops it would look.
+fn stalling(stalls: &str) -> LuauFunctions {
+    open(&[
+        ("lib/calls.luau", "return { count = 0 }"),
+        (
+            "stall.luau",
+            &format!(
+                "local calls = require('./lib/calls')\nreturn function()\n  calls.count += 1\n  if ({stalls})(calls.count) then while true do end end\n  return 'done'\nend"
+            ),
+        ),
+        (
+            "calls.luau",
+            "local calls = require('./lib/calls')\nreturn function() return tostring(calls.count) end",
+        ),
+    ])
+}
+
 #[test]
-fn a_function_that_ran_too_long_is_not_run_again() {
-    let functions = open(&[("loop.luau", "return function() while true do end end")]);
-    assert_eq!(call(&functions, "loop", "", None), None);
-    let started = Instant::now();
-    assert_eq!(call(&functions, "loop", "", None), None);
-    assert!(started.elapsed() < TIME_LIMIT / 2);
+fn a_function_that_ran_too_long_once_is_run_again() {
+    let functions = stalling("function(n) return n == 1 end");
+    assert_eq!(call(&functions, "stall", "", None), None);
+    assert_eq!(call(&functions, "stall", "", None).as_deref(), Some("done"));
+}
+
+#[test]
+fn a_function_that_ran_too_long_now_and_then_is_never_stopped() {
+    let functions = stalling(&format!("function(n) return n % {TIMES_TOO_LONG} ~= 0 end"));
+    for _ in 0..3 {
+        for _ in 1..TIMES_TOO_LONG {
+            assert_eq!(call(&functions, "stall", "", None), None);
+        }
+        assert_eq!(call(&functions, "stall", "", None).as_deref(), Some("done"));
+    }
+}
+
+#[test]
+fn a_function_that_ran_too_long_time_after_time_is_not_run_again() {
+    let functions = stalling("function() return true end");
+    for _ in 0..TIMES_TOO_LONG + 2 {
+        assert_eq!(call(&functions, "stall", "", None), None);
+    }
+    assert_eq!(
+        call(&functions, "calls", "", None),
+        Some(TIMES_TOO_LONG.to_string())
+    );
+    let errors = functions.take_errors();
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(
+        errors[1].to_string().contains("not run again"),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn a_file_that_ran_too_long_once_is_read_again() {
+    let functions = open(&[
+        ("lib/once.luau", "return { stalled = false }"),
+        (
+            "late.luau",
+            "local once = require('./lib/once')\nif not once.stalled then once.stalled = true while true do end end\nreturn function() return 'late' end",
+        ),
+    ]);
+    assert_eq!(call(&functions, "late", "", None).as_deref(), Some("late"));
+    assert_eq!(functions.take_errors(), []);
 }
 
 #[test]
