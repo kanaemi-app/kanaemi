@@ -1,4 +1,6 @@
 use kanaemi_core::Converter;
+use proptest::collection::vec;
+use proptest::prelude::*;
 
 use super::writer::encode;
 use super::*;
@@ -470,5 +472,204 @@ fn readings_are_listed_in_order_from_a_prefix() {
         assert_eq!(dictionary.readings_from("", 3), ["!", "か", "きしゃ"]);
         assert_eq!(dictionary.readings_from("き", 10), ["きしゃ"]);
         assert_eq!(dictionary.readings_from("ん", 10), Vec::<String>::new());
+    }
+}
+
+// Robustness: whatever the bytes, opening either rejects them or gives a
+// dictionary every lookup of which works.
+
+/// Looks up everything the dictionary lists, and what it may hold, as
+/// conversion may.
+fn look_through(binary: &BinaryDictionary) {
+    let _ = binary.verify_checksums();
+    binary.source_digest();
+    let readings = binary.readings_from("", usize::MAX);
+    for reading in readings.iter().map(String::as_str).chain(READINGS) {
+        binary.lookup(reading);
+        for row in ['k', 's', 't', 'x'] {
+            binary.okuri(reading, row);
+        }
+    }
+}
+
+fn open_and_look_through(bytes: Vec<u8>) {
+    if let Ok(binary) = BinaryDictionary::from_bytes(bytes) {
+        look_through(&binary);
+    }
+}
+
+/// A valid file, with an okurigana index and a source.
+fn good() -> Vec<u8> {
+    encode(&text(), Some([7; 32]))
+}
+
+/// Where [`good`] holds a number of its header or section table, with its
+/// width in bytes. The table of a mutated file may claim any number of
+/// sections, so its own count is not followed.
+fn numbers() -> Vec<(usize, usize)> {
+    let bytes = good();
+    let mut numbers = vec![(8, 4), (12, 4), (16, 8), (24, 8)];
+    for i in 0..u32_at(&bytes, 12) as usize {
+        let at = 32 + i * 32;
+        numbers.extend([
+            (at, 4),
+            (at + 4, 4),
+            (at + 8, 8),
+            (at + 16, 8),
+            (at + 24, 8),
+        ]);
+    }
+    numbers
+}
+
+#[derive(Clone, Debug)]
+enum Mutation {
+    Truncate(prop::sample::Index),
+    Flip(prop::sample::Index, u8),
+    /// Writes a number over one of the header or the section table.
+    Number(prop::sample::Index, u64),
+    Append(Vec<u8>),
+}
+
+fn mutation() -> impl Strategy<Value = Mutation> {
+    // Numbers at and around the edges a reader must check.
+    let number = prop_oneof![
+        Just(0u64),
+        Just(1),
+        Just(2),
+        Just(u64::from(u16::MAX)),
+        Just(u64::from(u32::MAX)),
+        Just(u64::MAX),
+        Just(u64::MAX - 31),
+        Just(1 << 32),
+        Just(1 << 63),
+        0..4096u64,
+        any::<u64>(),
+    ];
+    prop_oneof![
+        any::<prop::sample::Index>().prop_map(Mutation::Truncate),
+        (any::<prop::sample::Index>(), 0..8u8).prop_map(|(at, bit)| Mutation::Flip(at, bit)),
+        (any::<prop::sample::Index>(), number).prop_map(|(at, n)| Mutation::Number(at, n)),
+        vec(any::<u8>(), 1..64).prop_map(Mutation::Append),
+    ]
+}
+
+fn mutate(bytes: &mut Vec<u8>, mutation: &Mutation) {
+    if bytes.is_empty() {
+        return;
+    }
+    match mutation {
+        Mutation::Truncate(at) => bytes.truncate(at.index(bytes.len())),
+        Mutation::Flip(at, bit) => {
+            let at = at.index(bytes.len());
+            bytes[at] ^= 1 << bit;
+        }
+        Mutation::Number(at, n) => {
+            if bytes.len() < 32 {
+                return;
+            }
+            let table = numbers()
+                .into_iter()
+                .filter(|&(at, width)| at + width <= bytes.len())
+                .collect::<Vec<_>>();
+            let (at, width) = table[at.index(table.len())];
+            bytes[at..at + width].copy_from_slice(&n.to_le_bytes()[..width]);
+        }
+        Mutation::Append(more) => bytes.extend_from_slice(more),
+    }
+}
+
+/// One section of a valid file changed, the file laid out again around it with
+/// its checksum, so the change reaches the checks of the section's contents.
+#[derive(Clone, Debug)]
+struct SectionChange {
+    section: prop::sample::Index,
+    at: prop::sample::Index,
+    change: Vec<u8>,
+    truncate: bool,
+}
+
+fn section_change() -> impl Strategy<Value = SectionChange> {
+    (
+        any::<prop::sample::Index>(),
+        any::<prop::sample::Index>(),
+        vec(any::<u8>(), 0..16),
+        any::<bool>(),
+    )
+        .prop_map(|(section, at, change, truncate)| SectionChange {
+            section,
+            at,
+            change,
+            truncate,
+        })
+}
+
+proptest! {
+    #[test]
+    fn any_bytes_are_rejected_or_looked_up_without_panicking(
+        bytes in vec(any::<u8>(), 0..1024),
+    ) {
+        open_and_look_through(bytes);
+    }
+
+    #[test]
+    fn any_bytes_after_a_valid_header_are_rejected_or_looked_up_without_panicking(
+        count in 0..8u32,
+        rest in vec(any::<u8>(), 0..1024),
+    ) {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"KANAEMID");
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&count.to_le_bytes());
+        bytes.resize(32, 0);
+        bytes.extend(rest);
+        open_and_look_through(bytes);
+    }
+
+    #[test]
+    fn a_mutated_file_is_rejected_or_looked_up_without_panicking(
+        mutations in vec(mutation(), 1..4),
+    ) {
+        let mut bytes = good();
+        for mutation in &mutations {
+            mutate(&mut bytes, mutation);
+        }
+        open_and_look_through(bytes);
+    }
+
+    #[test]
+    fn a_changed_section_is_rejected_or_looked_up_without_panicking(
+        changes in vec(section_change(), 1..3),
+    ) {
+        let mut parts = sections(&good());
+        for change in &changes {
+            let (_, contents) = change.section.get_mut(&mut parts);
+            let at = change.at.index(contents.len() + 1);
+            if change.truncate {
+                contents.truncate(at);
+            }
+            let end = (at + change.change.len()).min(contents.len());
+            contents.splice(at..end, change.change.iter().copied());
+        }
+        open_and_look_through(file(&parts));
+    }
+
+    #[test]
+    fn any_text_dictionary_converts_into_a_file_that_finds_what_the_text_finds(
+        text in crate::test_support::dictionary_text(),
+    ) {
+        let (bytes, _) = convert_text(&text);
+        let binary = BinaryDictionary::from_bytes(bytes).unwrap();
+        prop_assert!(binary.verify_checksums().is_ok());
+        let (text, _) = TextDictionary::parse(&text);
+        let readings: Vec<&str> = text.readings().collect();
+        for reading in readings {
+            prop_assert_eq!(binary.words(reading), text.words(reading), "{}", reading);
+            prop_assert_eq!(stems(&binary, reading), stems(&text, reading), "{}", reading);
+        }
+        for (stem, row) in text.okuri_keys() {
+            prop_assert_eq!(binary.okuri(stem, row), text.okuri(stem, row), "{} {}", stem, row);
+        }
+        look_through(&binary);
     }
 }

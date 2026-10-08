@@ -1,6 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use proptest::collection::{btree_map, vec};
+use proptest::prelude::*;
+
 use kanaemi_config::{
     APPLICATION_TABLE, DictionarySource, FILE_NAME, ProblemKind, Settings, TEMPLATE, UNBOUND,
     actions, binding_tables, bindings_table, default_romaji_table, format_action, key_names,
@@ -835,4 +838,94 @@ fn the_template_says_that_a_written_dictionary_list_replaces_the_folder_default(
         .collect();
     assert!(comment.contains("代わり"), "{comment}");
     assert!(comment.contains("フォルダの辞書も書く"), "{comment}");
+}
+
+// Robustness: whatever the settings file holds, it loads without panicking,
+// as a file that cannot be read loads as one that writes nothing.
+
+/// Where a setting may be written, with the keys each place may hold, known
+/// or not.
+const PLACES: &[(&str, &[&str])] = &[
+    (
+        "",
+        &["dictionaries", "mode_indicator", "marks", "keys", "unknown"],
+    ),
+    (
+        "marks",
+        &[
+            "reading",
+            "candidate",
+            "okurigana",
+            "registration",
+            "cursor",
+            "hold",
+            "unknown",
+        ],
+    ),
+    ("romaji", &["tables", "keep_unfinished", "unknown"]),
+    ("control", &["port", "unknown"]),
+    ("functions", &["disabled", "unknown"]),
+    (
+        "keys",
+        &["pass_while_composing", "tap_timeout_ms", "kana", "unknown"],
+    ),
+    ("keys.kana", BINDING_KEYS),
+    ("keys.reading", BINDING_KEYS),
+    ("keys.candidates", BINDING_KEYS),
+    ("keys.registration", BINDING_KEYS),
+    ("keys.abc", BINDING_KEYS),
+    ("keys.application", BINDING_KEYS),
+    ("keys.unknown", BINDING_KEYS),
+];
+
+#[rustfmt::skip]
+const BINDING_KEYS: &[&str] = &[
+    "a", ";", "ctrl+j", "shift+space", "cmd+ctrl+alt+shift+a", "left-shift#tap", "space#hold",
+    "a#hold", "ctrl+left-shift", "left-shift", "f12", "f13", "ctrl+", "+", "#tap", "", "あ",
+];
+
+#[rustfmt::skip]
+const VALUES: &[&str] = &[
+    "true", "0", "-1", "1", "65535", "65536", "9223372036854775807", "1.5", "nan", "{}", "[]",
+    "\"\"", "\"x\"", "\"\\t\"", "\"›\"", "\"@begin\"", "\"@none\"", "\"@select-1\"",
+    "\"@select-10\"", "\"@forget\"", "\"ctrl+h\"", "\"left-shift\"", "\"f12\"", "\"x+y\"",
+    "[\"custom\"]", "[\"builtin:date\"]", "[\"builtin:unknown\"]", "[\"../x.tsv\"]",
+    "[\"/x.tsv\"]", "[\"sub/a.tsv\"]", "[\"custom\", \"custom\"]", "[\"hepburn\", \"azik\"]",
+    "[\"unknown\"]", "[\"cmd\", \"ctrl\", \"alt\"]", "[\"shift\"]", "[1]", "{ a = 1 }",
+];
+
+fn settings_text() -> impl Strategy<Value = String> {
+    let place = proptest::sample::select(PLACES).prop_flat_map(|(name, keys)| {
+        let entries = btree_map(
+            proptest::sample::select(keys),
+            proptest::sample::select(VALUES),
+            0..6,
+        );
+        (Just(name), entries)
+    });
+    vec(place, 0..6).prop_map(|mut places| {
+        // The top level first and each table once, so that most files are
+        // TOML and reach the reading of each setting.
+        places.sort_by_key(|(name, _)| *name);
+        places.dedup_by_key(|(name, _)| *name);
+        let mut text = String::new();
+        for (name, entries) in places {
+            if !name.is_empty() {
+                text.push_str(&format!("[{name}]\n"));
+            }
+            for (key, value) in entries {
+                text.push_str(&format!("{key:?} = {value}\n"));
+            }
+        }
+        text
+    })
+}
+
+proptest! {
+    #[test]
+    fn any_settings_file_loads_without_panicking(
+        text in prop_oneof![settings_text(), any::<String>()],
+    ) {
+        Settings::load(&text, Path::new("/nonexistent"));
+    }
 }

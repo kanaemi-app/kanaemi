@@ -1,6 +1,9 @@
 use encoding_rs::{EUC_JP, Encoding, ISO_2022_JP, SHIFT_JIS, UTF_8};
+use proptest::collection::vec;
+use proptest::prelude::*;
 
 use super::*;
+use crate::TextDictionary;
 
 fn named(label: &str) -> &'static Encoding {
     encoding(&format!(";; -*- coding: {label} -*-")).unwrap()
@@ -121,5 +124,52 @@ fn jis_x_0213_codings_are_not_supported() {
             }),
             "{label}"
         );
+    }
+}
+
+// Robustness: whatever the bytes, importing either fails with a reason or
+// gives lines a text dictionary reads whole.
+
+/// Pieces of an SKK line that the format gives a meaning to.
+#[rustfmt::skip]
+const PIECES: &[&str] = &[
+    // Headings and candidates.
+    "か", "き", "しゃ", "っ", "記者", "書", "a", "k", "c", "x", "1", "#", "#0", "#1", "#3", "#4",
+    // Separators and marks.
+    " ", " /", "/", ";", "[", "]", "(", ")", ">", "\t", "\r", "\n", "\r\n", "\u{FEFF}",
+    // What a text dictionary gives a meaning to.
+    "*", "!", "\\", "{", "}", "{}", "\u{FDD0}", "\u{FDD1}", "e\u{301}",
+];
+
+fn skk_text() -> impl Strategy<Value = String> {
+    let coding = proptest::sample::select(vec![
+        "",
+        ";; -*- coding: utf-8 -*-\n",
+        ";; -*- coding: euc-jp -*-\n",
+        ";; -*- coding: shift_jis -*-\n",
+        ";; -*- coding: iso-2022-jp -*-\n",
+    ]);
+    let line = vec(proptest::sample::select(PIECES), 0..10).prop_map(|pieces| pieces.concat());
+    (coding, vec(line, 0..10)).prop_map(|(coding, lines)| format!("{coding}{}", lines.join("\n")))
+}
+
+fn assert_reads_whole(text: &str) {
+    let (_, invalid) = TextDictionary::parse(text);
+    assert_eq!(invalid, [], "{text:?}");
+}
+
+proptest! {
+    #[test]
+    fn any_bytes_import_into_lines_a_text_dictionary_reads(bytes in vec(any::<u8>(), 0..512)) {
+        if let Ok(text) = skk_to_text(&bytes) {
+            assert_reads_whole(&text);
+        }
+    }
+
+    #[test]
+    fn any_skk_text_imports_into_lines_a_text_dictionary_reads(text in skk_text()) {
+        if let Ok(text) = skk_to_text(text.as_bytes()) {
+            assert_reads_whole(&text);
+        }
     }
 }

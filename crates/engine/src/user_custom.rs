@@ -334,7 +334,11 @@ impl FileLock {
 
 #[cfg(test)]
 mod tests {
+    use proptest::collection::vec;
+    use proptest::prelude::*;
+
     use super::*;
+    use crate::test_support::dictionary_text;
 
     /// A file with room for only `room` more bytes.
     struct Full {
@@ -410,5 +414,26 @@ mod tests {
         };
         append_line(&mut file, "きしゃ\t記者").unwrap();
         assert_eq!(file.bytes, "かく\t書く\nきしゃ\t記者\n".as_bytes());
+    }
+
+    proptest! {
+        // A rewrite keeps every line it does not take out byte for byte.
+        #[test]
+        fn the_lines_of_any_file_make_up_the_file(
+            bytes in prop_oneof![
+                vec(any::<u8>(), 0..256),
+                dictionary_text().prop_map(String::into_bytes),
+            ],
+        ) {
+            let mut joined = Vec::new();
+            for (line, text) in lines(&bytes) {
+                joined.extend_from_slice(line);
+                if let Some(text) = text {
+                    prop_assert!(!text.contains('\n'));
+                    TextDictionary::registration(text);
+                }
+            }
+            prop_assert_eq!(joined, bytes);
+        }
     }
 }
