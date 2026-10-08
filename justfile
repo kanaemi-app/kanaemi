@@ -15,10 +15,11 @@ fmt:
 fmt-check:
     cargo fmt --all --check
 
-# Lint, and build the core for WebAssembly to prove it needs nothing from its host.
+# Lint, build the core for WebAssembly to prove it needs nothing from its host, and keep the PowerShell scripts ASCII, as Windows PowerShell reads them in the system's code page.
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo check -p kanaemi-core --target wasm32-unknown-unknown
+    perl -ne 'if (/[^\x00-\x7F]/) { print "$ARGV:$.: not ASCII\n"; $bad = 1 } close ARGV if eof; END { exit $bad }' apps/windows/*.ps1
 
 # Run the Rust tests.
 test:
