@@ -34,6 +34,15 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+      # The store the development shell comes from, as the files that pin it
+      # describe it. Only an exact match is restored, so the store never
+      # carries what an older pin left behind, and only main saves, as for
+      # Rust below.
+      - uses: nix-community/cache-nix-action@v7.0.2
+        if: runner.os != 'Windows'
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
+          save: ${{ github.ref == 'refs/heads/main' }}
       # The same tools as local development (flake.nix), kept for the steps below.
       - uses: nicknovitski/nix-develop@v1.2.1
         if: runner.os != 'Windows'
