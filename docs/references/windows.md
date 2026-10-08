@@ -12,6 +12,12 @@ Windows の入力方式を作るときに知っておく、Text Services Framewo
 - ARM64 の Windows で x64 のアプリが読み込むには、ARM64X か ARM64EC の DLL が要る。x64 の DLL を 64 ビット側に登録すると、ARM64 のアプリが読み込めなくなる。
 - 読み込み中の DLL は削除できないが改名はできる。改名して新しい DLL を置けば、アプリを起動し直したときに読み込まれる。
 
+## フォーカス
+
+- 入力欄ごとの `ITfDocumentMgr` は context のスタックを持ち、入力を受けるのは一番上の context。スタックに積めるのは 2 つまで（[ITfDocumentMgr::Push](https://learn.microsoft.com/en-us/windows/win32/api/msctf/nf-msctf-itfdocumentmgr-push)）。
+- 文書マネージャーの間のフォーカスの移りは `ITfThreadMgrEventSink::OnSetFocus` で、スタックへの積み下ろしは `OnPushContext`／`OnPopContext` で知らされる。アプリがフォーカスのある文書マネージャーに context を積むと、`OnSetFocus` が来ないまま一番上の context が変わる。
+- `OnPopContext` が来たとき、その context がまだスタックに残っているかは確かめていない。
+
 ## キー
 
 - Notepad は `OnTestKeyDown`／`OnTestKeyUp` を呼ばない。状態は `OnKeyDown`／`OnKeyUp` で更新し、`OnTestKey*` は食べるかどうかの予測を返すだけにする。
