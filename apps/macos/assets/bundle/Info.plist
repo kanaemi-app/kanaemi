@@ -33,7 +33,7 @@
 	<key>TISIconIsTemplate</key>
 	<true/>
 	<key>tsInputMethodIconFileKey</key>
-	<string>kanaemi.png</string>
+	<string>input-source.png</string>
 	<key>tsInputMethodCharacterRepertoireKey</key>
 	<array>
 		<string>Hira</string>
