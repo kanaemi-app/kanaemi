@@ -5,7 +5,26 @@ name: Package
 # Makes the installers for each OS from the checked-out commit and keeps them,
 # each with a description of it (FILE.json), as workflow artifacts named
 # package-*, for the caller to use or discard.
+#
+# Run on its own, it proves the installers still build: on every commit to
+# main, and on a pull request only when it touches what the installers depend
+# on beyond the Rust sources. Those sources are compiled on every OS by
+# ci.yml, and nothing in them depends on the CPU architecture; the
+# architectures only these jobs build (ARM64, and x86 on Windows) differ by
+# the dependencies, their features and the build scripts.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - apps/**
+      - crates/*/Cargo.toml
+      - crates/*/build.rs
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/**
+      - .github/**
   workflow_call:
     inputs:
       # Signs the macOS app by the release identity, kept in the secrets of
@@ -14,6 +33,13 @@ on:
       sign:
         type: boolean
         default: false
+
+# As in ci.yml: a pull request only needs its latest commit packaged, and runs
+# on main queue. A release is never cancelled. Called by a workflow, this
+# reads the caller's event and ref.
+concurrency:
+  group: package-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -38,6 +64,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config dpkg-dev libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libxdo-dev libssl-dev
       - run: rustup toolchain install
+      # The C and C++ objects (Luau) are built by the runner image's compilers,
+      # which cc does not rebuild them for when they change, so the image's
+      # version keys the cache. Only main saves, so pull requests cannot evict
+      # the caches each other start from. A release builds from nothing, so
+      # what it ships owes nothing to an earlier run.
+      - uses: Swatinem/rust-cache@v2.9.2
+        if: ${{ !inputs.sign }}
+        with:
+          env-vars: ImageOS ImageVersion
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nfpm
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
@@ -64,6 +100,12 @@ jobs:
           fetch-depth: 0
       - run: brew install librsvg
       - run: rustup toolchain install
+      # As for Linux.
+      - uses: Swatinem/rust-cache@v2.9.2
+        if: ${{ !inputs.sign }}
+        with:
+          env-vars: ImageOS ImageVersion
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Import the release signing identity
         if: inputs.sign
         run: |
@@ -95,6 +137,12 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - run: rustup toolchain install
+      # As for Linux.
+      - uses: Swatinem/rust-cache@v2.9.2
+        if: ${{ !inputs.sign }}
+        with:
+          env-vars: ImageOS ImageVersion
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: dotnet tool install --global wix --version 5.0.2
       - run: apps/windows/package.ps1
         shell: pwsh
