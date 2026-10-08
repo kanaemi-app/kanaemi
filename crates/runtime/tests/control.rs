@@ -119,10 +119,11 @@ impl Client {
         }
     }
 
+    /// Sends `line` and its end in one write, so that the IME cannot end the
+    /// connection in between.
     fn send(&mut self, line: &str) {
         let stream = self.lines.get_mut();
-        stream.write_all(line.as_bytes()).unwrap();
-        stream.write_all(b"\n").unwrap();
+        stream.write_all(format!("{line}\n").as_bytes()).unwrap();
     }
 
     fn receive(&mut self) -> serde_json::Value {
@@ -262,8 +263,9 @@ fn an_unknown_request_is_answered_with_an_error_and_the_connection_stays() {
 fn a_line_that_is_not_a_json_object_closes_the_connection_unanswered() {
     let ime = Ime::open("http");
     let mut client = Client::connect(&ime);
-    client.send("POST / HTTP/1.1");
-    client.send(r#"{"op": "set-mode", "mode": "kana"}"#);
+    // Sent with the line before, as once the IME has read that line, the
+    // request may find the connection ended.
+    client.send("POST / HTTP/1.1\n{\"op\": \"set-mode\", \"mode\": \"kana\"}");
     assert!(client.closed());
     let mut client = Client::connect(&ime);
     client.send("[1, 2]");
