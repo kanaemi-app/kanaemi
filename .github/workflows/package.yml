@@ -5,7 +5,26 @@ name: Package
 # Makes the installers for each OS from the checked-out commit and keeps them,
 # each with a description of it (FILE.json), as workflow artifacts named
 # package-*, for the caller to use or discard.
+#
+# Run on its own, it proves the installers still build: on every commit to
+# main, and on a pull request only when it touches what the installers depend
+# on beyond the Rust sources. Those sources are compiled on every OS by
+# ci.yml, and nothing in them depends on the CPU architecture; the
+# architectures only these jobs build (ARM64, and x86 on Windows) differ by
+# the dependencies, their features and the build scripts.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - apps/**
+      - crates/*/Cargo.toml
+      - crates/*/build.rs
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - .cargo/**
+      - .github/**
   workflow_call:
     inputs:
       # Signs the macOS app by the release identity, kept in the secrets of
@@ -14,6 +33,13 @@ on:
       sign:
         type: boolean
         default: false
+
+# As in ci.yml: a pull request only needs its latest commit packaged, and runs
+# on main queue. A release is never cancelled. Called by a workflow, this
+# reads the caller's event and ref.
+concurrency:
+  group: package-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

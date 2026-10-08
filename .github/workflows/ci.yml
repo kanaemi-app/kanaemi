@@ -42,7 +42,3 @@ jobs:
       - run: just ci
         env:
           CI: "1"
-
-  # Proves the installers still build; release.yml makes the ones it ships.
-  package:
-    uses: ./.github/workflows/package.yml
