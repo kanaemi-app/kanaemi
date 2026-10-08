@@ -1,0 +1,54 @@
+# What the user means by a reading, after what came before in the field.
+#
+# reading<TAB>surface<TAB>before
+#
+# `*` in the reading marks where the okurigana starts. Each case starts on an
+# engine that has learnt nothing; `before` lists what happens first, split by
+# `;`:
+#
+#   commit <reading> <surface>   converts and commits in the field
+#   pick <reading> <surface>     commits in a field of its own, as across applications
+#   type <text>                  types text into the field without converting
+
+# Words as listed
+きしゃ	記者
+かんじ	漢字
+はし	橋
+
+# The edge of the first page of candidates
+こう	工
+こう	甲
+
+# Forms built from conjugating stems
+かいた	書いた
+かきます	書きます
+かわない	買わない
+たべない	食べない
+たかかった	高かった
+はなした	話した
+
+# Okurigana
+か*く	書く
+か*いた	書いた
+か*わない	買わない
+たか*い	高い
+たべ*た	食べた
+
+# Numbers
+3こ	3個
+12にん	12人
+4がつ	4月
+
+# The history of the field
+きしゃ	汽車	commit きしゃ 汽車
+かんじ	感じ	commit かんじ 感じ
+はし	箸	commit はし 箸; commit きしゃ 記者
+5こ	五個	commit 3こ 三個
+
+# Picked again and again
+きしゃ	貴社	pick きしゃ 貴社; pick きしゃ 貴社; pick きしゃ 貴社
+きしゃ	汽車	pick きしゃ 貴社; pick きしゃ 貴社; pick きしゃ 貴社; commit きしゃ 汽車
+
+# The text before the reading
+きしゃ	汽車	type 鉄道の
+はし	箸	type 割り

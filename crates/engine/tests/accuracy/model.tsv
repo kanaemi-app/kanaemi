@@ -1,0 +1,11 @@
+# The weights of a tiny ranking model the cases are also ranked with.
+#
+# feature<TAB>weight
+#
+# A feature is its name and values joined by `|`.
+
+# The surface last committed for the reading in the field
+hl|1	5.0
+# The last character before the reading, and the surface
+a|の|汽車	5.0
+a|り|箸	5.0

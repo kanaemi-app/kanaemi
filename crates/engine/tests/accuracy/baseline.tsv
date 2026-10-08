@@ -1,0 +1,17 @@
+# The cases that missed when last measured; a case missing that is not here
+# is a regression, and a case here that no longer misses is to be removed.
+#
+# A top-1 miss puts another candidate first; a top-N miss leaves the surface
+# off the first page of candidates.
+#
+# ranking<TAB>measure<TAB>reading<TAB>surface<TAB>before
+rules	top-1	こう	工
+rules	top-1	こう	甲
+rules	top-N	こう	甲
+rules	top-1	か*く	書く
+rules	top-1	きしゃ	汽車	type 鉄道の
+rules	top-1	はし	箸	type 割り
+model	top-1	こう	工
+model	top-1	こう	甲
+model	top-N	こう	甲
+model	top-1	か*く	書く

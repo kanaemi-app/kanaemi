@@ -28,6 +28,10 @@ test:
 test-thorough cases="20000":
     PROPTEST_CASES={{cases}} cargo test --workspace
 
+# Measure how often conversion puts first what is meant; also with the dictionaries in the folder KANAEMI_ACCURACY_DICTIONARIES when set, ranked with the model KANAEMI_ACCURACY_MODEL when set.
+accuracy:
+    cargo test -p kanaemi-engine --test integration accuracy -- --nocapture
+
 # Build the macOS input method and install it into ~/Library/Input Methods.
 install-macos:
     apps/macos/install.sh

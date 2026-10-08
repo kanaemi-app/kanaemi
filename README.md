@@ -87,6 +87,7 @@ brew install --cask kanaemi-app/tap/kanaemi
 ```sh
 nix develop
 just ci              # CI と同じ確かめ（整形・lint・テスト）
+just accuracy        # 変換の正解率を測る（KANAEMI_ACCURACY_DICTIONARIES に辞書のフォルダを渡すと、その辞書でも）
 just install-macos   # macOS の入力方式を ~/Library/Input Methods に入れる
 just install-ibus    # Linux（IBus）の入力方式を入れる
 just install-windows # Windows の入力方式を入れる（管理者のシェルで）

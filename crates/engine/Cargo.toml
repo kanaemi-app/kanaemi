@@ -17,4 +17,6 @@ unicode-normalization = "0.1"
 xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 
 [dev-dependencies]
+kanaemi-config.workspace = true
+kanaemi-functions.workspace = true
 proptest.workspace = true
