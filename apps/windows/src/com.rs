@@ -10,7 +10,10 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::*;
-use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
+use windows::Win32::System::LibraryLoader::{
+    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN, GetModuleFileNameW,
+    GetModuleHandleExW,
+};
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::Win32::UI::Input::KeyboardAndMouse::HKL;
@@ -126,6 +129,21 @@ extern "system" fn DllUnregisterServer() -> HRESULT {
 
 fn clsid_key() -> String {
     format!(r"Software\Classes\CLSID\{{{CLSID_KANAEMI:?}}}")
+}
+
+/// Keeps the DLL loaded until the process ends. COM unloads it when the
+/// application uninitializes COM, whatever `DllCanUnloadNow` answers, and a
+/// thread still running its code would then crash the application.
+pub(crate) fn pin() -> Result<()> {
+    let mut module = HMODULE::default();
+    // The module's base address lies within the module.
+    unsafe {
+        GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            PCWSTR(instance().0 as *const u16),
+            &mut module,
+        )
+    }
 }
 
 /// Where the DLL itself is, to find what is installed beside it.

@@ -132,6 +132,12 @@ fn connect() -> Option<Arc<Outbox>> {
         return None;
     }
     let outbox = Arc::new(Outbox::new().ok()?);
+    // The connection's thread outlives the text service, which COM may
+    // unload with the DLL meanwhile.
+    if let Err(error) = crate::com::pin() {
+        tracing::warn!(%error, "control connection not served");
+        return None;
+    }
     let spawned = std::thread::Builder::new()
         .name("kanaemi-control".to_owned())
         .spawn({

@@ -20,6 +20,14 @@ Windows の入力方式を作るときに知っておく、Text Services Framewo
 - 文書マネージャーの間のフォーカスの移りは `ITfThreadMgrEventSink::OnSetFocus` で、スタックへの積み下ろしは `OnPushContext`／`OnPopContext` で知らされる。アプリがフォーカスのある文書マネージャーに context を積むと、`OnSetFocus` が来ないまま一番上の context が変わる。
 - `OnPopContext` が来たとき、その context がまだスタックに残っているかは確かめていない。
 
+## アクティブ化と片付け
+
+- IME を別の入力方式に切り替えると（`ITfInputProcessorProfileMgr::ActivateProfile`）、TSF はそのスレッドの TIP の `Deactivate` を呼ぶ。戻すと、新しい TIP を作って `ActivateEx` を呼ぶ。
+- 窓を持つスレッドでは、アプリが `ITfThreadMgr::Deactivate` を呼んでも TIP は非アクティブにならない。窓を壊したとき（`DestroyWindow`）に、IMM の側から `Deactivate` が呼ばれる。
+- アプリがプロセスで最後の `CoUninitialize` を呼ぶと、`DllCanUnloadNow` が `S_FALSE` を返していても、COM は DLL を外す（`CClassCache::CleanUpDllsForProcess` → `FreeLibrary`）。TIP がまだアクティブなら、外さない。
+- DLL が外されるとき、Rust のスレッドローカル変数の片付けは `DLL_PROCESS_DETACH` の中、ローダーロックを握ったまま動く（`ucrtbase!execute_onexit_table` → `FlsFree` → `std` の片付け）。プロセスが終わるとき（`ExitProcess`）の `DLL_PROCESS_DETACH` では、片付けは動かなかった。
+- DLL が起こしたスレッドが、DLL が外されたあとに目を覚ますと、外された DLL の中でアクセス違反になり、アプリが落ちる。`GetModuleHandleExW` に `GET_MODULE_HANDLE_EX_FLAG_PIN` を付けると、`CoUninitialize` のあとも DLL は外れない。
+
 ## キー
 
 - Notepad は `OnTestKeyDown`／`OnTestKeyUp` を呼ばない。状態は `OnKeyDown`／`OnKeyUp` で更新し、`OnTestKey*` は食べるかどうかの予測を返すだけにする。

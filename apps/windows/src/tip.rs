@@ -25,14 +25,16 @@ use windows::core::*;
 use crate::control::Tracker;
 use crate::focus::{self, Change};
 use crate::keys::{self, Keys, RawKey};
+use crate::per_thread::PerThread;
 use crate::pipe::{self, PipeSink};
 use crate::ui_element::{CandidateList, Listed};
 use crate::{candidates, indicator, remote};
 
 thread_local! {
-    /// The settings and the engine every field of this thread shares. TSF
-    /// calls a text input processor only on the thread that created it.
-    static PROFILE: RefCell<Option<Profile>> = const { RefCell::new(None) };
+    /// The settings and the engine every field of this thread shares, while
+    /// a text service of the thread is active. TSF calls a text input
+    /// processor only on the thread that created it.
+    static PROFILE: RefCell<PerThread<Profile>> = const { RefCell::new(PerThread::new()) };
     /// The hook told of mouse buttons in the thread's windows, while active.
     static MOUSE_HOOK: Cell<Option<HHOOK>> = const { Cell::new(None) };
     /// Whether a mouse button went down since the core last heard.
@@ -78,21 +80,22 @@ fn stop_watching_clicks() {
 }
 
 fn with_profile<T>(f: impl FnOnce(&mut Profile) -> T) -> Option<T> {
-    PROFILE.with_borrow_mut(|profile| {
-        if profile.is_none() {
-            let dir = kanaemi_config::dir().unwrap_or_else(|| {
-                tracing::warn!("APPDATA is not set; no settings or dictionary is kept");
-                std::env::temp_dir().join("kanaemi")
-            });
-            let access = if pipe::in_app_container() {
-                Access::Sandboxed(|| Box::new(PipeSink))
-            } else {
-                Access::Full
-            };
-            *profile = Some(Profile::open_with(dir, access));
-        }
-        profile.as_mut().map(f)
-    })
+    PROFILE.with_borrow_mut(|profile| profile.get_or_open(open_profile).map(f))
+}
+
+fn open_profile() -> Profile {
+    let dir = kanaemi_config::dir().unwrap_or_else(|| {
+        tracing::warn!("APPDATA is not set; no settings or dictionary is kept");
+        std::env::temp_dir().join("kanaemi")
+    });
+    let access = if pipe::in_app_container() {
+        Access::Sandboxed(|| Box::new(PipeSink))
+    } else {
+        Access::Full
+    };
+    let profile = Profile::open_with(dir, access);
+    tracing::debug!("profile opened");
+    profile
 }
 
 /// Runs a TSF callback: a panic must not unwind into the application, which
@@ -824,10 +827,12 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         guarded(Ok(()), || {
             let state = &self.state;
             let context = state.focused_context();
+            // The focus going writes the picks not yet written.
             state.dispatch(Event::FocusOut, context.as_ref(), false);
             state.end_list();
             indicator::hide();
-            if let Some(thread_mgr) = state.thread_mgr.borrow_mut().take() {
+            let thread_mgr = state.thread_mgr.borrow_mut().take();
+            if let Some(thread_mgr) = &thread_mgr {
                 if let Ok(keystrokes) = thread_mgr.cast::<ITfKeystrokeMgr>() {
                     let _ = unsafe { keystrokes.UnadviseKeyEventSink(state.client_id.get()) };
                 }
@@ -842,6 +847,14 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
             *state.focused.borrow_mut() = None;
             remote::detach();
             stop_watching_clicks();
+            // Dropped here, outside the loader lock a thread-local is dropped
+            // under, once no text service of the thread is active.
+            if thread_mgr.is_some()
+                && let Some(profile) = PROFILE.with_borrow_mut(PerThread::deactivate)
+            {
+                drop(profile);
+                tracing::debug!("profile released");
+            }
             Ok(())
         })
     }
@@ -872,7 +885,9 @@ impl ITfTextInputProcessorEx_Impl for TextService_Impl {
             // Held only once active: the sink is the text service itself.
             *state.sink.borrow_mut() = Some(self.to_interface());
             state.thread_mgr_cookie.set(cookie);
-            *state.thread_mgr.borrow_mut() = Some(thread_mgr);
+            if state.thread_mgr.borrow_mut().replace(thread_mgr).is_none() {
+                PROFILE.with_borrow_mut(PerThread::activate);
+            }
             candidates::on_pick({
                 let state = Rc::downgrade(&self.state);
                 move |row| {

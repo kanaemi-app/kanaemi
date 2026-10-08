@@ -19,6 +19,7 @@ mod indicator;
 mod keys;
 #[cfg(windows)]
 pub mod link;
+mod per_thread;
 #[cfg(windows)]
 pub mod pipe;
 mod placement;
