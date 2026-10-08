@@ -25,9 +25,11 @@ plist "$bundle/Info.plist" "$app/Contents/Info.plist"
 cp "$bundle/InfoPlist.strings" "$app/Contents/Resources/"
 # The logo's small symbol with the keycap widened to the shape of the other
 # input source icons; a template image that macOS tints to match the menu bar.
+# Named apart from the app icon: sharing its base name, macOS picks kanaemi.icns
+# instead and tints the whole plate into a blank square.
 icon="$bundle/input-source-icon.svg"
-rsvg-convert -w 22 -h 16 -o "$app/Contents/Resources/kanaemi.png" "$icon"
-rsvg-convert -w 44 -h 32 -o "$app/Contents/Resources/kanaemi@2x.png" "$icon"
+rsvg-convert -w 22 -h 16 -o "$app/Contents/Resources/input-source.png" "$icon"
+rsvg-convert -w 44 -h 32 -o "$app/Contents/Resources/input-source@2x.png" "$icon"
 # The mode indicator's icon: the logo's small symbol, unchanged.
 indicator="$logo/kanaemi-icon-small-mono-white.svg"
 rsvg-convert -w 16 -h 16 -o "$app/Contents/Resources/indicator-icon.png" "$indicator"
