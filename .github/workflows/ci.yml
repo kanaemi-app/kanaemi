@@ -69,3 +69,21 @@ jobs:
       - run: just ci
         env:
           CI: "1"
+
+  # MSVC for ARM64 miscompiled Luau only when optimizing, which neither the
+  # debug tests above nor x64 build: this tests the Luau the release ships.
+  windows-arm-release:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      # As for the installers (package.yml): the runner image's compilers
+      # build the C and C++ objects (Luau), so its version keys the cache, and
+      # only main saves.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          env-vars: ImageOS ImageVersion
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --release -p kanaemi-functions -p kanaemi-runtime -p kanaemi-windows
