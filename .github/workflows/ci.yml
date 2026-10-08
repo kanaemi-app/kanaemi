@@ -47,9 +47,13 @@ jobs:
       - uses: nicknovitski/nix-develop@v1.2.1
         if: runner.os != 'Windows'
       # Nix does not run on Windows: rustup reads rust-toolchain.toml, and
-      # just runs the recipes with the runner's Git Bash.
-      - run: choco install just --no-progress -y
+      # just runs the recipes with the runner's Git Bash. install-action fetches
+      # just's released binary, where Chocolatey spends half a minute on its
+      # own setup.
+      - uses: taiki-e/install-action@v2.87.26
         if: runner.os == 'Windows'
+        with:
+          tool: just
       # Keyed by what picks the C and C++ compilers too, since cc does not
       # rebuild their objects (Luau) when those change: flake.lock pins the
       # development shell's, and the runner image provides Windows'. rust-cache
