@@ -2,10 +2,12 @@
 //! deletions are written to, and the file it lives in.
 
 use std::collections::VecDeque;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::{InvalidLine, InvalidReason, TextDictionary};
 
@@ -113,7 +115,7 @@ impl TextDictionary {
     }
 }
 
-/// Appends lines to a text dictionary file under the lock of [`lock`], so the
+/// Appends lines to a text dictionary file under the lock of [`FileLock`], so the
 /// settings app and other IME processes never interleave a line.
 pub struct FileSink {
     path: PathBuf,
@@ -128,7 +130,7 @@ impl FileSink {
 impl LineSink for FileSink {
     fn append(&mut self, line: &str) -> io::Result<()> {
         // Locked before opening: a rewrite may replace the file meanwhile.
-        let _lock = lock(&self.path)?;
+        let _lock = FileLock::hold(&self.path)?;
         let mut file =
             private(OpenOptions::new().read(true).append(true).create(true)).open(&self.path)?;
         append_line(&mut file, line)
@@ -175,7 +177,7 @@ pub fn unregister(path: impl AsRef<Path>, reading: &str, surface: &str) -> io::R
 /// [`FileSink`]. The other lines stay byte for byte, a missing file stays
 /// missing, and a file that loses no line is left alone.
 fn remove_lines(path: &Path, remove: impl Fn(&str) -> bool) -> io::Result<()> {
-    let _lock = lock(path)?;
+    let _lock = FileLock::hold(path)?;
     let bytes = match fs::read(path) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         bytes => bytes?,
@@ -285,18 +287,49 @@ fn private(options: &mut OpenOptions) -> &mut OpenOptions {
     options
 }
 
-/// Holds an exclusive lock on a file beside `path` until dropped. The lock is
-/// not on `path` itself, as a rewrite replaces that file with a new one.
-fn lock(path: &Path) -> io::Result<File> {
-    let mut name = path.as_os_str().to_owned();
-    name.push(".lock");
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(PathBuf::from(name))?;
-    file.lock()?;
-    Ok(file)
+/// An exclusive lock on a file beside another, `<file>.lock`, held until
+/// dropped. It is taken by every thread and process that writes the file, so
+/// none writes between another's read and write. The lock is not on the file
+/// itself, as a rewrite replaces that file with a new one.
+#[derive(Debug)]
+pub struct FileLock {
+    _file: File,
+}
+
+impl FileLock {
+    /// Waits as long as it takes for the lock on `path`.
+    pub fn hold(path: impl AsRef<Path>) -> io::Result<Self> {
+        let file = Self::open(path.as_ref())?;
+        file.lock()?;
+        Ok(Self { _file: file })
+    }
+
+    /// The lock on `path` when it can be taken within `within`; `None` when
+    /// another holds it all that time.
+    pub fn try_hold(path: impl AsRef<Path>, within: Duration) -> io::Result<Option<Self>> {
+        let file = Self::open(path.as_ref())?;
+        let deadline = Instant::now() + within;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(Some(Self { _file: file })),
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(TryLockError::WouldBlock) => return Ok(None),
+                Err(TryLockError::Error(error)) => return Err(error),
+            }
+        }
+    }
+
+    fn open(path: &Path) -> io::Result<File> {
+        let mut name = path.as_os_str().to_owned();
+        name.push(".lock");
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(PathBuf::from(name))
+    }
 }
 
 #[cfg(test)]

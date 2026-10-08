@@ -1,9 +1,10 @@
 use std::fs;
+use std::time::{Duration, Instant};
 
 use kanaemi_core::Converter;
 use kanaemi_engine::{
-    Engine, FileSink, InvalidReason, LineSink, Slot, TextDictionary, open_dictionary, registered,
-    replace_file, unhide, unregister,
+    Engine, FileLock, FileSink, InvalidReason, LineSink, Slot, TextDictionary, open_dictionary,
+    registered, replace_file, unhide, unregister,
 };
 
 use crate::common::{Discard, dictionary, temp_path};
@@ -287,4 +288,16 @@ fn unhiding_in_a_missing_file_does_nothing() {
     unhide(&path, "きしゃ", "汽車").unwrap();
 
     assert!(!path.exists());
+}
+
+#[test]
+fn a_lock_held_elsewhere_is_not_waited_for_beyond_the_time_given() {
+    let path = temp_path("held.tsv");
+    let held = FileLock::hold(&path).unwrap();
+    let start = Instant::now();
+    let taken = FileLock::try_hold(&path, Duration::from_millis(20)).unwrap();
+    assert!(taken.is_none());
+    assert!(start.elapsed() < Duration::from_secs(1));
+    drop(held);
+    assert!(FileLock::try_hold(&path, Duration::ZERO).unwrap().is_some());
 }
