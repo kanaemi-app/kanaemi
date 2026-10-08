@@ -7,9 +7,12 @@ on:
     branches: [main]
   pull_request:
 
+# A pull request only needs its latest commit checked. A run on main waits
+# for the one before it instead of cancelling it, so each one finishes and
+# saves the caches that pull requests start from.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -38,6 +41,17 @@ jobs:
       # just runs the recipes with the runner's Git Bash.
       - run: choco install just --no-progress -y
         if: runner.os == 'Windows'
+      # Keyed by what picks the C and C++ compilers too, since cc does not
+      # rebuild their objects (Luau) when those change: flake.lock pins the
+      # development shell's, and the runner image provides Windows'. rust-cache
+      # itself adds rustc's version and the CC*, CXX* and CFLAGS* variables,
+      # so it comes after the development shell. Only main saves, so pull
+      # requests cannot evict the caches each other start from.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          key: ${{ hashFiles('flake.lock') }}
+          env-vars: ${{ runner.os == 'Windows' && 'ImageOS ImageVersion' || '' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The same gate as local development (justfile).
       - run: just ci
         env:

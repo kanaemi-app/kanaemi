@@ -64,6 +64,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config dpkg-dev libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libxdo-dev libssl-dev
       - run: rustup toolchain install
+      # The C and C++ objects (Luau) are built by the runner image's compilers,
+      # which cc does not rebuild them for when they change, so the image's
+      # version keys the cache. Only main saves, so pull requests cannot evict
+      # the caches each other start from. A release builds from nothing, so
+      # what it ships owes nothing to an earlier run.
+      - uses: Swatinem/rust-cache@v2.9.2
+        if: ${{ !inputs.sign }}
+        with:
+          env-vars: ImageOS ImageVersion
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nfpm
         run: |
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
@@ -90,6 +100,12 @@ jobs:
           fetch-depth: 0
       - run: brew install librsvg
       - run: rustup toolchain install
+      # As for Linux.
+      - uses: Swatinem/rust-cache@v2.9.2
+        if: ${{ !inputs.sign }}
+        with:
+          env-vars: ImageOS ImageVersion
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Import the release signing identity
         if: inputs.sign
         run: |
@@ -121,6 +137,12 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - run: rustup toolchain install
+      # As for Linux.
+      - uses: Swatinem/rust-cache@v2.9.2
+        if: ${{ !inputs.sign }}
+        with:
+          env-vars: ImageOS ImageVersion
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: dotnet tool install --global wix --version 5.0.2
       - run: apps/windows/package.ps1
         shell: pwsh
