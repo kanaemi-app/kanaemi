@@ -8,7 +8,6 @@
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-$manifest = Join-Path $root 'Cargo.toml'
 $dest = Join-Path $env:ProgramFiles 'Kanaemi'
 $x86 = 'i686-pc-windows-msvc'
 
@@ -17,9 +16,13 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) { throw "$($args[0]) failed with $LASTEXITCODE" }
 }
 
-Invoke-Checked cargo build --release -p kanaemi-windows -p kanaemi-settings --bins --lib --manifest-path $manifest
+# Cargo reads .cargo/config.toml from the working directory, not from beside
+# the manifest, and it sets the compiler Luau needs on ARM64.
+Push-Location $root
+Invoke-Checked cargo build --release -p kanaemi-windows -p kanaemi-settings --bins --lib
 Invoke-Checked rustup target add $x86
-Invoke-Checked cargo build --release -p kanaemi-windows --lib --target $x86 --manifest-path $manifest
+Invoke-Checked cargo build --release -p kanaemi-windows --lib --target $x86
+Pop-Location
 
 # Applications keep the DLLs loaded, so they cannot be replaced, but they can
 # be renamed: each application loads the new ones when it starts again.

@@ -10,7 +10,6 @@ param([Parameter(Mandatory)] [string] $Out)
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-$manifest = Join-Path $root 'Cargo.toml'
 $x64 = 'x86_64-pc-windows-msvc'
 $work = Join-Path $root 'target\arm64x-work'
 
@@ -20,7 +19,11 @@ function Invoke-Checked {
 }
 
 Invoke-Checked rustup target add $x64
-Invoke-Checked cargo build --release -p kanaemi-windows --lib --bin kanaemi-load --target $x64 --manifest-path $manifest
+# As in install.ps1: Cargo reads .cargo/config.toml from the working
+# directory, not from beside the manifest.
+Push-Location $root
+Invoke-Checked cargo build --release -p kanaemi-windows --lib --bin kanaemi-load --target $x64
+Pop-Location
 
 # lib reads an import library left from an earlier run instead of replacing it.
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue

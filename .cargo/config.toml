@@ -1,0 +1,9 @@
+[env]
+# MSVC for ARM64 (14.44) miscompiles Luau's lua_newstate at /O2: it reads
+# back a stack slot it never wrote, so a page list of the new state stays
+# uninitialized and 16 zero bytes land wherever the slot pointed. clang-cl
+# builds it correctly; it is the clang that ring already needs for this
+# target, in the same folder. Only the C++ compiler for this target changes.
+# clang-cl rejects Luau's `throw` unless C++ exceptions are on.
+CXX_aarch64_pc_windows_msvc = "clang-cl"
+CXXFLAGS_aarch64_pc_windows_msvc = "/EHsc"

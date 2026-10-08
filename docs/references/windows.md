@@ -59,3 +59,11 @@ AppContainer の中の TIP から、ユーザーのセッションで動く別�
 - `ITfInputProcessorProfileMgr::ActivateProfile`（`TF_IPPMF_FORSESSION | TF_IPPMF_ENABLEPROFILE | TF_IPPMF_DONTCARECURRENTINPUTLANGUAGE`）で、セッション全体を TIP に切り替えられる。
 - キーは `SendInput`。右 Shift は `wVk = VK_RSHIFT, wScan = 0x36`。結果は Ctrl+A・Ctrl+C でクリップボードから読む。
 - 対話的なデスクトップで動かす必要がある。SSH のセッションには画面がない。
+
+## ビルド
+
+- ARM64 の MSVC 14.44.35207（Visual Studio 2022 17.14）は、`/O2` で Luau（luau0-src 0.22.0+luau740）の `lua_newstate` を誤ってコンパイルする。一度も書いていないスタックの値をポインタとして読み、その先に 16 バイトの 0 を書く。新しい状態のページの一覧の一部が初期化されないまま残り、Luau の状態を閉じるときや、全体のメモリの回収（`luaM_getnextpage`）で落ちる。`/Od` と x64 では起きない。`/Os` か clang-cl でコンパイルすると起きない。
+- そのため、このターゲットの C++ は `.cargo/config.toml` で clang-cl にしている。clang-cl は `/EHsc` がないと、Luau の `throw` を受け付けない。
+- ARM64 では、ring が C を clang でコンパイルするので、LLVM の `bin`（`C:\Program Files\LLVM\bin`）が `PATH` に要る。clang-cl もそこにある。GitHub Actions の `windows-11-arm` のランナーには、はじめから入っている。
+- Cargo は `.cargo/config.toml` を作業ディレクトリから探し、`--manifest-path` の先からは探さない。リポジトリの外で `--manifest-path` を付けてビルドすると、Luau は MSVC でコンパイルされる。
+- Luau をコンパイルするビルドスクリプトは、コンパイラを変えても走り直さない。前のコンパイラで作った Luau が残っていれば、`cargo clean -p mlua-sys` で消す。

@@ -7,7 +7,6 @@
 $ErrorActionPreference = 'Stop'
 
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-$manifest = Join-Path $root 'Cargo.toml'
 $release = Join-Path $root 'target\release'
 $x86 = 'i686-pc-windows-msvc'
 $out = Join-Path $root 'target\package'
@@ -17,9 +16,13 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) { throw "$($args[0]) failed with $LASTEXITCODE" }
 }
 
-Invoke-Checked cargo build --release -p kanaemi-windows -p kanaemi-settings --bins --lib --manifest-path $manifest
+# Cargo reads .cargo/config.toml from the working directory, not from beside
+# the manifest, and it sets the compiler Luau needs on ARM64.
+Push-Location $root
+Invoke-Checked cargo build --release -p kanaemi-windows -p kanaemi-settings --bins --lib
 Invoke-Checked rustup target add $x86
-Invoke-Checked cargo build --release -p kanaemi-windows --lib --target $x86 --manifest-path $manifest
+Invoke-Checked cargo build --release -p kanaemi-windows --lib --target $x86
+Pop-Location
 
 # The version kanaemi_core::VERSION reports, as the settings app prints it.
 # The app is a GUI program, which PowerShell does not wait on, so its output
