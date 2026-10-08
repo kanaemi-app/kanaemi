@@ -6,14 +6,15 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use kanaemi_config::{
     BUILTIN_PREFIX, DictionarySource, MODEL_FILE, SELECTIONS_FILE, USER_CUSTOM_FILE,
     builtin_dictionary, dictionary_sources,
 };
 use kanaemi_engine::{
-    BinaryDictionary, Dictionary, DictionaryError, Engine, FileSink, LineSink, RankingModel,
-    Selections, Slot, TextDictionary, is_binary, replace_file,
+    BinaryDictionary, Dictionary, DictionaryError, Engine, FileLock, FileSink, LineSink,
+    RankingModel, Selections, Slot, TextDictionary, is_binary, replace_file,
 };
 
 use crate::Access;
@@ -137,6 +138,30 @@ pub(crate) fn read_selections(support_dir: &Path) -> Option<Selections> {
         Err(error) => {
             tracing::warn!(path = %path.display(), %error, "record of picks unreadable; not written until it can be read");
             None
+        }
+    }
+}
+
+/// Another profile holds the lock on the record of picks.
+pub(crate) struct Busy;
+
+/// The lock every profile holds from reading the record of picks to writing
+/// it, so that none writes between another's read and write. [`Busy`] when
+/// another holds it past a short wait: the picks then wait for the next save,
+/// not the IME for the lock. `None` when no lock can be taken at all, as a
+/// record written without one beats one never written.
+pub(crate) fn lock_selections(support_dir: &Path) -> Result<Option<FileLock>, Busy> {
+    const WAIT: Duration = Duration::from_millis(50);
+    let path = support_dir.join(SELECTIONS_FILE);
+    match FileLock::try_hold(&path, WAIT) {
+        Ok(Some(lock)) => Ok(Some(lock)),
+        Ok(None) => {
+            tracing::info!(path = %path.display(), "record of picks locked elsewhere; written next time");
+            Err(Busy)
+        }
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "record of picks not locked; written without the lock");
+            Ok(None)
         }
     }
 }

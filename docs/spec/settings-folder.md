@@ -22,6 +22,7 @@ IME と設定アプリが読み書きするファイルを置くフォルダ。
 
 - IME は、設定のフォルダと `config.toml` がなければ作る。
 - 利用者の打った語を含むファイル（`custom.tsv`・`selections.tsv`）は、IME と設定アプリが作るとき、持ち主だけが読み書きできるようにする。
+- `custom.tsv` と `selections.tsv` を書くときは、それぞれの横のロックのファイル（`custom.tsv.lock`・`selections.tsv.lock`）を排他にロックする。ロックのファイルはなければ作り、中身は使わない。`custom.tsv` は、行を足すか消すあいだロックする。`selections.tsv` は、ファイルを読んでから書き終えるまでロックし、そのあいだにほかのプロセスやスレッドが書いたものを上書きしない。`selections.tsv` のロックをほかが持っていれば少しだけ待ち、それでも取れなければ書かずに、まだ書いていない選択を次に書くときまで持つ。
 - Windows では、書き込み用のプロセス（`kanaemi-server`）が、AppContainer のアプリに `config.toml`・`dictionaries/`・`romaji/`・`functions/`・`ranking.model` だけを読ませる（[Windows ではユーザーデータの書き込みを別プロセスに任せる](../adr/20261003-write-user-data-from-a-separate-process-on-windows.md)）。AppContainer のアプリの中の IME は、`custom.tsv` と `selections.tsv` を読みも書きもせず、辞書登録と削除の行を書き込み用のプロセスに送る。
 
 IME のログは、設定のフォルダの外に書く。

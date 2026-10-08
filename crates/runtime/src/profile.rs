@@ -223,11 +223,15 @@ impl Profile {
 
     /// Writes the picks not yet written, on the record on disk as another
     /// profile may have written it since it was read, unless that record
-    /// could not be read or was erased. A sandbox keeps no record.
+    /// could not be read or was erased. While another profile is writing it,
+    /// the picks wait for the next save. A sandbox keeps no record.
     pub(crate) fn save_selections(&mut self) {
         if !self.access.is_full() {
             return;
         }
+        let Ok(_lock) = dictionaries::lock_selections(&self.dir) else {
+            return;
+        };
         let shared = self.engine.0.clone();
         let mut engine = shared.borrow_mut();
         if dictionaries::selections_stamp(&self.dir) != self.selections_stamp {
@@ -848,6 +852,23 @@ mod tests {
         one.learn(&[commit("きしゃ", "貴社")]);
         pick(&mut other, "貴社", 2);
         one.reload_if_changed();
+        one.learn(&[Effect::FocusMoved]);
+        assert_eq!(surfaces(&Profile::open(&dir), "きしゃ"), ["貴社", "記者"]);
+    }
+
+    #[test]
+    fn picks_are_not_written_between_another_s_read_and_write_of_the_record() {
+        let dir = picks_dir("held");
+        let path = dir.join(SELECTIONS_FILE);
+        let mut one = Profile::open(&dir);
+        pick(&mut one, "貴社", 2);
+        assert_eq!(surfaces(&Profile::open(&dir), "きしゃ"), ["記者", "貴社"]);
+        // Another process reads the record to write it with its own picks.
+        let held = kanaemi_engine::FileLock::hold(&path).unwrap();
+        let read = fs::read(&path).unwrap();
+        pick(&mut one, "貴社", 1);
+        kanaemi_engine::replace_file(&path, read).unwrap();
+        drop(held);
         one.learn(&[Effect::FocusMoved]);
         assert_eq!(surfaces(&Profile::open(&dir), "きしゃ"), ["貴社", "記者"]);
     }
