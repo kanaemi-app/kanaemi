@@ -14,7 +14,8 @@ use kanaemi_config::{
 };
 use kanaemi_engine::{
     BinaryDictionary, Dictionary, DictionaryError, Engine, FileLock, FileSink, LineSink,
-    RankingModel, Selections, Slot, TextDictionary, is_binary, replace_file_unsynced,
+    RankingModel, Selections, Slot, TextDictionary, is_binary, remove_set_aside,
+    replace_file_unsynced,
 };
 
 use crate::Access;
@@ -99,7 +100,11 @@ fn open_converted(binary: &Path, text: &Path) -> Option<Slot> {
 fn try_open(path: &Path) -> Result<Arc<SharedDictionary>, DictionaryError> {
     DICTIONARIES.get(path, || {
         let (dictionary, invalid): (Arc<SharedDictionary>, _) = if is_binary(path)? {
-            (Arc::new(BinaryDictionary::open(path)?), 0)
+            let dictionary = BinaryDictionary::open(path)?;
+            // An old one set aside when this one replaced it, as Windows
+            // does while some process still reads it, goes once none does.
+            remove_set_aside(path);
+            (Arc::new(dictionary), 0)
         } else {
             let (dictionary, invalid) = TextDictionary::parse(fs::read(path)?);
             (Arc::new(dictionary), invalid.len())
@@ -330,6 +335,25 @@ mod tests {
             surfaces(&open_engine(&dir, None, Access::Full), "きしゃ"),
             ["汽車", "記者"],
             "b.kdic stands for b.tsv"
+        );
+    }
+
+    #[test]
+    fn opening_a_binary_dictionary_removes_the_old_ones_set_aside_from_it() {
+        let dir = temp_dir("set-aside");
+        let folder = dir.join(DICTIONARY_DIR);
+        let (binary, _) = convert_text("きしゃ\t記者\n");
+        fs::write(folder.join("b.kdic"), &binary).unwrap();
+        fs::write(folder.join("b.kdic.12-0.replaced"), &binary).unwrap();
+        fs::write(folder.join("c.tsv.12-1.replaced"), "きしゃ\t汽車\n").unwrap();
+        assert_eq!(
+            surfaces(&open_engine(&dir, None, Access::Full), "きしゃ"),
+            ["記者"]
+        );
+        assert!(!folder.join("b.kdic.12-0.replaced").exists());
+        assert!(
+            folder.join("c.tsv.12-1.replaced").exists(),
+            "another file's is left"
         );
     }
 
