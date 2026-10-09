@@ -98,8 +98,8 @@ impl BinaryDictionary {
             return Err(BinaryError::Magic);
         }
         // SAFETY: a binary dictionary is never rewritten in place; a new one
-        // is written beside it and renamed over it, which leaves this mapping
-        // on the old file.
+        // is written beside it and moved into its place (`move_into_place`),
+        // which leaves this mapping on the old file.
         let map = unsafe { Mmap::map(&file)? };
         Self::parse(Arc::new(map))
     }

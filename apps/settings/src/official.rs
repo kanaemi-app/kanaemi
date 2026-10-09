@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kanaemi_config::{BUILTIN_PREFIX, DICTIONARY_DIR, MODEL_FILE, binary_name};
-use kanaemi_engine::{MODEL_FORMAT_VERSION, replace_file, text_digest};
+use kanaemi_engine::{MODEL_FORMAT_VERSION, move_into_place, replace_file, text_digest};
 use serde::Deserialize;
 
 use crate::cache::FileCache;
@@ -176,7 +176,8 @@ impl Entry {
                 .map_err(|e| e.to_string())?;
             names.sort_by_key(|name| name == self.dictionary.file.as_str());
             for name in names {
-                fs::rename(staged.join(&name), folder.join(&name)).map_err(|e| e.to_string())?;
+                move_into_place(staged.join(&name), folder.join(&name))
+                    .map_err(|e| e.to_string())?;
             }
             if let Some(model) = &files.model {
                 replace_file(dir.join(MODEL_FILE), model).map_err(|e| e.to_string())?;

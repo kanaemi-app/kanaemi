@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{InvalidLine, InvalidReason, TextDictionary};
+use crate::{InvalidLine, InvalidReason, TextDictionary, move_into_place};
 
 /// Where registrations and deletions are written as text dictionary lines.
 pub trait LineSink {
@@ -273,7 +273,7 @@ pub fn replace_file(path: impl AsRef<Path>, bytes: impl AsRef<[u8]>) -> io::Resu
             file.write_all(bytes)?;
             file.sync_all()
         })
-        .and_then(|()| fs::rename(&partial, path));
+        .and_then(|()| move_into_place(&partial, path));
     if written.is_err() {
         let _ = fs::remove_file(&partial);
     }
