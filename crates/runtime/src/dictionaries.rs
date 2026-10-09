@@ -14,7 +14,7 @@ use kanaemi_config::{
 };
 use kanaemi_engine::{
     BinaryDictionary, Dictionary, DictionaryError, Engine, FileLock, FileSink, LineSink,
-    RankingModel, Selections, Slot, TextDictionary, is_binary, replace_file,
+    RankingModel, Selections, Slot, TextDictionary, is_binary, replace_file_unsynced,
 };
 
 use crate::Access;
@@ -166,10 +166,13 @@ pub(crate) fn lock_selections(support_dir: &Path) -> Result<Option<FileLock>, Bu
     }
 }
 
-/// Whether the record was written.
+/// Whether the record was written. It is written when the focus moves, on
+/// the thread keys are handled on, so it is not waited for to reach the
+/// disk: a crash of the whole system may lose the picks made since the
+/// system last wrote it out, which are learned again.
 pub(crate) fn save_selections(support_dir: &Path, selections: &Selections) -> bool {
     let path = support_dir.join(SELECTIONS_FILE);
-    replace_file(&path, selections.to_text())
+    replace_file_unsynced(&path, selections.to_text())
         .inspect_err(
             |error| tracing::warn!(path = %path.display(), %error, "record of picks not written"),
         )
@@ -240,7 +243,7 @@ mod tests {
 
     use kanaemi_config::DICTIONARY_DIR;
     use kanaemi_core::{Converter, Effect};
-    use kanaemi_engine::convert_text;
+    use kanaemi_engine::{convert_text, replace_file};
 
     use super::*;
 

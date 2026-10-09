@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use kanaemi_core::Converter;
 use kanaemi_engine::{
     Engine, FileLock, FileSink, InvalidReason, LineSink, Slot, TextDictionary, open_dictionary,
-    registered, replace_file, unhide, unregister,
+    registered, replace_file, replace_file_unsynced, unhide, unregister,
 };
 
 use crate::common::{Discard, Learn, dictionary, temp_path};
@@ -83,9 +83,19 @@ fn a_broken_binary_dictionary_does_not_open() {
 
 #[test]
 fn a_replaced_file_holds_only_the_new_bytes_and_leaves_nothing_beside_it() {
+    let replaces: [fn(&std::path::Path, &str) -> io::Result<()>; 2] = [
+        |path, bytes| replace_file(path, bytes),
+        |path, bytes| replace_file_unsynced(path, bytes),
+    ];
+    for replace in replaces {
+        replaced_holds_only_the_new_bytes(replace);
+    }
+}
+
+fn replaced_holds_only_the_new_bytes(replace: fn(&std::path::Path, &str) -> io::Result<()>) {
     let path = temp_path("replaced.tsv");
     fs::write(&path, "old and longer").unwrap();
-    replace_file(&path, "new").unwrap();
+    replace(&path, "new").unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "new");
     let folder = path.parent().unwrap();
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -112,6 +122,9 @@ fn files_of_what_the_user_types_are_theirs_alone() {
     let replaced = temp_path("private-replace.tsv");
     replace_file(&replaced, b"x").unwrap();
     assert_eq!(mode(&replaced), 0o600);
+    let unsynced = temp_path("private-replace-unsynced.tsv");
+    replace_file_unsynced(&unsynced, b"x").unwrap();
+    assert_eq!(mode(&unsynced), 0o600);
 }
 
 /// きしゃ 記者, a line cut off inside か, and かく 書く.
