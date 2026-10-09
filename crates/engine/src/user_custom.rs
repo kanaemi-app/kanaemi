@@ -202,29 +202,70 @@ pub fn unregister(path: impl AsRef<Path>, reading: &str, surface: &str) -> io::R
     })
 }
 
-/// Rewrites the file without the lines `remove` picks, under the same lock as
-/// [`FileSink`]. The other lines stay byte for byte, a missing file stays
-/// missing, and a file that loses no line is left alone.
-fn remove_lines(path: &Path, remove: impl Fn(&str) -> bool) -> io::Result<()> {
-    let _lock = FileLock::hold(path)?;
-    let bytes = match fs::read(path) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
-        bytes => bytes?,
-    };
-    let mut kept = Vec::with_capacity(bytes.len());
-    for (line, text) in lines(&bytes) {
-        if !text.is_some_and(&remove) {
-            kept.extend_from_slice(line);
+/// Rewrites the file without the lines `remove` picks, as [`rewrite`] does.
+/// The other lines stay byte for byte, a missing file stays missing, and a
+/// file that loses no line is left alone.
+pub(crate) fn remove_lines(path: &Path, remove: impl Fn(&str) -> bool) -> io::Result<()> {
+    rewrite(path, |bytes| {
+        let mut kept = Vec::with_capacity(bytes.len());
+        for (line, text) in lines(bytes) {
+            if !text.is_some_and(&remove) {
+                kept.extend_from_slice(line);
+            }
+        }
+        Ok((kept.len() != bytes.len()).then_some(kept))
+    })
+}
+
+/// How many times [`rewrite`] reads the file again when it changed before it
+/// could be replaced, before it holds the lock all along.
+const REWRITE_ATTEMPTS: usize = 3;
+
+/// Replaces the file whole with what `change` makes of its bytes, an empty
+/// file's when it is missing; `change` gives `None` to leave it as it is.
+///
+/// The lock of [`FileLock`] is held only to read the file again, see that it
+/// is as `change` read it, and replace it. The new bytes are written and
+/// flushed to the disk before, without the lock, as that may take hundreds of
+/// milliseconds and the IME waits for the lock only [`FileSink::WAIT`]. When
+/// the file changed meanwhile, as when the IME appended a line, it is read
+/// again and `change` called again; after [`REWRITE_ATTEMPTS`] tries, it is
+/// read and replaced under the lock throughout.
+pub(crate) fn rewrite<E: From<io::Error>>(
+    path: &Path,
+    change: impl Fn(&[u8]) -> Result<Option<Vec<u8>>, E>,
+) -> Result<(), E> {
+    for _ in 0..REWRITE_ATTEMPTS {
+        let before = read_if_exists(path)?;
+        let Some(after) = change(before.as_deref().unwrap_or_default())? else {
+            return Ok(());
+        };
+        let partial = Partial::write(path, &after, true)?;
+        let _lock = FileLock::hold(path)?;
+        if read_if_exists(path)? == before {
+            partial.move_to(path)?;
+            return Ok(());
         }
     }
-    if kept.len() == bytes.len() {
-        return Ok(());
+    let _lock = FileLock::hold(path)?;
+    let before = read_if_exists(path)?;
+    if let Some(after) = change(before.as_deref().unwrap_or_default())? {
+        replace_file(path, after)?;
     }
-    replace_file(path, kept)
+    Ok(())
+}
+
+/// The file's bytes, or `None` when it is missing.
+pub(crate) fn read_if_exists(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Each line of a file with its line ending, and its text when it is UTF-8.
-fn lines(bytes: &[u8]) -> impl Iterator<Item = (&[u8], Option<&str>)> {
+pub(crate) fn lines(bytes: &[u8]) -> impl Iterator<Item = (&[u8], Option<&str>)> {
     bytes
         .split_inclusive(|&b| b == b'\n')
         .enumerate()
@@ -241,7 +282,7 @@ fn lines(bytes: &[u8]) -> impl Iterator<Item = (&[u8], Option<&str>)> {
 }
 
 /// What a line is appended to: the file, or in tests one that fails.
-trait LineFile: Write {
+pub(crate) trait LineFile: Write {
     fn len(&mut self) -> io::Result<u64>;
     fn last_byte(&mut self) -> io::Result<u8>;
     fn set_len(&mut self, len: u64) -> io::Result<()>;
@@ -267,7 +308,7 @@ impl LineFile for File {
 /// Appends `line` on a line of its own, or nothing: a write that fails part
 /// way is cut off again, since a fragment of a character would make the whole
 /// file unreadable as UTF-8 and the next line would join the fragment.
-fn append_line(file: &mut impl LineFile, line: &str) -> io::Result<()> {
+pub(crate) fn append_line(file: &mut impl LineFile, line: &str) -> io::Result<()> {
     let len = file.len()?;
     let mut text = String::new();
     if len > 0 && file.last_byte()? != b'\n' {
@@ -303,27 +344,52 @@ pub fn replace_file_unsynced(path: impl AsRef<Path>, bytes: impl AsRef<[u8]>) ->
 }
 
 fn replace(path: &Path, bytes: &[u8], sync: bool) -> io::Result<()> {
-    let mut partial = path.as_os_str().to_owned();
-    // Unique to each call: threads of one process may write the same file.
-    static WRITES: AtomicU64 = AtomicU64::new(0);
-    let write = WRITES.fetch_add(1, Ordering::Relaxed);
-    partial.push(format!(".{}-{write}.partial", std::process::id()));
-    let partial = PathBuf::from(partial);
-    let written = private(OpenOptions::new().write(true).create(true).truncate(true))
-        .open(&partial)
-        .and_then(|mut file| {
-            file.write_all(bytes)?;
-            if sync { file.sync_all() } else { Ok(()) }
-        })
-        .and_then(|()| move_into_place(&partial, path));
-    if written.is_err() {
-        let _ = fs::remove_file(&partial);
+    Partial::write(path, bytes, sync)?.move_to(path)
+}
+
+/// A file written beside another, to be put in its place whole. It is
+/// removed when dropped before it is.
+struct Partial(Option<PathBuf>);
+
+impl Partial {
+    /// `bytes` in a file beside `path`, flushed to the disk when `sync`.
+    fn write(path: &Path, bytes: &[u8], sync: bool) -> io::Result<Self> {
+        let mut partial = path.as_os_str().to_owned();
+        // Unique to each call: threads of one process may write the same file.
+        static WRITES: AtomicU64 = AtomicU64::new(0);
+        let write = WRITES.fetch_add(1, Ordering::Relaxed);
+        partial.push(format!(".{}-{write}.partial", std::process::id()));
+        let partial = Self(Some(PathBuf::from(partial)));
+        let mut file = private(OpenOptions::new().write(true).create(true).truncate(true))
+            .open(partial.path())?;
+        file.write_all(bytes)?;
+        if sync {
+            file.sync_all()?;
+        }
+        Ok(partial)
     }
-    written
+
+    fn path(&self) -> &Path {
+        self.0.as_deref().expect("not moved yet")
+    }
+
+    fn move_to(mut self, path: &Path) -> io::Result<()> {
+        move_into_place(self.path(), path)?;
+        self.0 = None;
+        Ok(())
+    }
+}
+
+impl Drop for Partial {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 /// Makes a file it creates readable and writable by its owner only.
-fn private(options: &mut OpenOptions) -> &mut OpenOptions {
+pub(crate) fn private(options: &mut OpenOptions) -> &mut OpenOptions {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(options, 0o600);
     options
@@ -456,6 +522,58 @@ mod tests {
         };
         append_line(&mut file, "きしゃ\t記者").unwrap();
         assert_eq!(file.bytes, "かく\t書く\nきしゃ\t記者\n".as_bytes());
+    }
+
+    #[test]
+    fn a_rewrite_reads_the_file_again_when_it_changed_before_the_lock() {
+        let dir = std::env::temp_dir().join(format!("kanaemi-rewrite-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("custom.tsv");
+        fs::write(&path, "かく\t書く\n").unwrap();
+        let calls = std::cell::Cell::new(0);
+        rewrite(&path, |bytes| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                // As the IME appends a line while the new file is written.
+                FileSink::new(&path).append("きしゃ\t記者")?;
+            }
+            Ok::<_, io::Error>(Some(["# 説明\n".as_bytes(), bytes].concat()))
+        })
+        .unwrap();
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "# 説明\nかく\t書く\nきしゃ\t記者\n"
+        );
+        let left: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|name| name.ends_with(".partial"))
+            .collect();
+        assert_eq!(left, Vec::<String>::new(), "no partial file is left behind");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_rewrite_that_keeps_changing_is_done_under_the_lock() {
+        let dir = std::env::temp_dir().join(format!("kanaemi-rewrite-busy-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("custom.tsv");
+        let calls = std::cell::Cell::new(0);
+        rewrite(&path, |bytes| {
+            calls.set(calls.get() + 1);
+            if calls.get() <= REWRITE_ATTEMPTS {
+                FileSink::new(&path).append("きしゃ\t記者")?;
+            }
+            Ok::<_, io::Error>(Some(bytes.to_vec()))
+        })
+        .unwrap();
+        assert_eq!(calls.get(), REWRITE_ATTEMPTS + 1);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "きしゃ\t記者\n".repeat(REWRITE_ATTEMPTS)
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     proptest! {
