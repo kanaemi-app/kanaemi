@@ -108,6 +108,10 @@ pub enum Action {
     Pick(u8),
     /// Take the candidate last committed back to choosing it again.
     UndoCommit,
+    /// Replace the reading with a longer one it starts, the next each time.
+    Complete,
+    /// Go round the readings [`Action::Complete`] gives the other way.
+    CompletePrevious,
 }
 
 /// Where a key is pressed, which decides the list of bindings it is looked up in.
@@ -278,6 +282,11 @@ impl Default for Bindings {
             key(Key::Henkan, plain, Next),
             key(Key::Muhenkan, plain, Form(crate::Form::Katakana)),
         ];
+        // SKK's completion keys.
+        let completing = [
+            key(Key::Tab, plain, Complete),
+            key(Key::Tab, shift, CompletePrevious),
+        ];
         let remap = |c, to| Remap {
             from: Chord {
                 key: Key::Char(c),
@@ -296,6 +305,7 @@ impl Default for Bindings {
                 &editing,
                 &to_abc,
                 &converting,
+                &completing,
                 &[begin],
             ]
             .concat(),
@@ -314,6 +324,7 @@ impl Default for Bindings {
                 ],
                 &to_abc,
                 &converting,
+                &completing,
                 &[begin],
             ]
             .concat(),

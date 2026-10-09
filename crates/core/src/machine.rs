@@ -41,6 +41,9 @@ struct Selection {
     /// `forget` was pressed once: pressed again, it forgets the selected
     /// candidate. Any other key, a lone modifier aside, withdraws it.
     forgetting: bool,
+    /// The completion the word was converted from, to go on with when the
+    /// keys that complete are pressed while choosing.
+    completion: Option<Box<Completion>>,
 }
 
 /// Shown after the selected candidate while asking whether to forget it.
@@ -95,6 +98,18 @@ impl Undoable {
     }
 }
 
+/// The readings a reading is completed with, gone round while only the
+/// keys that complete are pressed.
+#[derive(Clone)]
+struct Completion {
+    /// The word as typed, its romaji made kana.
+    typed: Word,
+    /// Never empty; each longer than the typed reading and starting with it.
+    readings: Vec<String>,
+    /// The reading shown; `None` for the word as typed.
+    index: Option<usize>,
+}
+
 #[derive(Clone)]
 struct Registration {
     word: Word,
@@ -136,6 +151,9 @@ pub struct Core<C> {
     modifiers_held: Vec<Key>,
     modifier_down: Option<(Key, u64)>,
     held: Option<Held>,
+    /// The reading being completed, while the keys that complete are
+    /// pressed one after another.
+    completion: Option<Completion>,
     /// The last candidate committed, while it can be undone.
     undoable: Option<Undoable>,
     /// A commit undone, waiting for the host to erase it.
@@ -163,6 +181,7 @@ impl<C: Converter> Core<C> {
             modifiers_held: Vec::new(),
             modifier_down: None,
             held: None,
+            completion: None,
             undoable: None,
             erasing: None,
             keys_waiting: Vec::new(),
@@ -180,6 +199,10 @@ impl<C: Converter> Core<C> {
         self.erase = None;
         self.send = None;
         self.effects.clear();
+        // Only the keys that complete go on with a completion.
+        if !matches!(event, Event::Key(_)) {
+            self.completion = None;
+        }
         let consumed = match event {
             // Typed after the undo, a key goes after it, once the host is done.
             Event::Key(key) if self.erasing.is_some() => {
@@ -630,6 +653,7 @@ impl<C: Converter> Core<C> {
 
     /// A key that is not bound.
     fn press_plain(&mut self, key: Key, mods: Modifiers) -> bool {
+        self.completion = None;
         if mods.ctrl || mods.cmd || mods.alt {
             self.commit_visible();
             return false;
@@ -749,6 +773,7 @@ impl<C: Converter> Core<C> {
             candidates,
             index: 0,
             forgetting: false,
+            completion: self.completion.take().map(Box::new),
         };
         self.offer_forms(&mut selection);
         self.state = State::Candidates(selection);
@@ -897,6 +922,13 @@ impl<C: Converter> Core<C> {
 
     /// What a bound key does, by where it is pressed.
     fn act(&mut self, action: Action, pressed: Chord) -> bool {
+        // Converting a completed reading carries the completion into the
+        // candidates, to go on with from there.
+        let converting = matches!(self.state, State::Reading(_))
+            && matches!(action, Action::Next | Action::Previous | Action::Form(_));
+        if !converting && !matches!(action, Action::Complete | Action::CompletePrevious) {
+            self.completion = None;
+        }
         match action {
             Action::Abc => {
                 self.leave_kana();
@@ -1026,6 +1058,10 @@ impl<C: Converter> Core<C> {
                 }
             }
             Action::Commit => self.commit_word(word),
+            Action::Complete | Action::CompletePrevious => {
+                let word = self.complete(word, action == Action::Complete);
+                self.state = State::Reading(word);
+            }
             Action::Form(form) => {
                 word.flush(&self.config.romaji);
                 // Letters that made no kana (`pdf`) still have a form in letters.
@@ -1081,6 +1117,60 @@ impl<C: Converter> Core<C> {
         None
     }
 
+    /// The word completed to the next reading, or to the previous one unless
+    /// `forward`: the first completion asks the converter for the readings,
+    /// and past either end is the word as typed. With nothing to complete it
+    /// with, the word as it is.
+    fn complete(&mut self, word: Word, forward: bool) -> Word {
+        let table = &self.config.romaji;
+        let completion = match self.completion.take() {
+            Some(completion) => completion,
+            None => {
+                if word.okurigana.is_some() {
+                    return word;
+                }
+                let mut typed = word.clone();
+                typed.flush(table);
+                let stem = typed.stem.as_str();
+                if stem.is_empty() {
+                    return word;
+                }
+                let mut readings: Vec<String> = Vec::new();
+                for reading in self.converter.complete(stem) {
+                    if reading.len() > stem.len()
+                        && reading.starts_with(stem)
+                        && !readings.contains(&reading)
+                    {
+                        readings.push(reading);
+                    }
+                }
+                if readings.is_empty() {
+                    return word;
+                }
+                Completion {
+                    typed,
+                    readings,
+                    index: None,
+                }
+            }
+        };
+        let last = completion.readings.len() - 1;
+        let index = match (completion.index, forward) {
+            (None, true) => Some(0),
+            (None, false) => Some(last),
+            (Some(i), true) => (i < last).then_some(i + 1),
+            (Some(i), false) => i.checked_sub(1),
+        };
+        let shown = index
+            .and_then(|i| completion.typed.completed(&completion.readings[i], table))
+            .unwrap_or_else(|| completion.typed.clone());
+        self.completion = Some(Completion {
+            index,
+            ..completion
+        });
+        shown
+    }
+
     fn act_candidates(&mut self, mut selection: Selection, action: Action) -> Option<bool> {
         let len = selection.candidates.len();
         // A reading without kana (`pdf`) has nothing to register a word for.
@@ -1107,6 +1197,17 @@ impl<C: Converter> Core<C> {
             Action::Commit => {
                 let index = selection.index;
                 self.commit_selection(selection, index);
+            }
+            // Back to the reading, completed on from the completion it was
+            // converted from, or from the reading itself.
+            Action::Complete | Action::CompletePrevious => {
+                self.completion = selection.completion.take().map(|completion| *completion);
+                let word =
+                    self.complete(selection.clone().into_reading(), action == Action::Complete);
+                self.state = match self.completion {
+                    Some(_) => State::Reading(word),
+                    None => State::Candidates(selection),
+                };
             }
             Action::Form(form) => {
                 self.state = State::Candidates(selection);
@@ -1197,6 +1298,7 @@ impl<C: Converter> Core<C> {
                     index,
                     rest: String::new(),
                     typed: String::new(),
+                    completion: None,
                     ..selection
                 },
                 surface,

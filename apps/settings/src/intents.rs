@@ -42,6 +42,18 @@ pub const GROUPS: &[(&str, &[Intent])] = &[
                 scenes: CONVERTING,
             },
             Intent {
+                title: "読みを補完する",
+                note: "読みを、それで始まるより長い読みに置き換えます。続けて押すと次の読みにします。候補を選んでいるときは、読みに戻して補完を続けます",
+                action: Action::Complete,
+                scenes: CONVERTING,
+            },
+            Intent {
+                title: "読みを逆向きに補完する",
+                note: "",
+                action: Action::CompletePrevious,
+                scenes: CONVERTING,
+            },
+            Intent {
                 title: "確定する",
                 note: "",
                 action: Action::Commit,

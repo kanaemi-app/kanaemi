@@ -158,6 +158,8 @@ fn every_action() -> Vec<Action> {
         Action::Right,
         Action::Home,
         Action::End,
+        Action::Complete,
+        Action::CompletePrevious,
         Action::Register,
         Action::Forget,
         Action::Abc,
@@ -198,6 +200,8 @@ pub fn format_action(action: Action) -> String {
         Action::Begin => "begin".to_owned(),
         Action::Pick(n) => format!("select-{}", u16::from(n) + 1),
         Action::UndoCommit => "undo-commit".to_owned(),
+        Action::Complete => "complete".to_owned(),
+        Action::CompletePrevious => "complete-previous".to_owned(),
     };
     format!("@{name}")
 }
@@ -321,6 +325,7 @@ pub fn sendable_keys() -> Vec<&'static str> {
 
 const NAMED_KEYS: &[(&str, Key)] = &[
     ("space", Key::Space),
+    ("tab", Key::Tab),
     ("enter", Key::Enter),
     ("esc", Key::Esc),
     ("backspace", Key::Backspace),

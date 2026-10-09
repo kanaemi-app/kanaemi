@@ -94,6 +94,7 @@ fn character() -> impl Strategy<Value = char> {
 fn named_key() -> impl Strategy<Value = Key> {
     proptest::sample::select(vec![
         Key::Space,
+        Key::Tab,
         Key::Enter,
         Key::Esc,
         Key::Backspace,

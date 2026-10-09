@@ -233,6 +233,21 @@ impl Word {
         start..end
     }
 
+    /// The word completed to `reading`, which its stem starts: the kana
+    /// added go at the end, keyed as the table spells them, and the cursor
+    /// with them. `None` when the word has okurigana or pending romaji, or
+    /// `reading` does not go on from its stem.
+    pub(crate) fn completed(&self, reading: &str, table: &RomajiTable) -> Option<Word> {
+        if self.okurigana.is_some() || !self.pending.is_empty() {
+            return None;
+        }
+        let added = reading.strip_prefix(self.stem.as_str())?;
+        let mut word = self.clone();
+        word.move_cursor(CursorMove::End, table);
+        word.push(added, table.spell(added), String::new());
+        Some(word)
+    }
+
     pub(crate) fn move_cursor(&mut self, to: CursorMove, table: &RomajiTable) {
         self.settle_loose(table);
         if self.okurigana.is_none() {

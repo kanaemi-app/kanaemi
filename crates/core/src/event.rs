@@ -6,6 +6,8 @@ pub enum Key {
     /// A key that types a character, with Shift already applied (`A`, not `a`).
     Char(char),
     Space,
+    /// Tab; with Shift, Shift+Tab, however the host reports it.
+    Tab,
     Enter,
     Esc,
     Backspace,

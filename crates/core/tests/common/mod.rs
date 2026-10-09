@@ -135,6 +135,18 @@ impl Converter for Fake {
         })
     }
 
+    /// The readings of the table that go on from `reading`, shortest first.
+    fn complete(&self, reading: &str) -> Vec<String> {
+        let mut readings: Vec<String> = self
+            .table
+            .keys()
+            .filter(|r| r.len() > reading.len() && r.starts_with(reading))
+            .map(|r| r.to_string())
+            .collect();
+        readings.sort_by_key(|r| (r.chars().count(), r.clone()));
+        readings
+    }
+
     /// Puts the reading's full-width digits, in ASCII, where the word has `{}`.
     fn registered_text(&self, reading: &str, _okurigana: Option<&str>, surface: &str) -> String {
         let digits: String = reading

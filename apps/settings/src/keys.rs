@@ -30,6 +30,7 @@ pub fn recorded(held: Held, key: &str, code: &str) -> Option<String> {
     let name = match key {
         "Shift" | "Control" | "Alt" | "Meta" | "CapsLock" => return None,
         "Enter" => "enter".to_owned(),
+        "Tab" => "tab".to_owned(),
         "Escape" => "esc".to_owned(),
         "Backspace" => "backspace".to_owned(),
         "Delete" => "delete".to_owned(),
@@ -262,6 +263,8 @@ fn action_label(mode: &str, action: Action) -> &'static str {
         (_, Action::Kana) => "かなモードへ",
         (_, Action::Begin) => "読みを始める",
         (_, Action::UndoCommit) => "直前の確定を取り消す",
+        (_, Action::Complete) => "読みを補完する",
+        (_, Action::CompletePrevious) => "読みを逆向きに補完する",
         (_, Action::Pick(place)) => SELECT_LABELS
             .get(usize::from(place))
             .copied()
@@ -1199,6 +1202,10 @@ mod tests {
         assert_eq!(recorded(none, "F12", "F12").as_deref(), Some("f12"));
         assert_eq!(recorded(none, "0", "Digit0").as_deref(), Some("0"));
         assert_eq!(recorded(none, "Escape", "Escape").as_deref(), Some("esc"));
+        assert_eq!(
+            recorded(held(false, false, false, true), "Tab", "Tab").as_deref(),
+            Some("shift+tab")
+        );
     }
 
     #[test]
