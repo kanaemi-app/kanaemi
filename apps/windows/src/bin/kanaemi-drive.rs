@@ -5,7 +5,8 @@
 //!     kanaemi-drive <key>...
 //!
 //! A key is `R` or `L` (the right or left Shift alone), `SPC`, `RET`, `ESC`,
-//! `BS`, `WIN` (opens the Start menu, whose search box runs in an
+//! `BS`, `TAB`, `S-TAB` (Shift+Tab), `C-` and a character (Ctrl with the key
+//! that types it, as `C-;`), `WIN` (opens the Start menu, whose search box runs in an
 //! AppContainer), `SERVER` (starts the server that writes for it), `INDICATOR`
 //! and `CANDIDATES` (report whether that window of Kanaemi shows), `WINDOWS`
 //! (where each candidate window is and what owns it), `SIBLINGS` (the
@@ -343,6 +344,29 @@ mod drive {
                 "RET" => tap(VK_RETURN),
                 "ESC" => tap(VK_ESCAPE),
                 "BS" => tap(VK_BACK),
+                "TAB" => tap(VK_TAB),
+                "S-TAB" => chord(VK_SHIFT, VK_TAB),
+                ctrl if ctrl.starts_with("C-") && ctrl.chars().count() == 3 => {
+                    let c = ctrl.encode_utf16().nth(2).unwrap_or_default();
+                    let scanned = unsafe { VkKeyScanW(c) };
+                    if scanned == -1 {
+                        report.push(format!("no key types {ctrl:?}"));
+                    } else {
+                        let vk = VIRTUAL_KEY((scanned & 0xff) as u16);
+                        let shifted = scanned & 0x100 != 0;
+                        let mut inputs = vec![key(VK_CONTROL, 0x1d, false)];
+                        if shifted {
+                            inputs.push(key(VK_SHIFT, 0x2a, false));
+                        }
+                        inputs.push(key(vk, 0, false));
+                        inputs.push(key(vk, 0, true));
+                        if shifted {
+                            inputs.push(key(VK_SHIFT, 0x2a, true));
+                        }
+                        inputs.push(key(VK_CONTROL, 0x1d, true));
+                        send(&inputs);
+                    }
+                }
                 "PAUSE" => sleep(Duration::from_secs(4)),
                 "SERVER" => {
                     // Started from the desktop, as it is at sign-in; it leaves when
