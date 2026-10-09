@@ -3,7 +3,7 @@ use proptest::collection::vec;
 use proptest::prelude::*;
 
 use super::*;
-use crate::TextDictionary;
+use crate::{Dictionary, OkuriHead, TextDictionary};
 
 fn named(label: &str) -> &'static Encoding {
     encoding(&format!(";; -*- coding: {label} -*-")).unwrap()
@@ -172,4 +172,160 @@ proptest! {
             assert_reads_whole(&text);
         }
     }
+}
+
+#[test]
+fn a_dictionary_without_coding_is_in_the_encoding_its_writer_uses() {
+    let utf8 = ";; okuri-nasi entries.\nきしゃ /記者/\n";
+    let read = read_skk_dictionary(utf8, SkkEncoding::Utf8).unwrap();
+    assert!(read.text.starts_with("きしゃ\t記者"), "{}", read.text);
+    assert!(read_skk_dictionary(utf8, SkkEncoding::EucJp).is_err());
+    let marked = format!(";; -*- coding: utf-8 -*-\n{utf8}");
+    assert!(
+        read_skk_dictionary(&marked, SkkEncoding::EucJp).is_ok(),
+        "coding: wins"
+    );
+}
+
+#[test]
+fn what_an_skk_dictionary_loses_is_listed_by_line() {
+    let read = read_skk_dictionary(
+        ";; -*- coding: utf-8 -*-\n\
+         きしゃ /記者/(concat \"a\")/\n\
+         かq /書/\n\
+         >あ /亜/\n\
+         けs /消/[す/消/]/\n",
+        SkkEncoding::EucJp,
+    )
+    .unwrap();
+    let skipped: Vec<(usize, &str)> = read
+        .skipped
+        .iter()
+        .map(|s| (s.line, s.text.as_str()))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            (2, "きしゃ /(concat \"a\")/"),
+            (3, "かq /書/"),
+            (4, ">あ /亜/"),
+        ],
+        "a strict okurigana block repeats what is there and is not lost"
+    );
+    assert_eq!(
+        read.text,
+        skk_to_text(";; -*- coding: utf-8 -*-\nきしゃ /記者/\nけs /消/\n").unwrap()
+    );
+}
+
+fn user_custom(text: &str) -> TextDictionary {
+    let (dictionary, invalid) = TextDictionary::parse_user_custom(text);
+    assert_eq!(invalid, [], "{text}");
+    dictionary
+}
+
+#[test]
+fn a_user_custom_dictionary_is_written_as_an_skk_dictionary() {
+    let d = user_custom(
+        "きしゃ\t記者\n\
+         きしゃ\t汽車\n\
+         か\t書\t五段-カ行\n\
+         たべ\t食べ\t下一段-バ行\n\
+         み\t見\t上一段-マ行\n\
+         たか\t高\t形容詞\n\
+         あい\t愛\tサ行変格\n\
+         ほ*s\t干\n\
+         か*っ\t勝っ\n\
+         {}こ\t{}個\n\
+         !ねこ\t猫\n\
+         すらっしゅ\ta/b\n",
+    );
+    let export = write_skk_dictionary(&d, SkkEncoding::Utf8);
+    assert_eq!(
+        String::from_utf8(export.bytes).unwrap(),
+        ";; -*- coding: utf-8 -*-\n\
+         ;; okuri-ari entries.\n\
+         みr /見/\n\
+         ほs /干/\n\
+         たかi /高/\n\
+         たb /食/\n\
+         かt /勝/\n\
+         かk /書/\n\
+         あいs /愛/\n\
+         ;; okuri-nasi entries.\n\
+         きしゃ /汽車/記者/\n"
+    );
+    // {}こ, the hidden pair, and the word with a slash.
+    assert_eq!((export.written, export.skipped), (9, 3));
+}
+
+#[test]
+fn an_skk_dictionary_written_out_comes_back_in() {
+    let d = user_custom("きしゃ\t記者\nか\t書\t五段-カ行\nたべ\t食べ\t下一段-バ行\n");
+    let text = skk_to_text(write_skk_dictionary(&d, SkkEncoding::Utf8).bytes).unwrap();
+    let (back, invalid) = TextDictionary::parse(&text);
+    assert_eq!(invalid, [], "{text}");
+    assert_eq!(back.lookup("きしゃ")[0].surface, "記者");
+    assert_eq!(back.okuri("か", OkuriHead::Row('k'))[0].surface, "書");
+    assert_eq!(back.okuri("た", OkuriHead::Row('b'))[0].surface, "食");
+}
+
+#[test]
+fn an_skk_dictionary_written_in_euc_jp_says_so_and_leaves_out_what_it_cannot_hold() {
+    let d = user_custom("きしゃ\t記者\nえもじ\t😀\nつちよし\t𠮷\nえん\t¥\n");
+    let export = write_skk_dictionary(&d, SkkEncoding::EucJp);
+    let (text, _, errors) = EUC_JP.decode(&export.bytes);
+    assert!(!errors);
+    assert!(text.starts_with(";; -*- coding: euc-jp -*-\n"), "{text}");
+    assert!(text.contains("きしゃ /記者/\n"), "{text}");
+    assert_eq!((export.written, export.skipped), (1, 3), "{text}");
+    let back = skk_to_text(&export.bytes).unwrap();
+    assert!(back.starts_with("きしゃ\t記者"), "{back}");
+}
+
+#[test]
+fn a_byte_order_mark_tells_the_encoding_over_the_writers_default() {
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend(
+        ";; okuri-nasi entries.\r\nきしゃ /記者/\r\n"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes),
+    );
+    let read = read_skk_dictionary(&bytes, SkkEncoding::Utf8).unwrap();
+    assert!(read.text.starts_with("きしゃ\t記者"), "{}", read.text);
+}
+
+#[test]
+fn a_line_that_is_no_entry_is_listed_as_unreadable() {
+    let read = read_skk_dictionary("きしゃ /記者/\nねこ 猫\n\n", SkkEncoding::Utf8).unwrap();
+    let skipped: Vec<(usize, SkipReason, &str)> = read
+        .skipped
+        .iter()
+        .map(|s| (s.line, s.reason, s.text.as_str()))
+        .collect();
+    assert_eq!(skipped, [(2, SkipReason::Unreadable, "ねこ 猫")]);
+}
+
+#[test]
+fn a_reading_skk_would_read_otherwise_is_not_written() {
+    // A number, an affix, and okurigana to SKK.
+    let d = user_custom("\\#こ\t個\nあ>\t亜\nかなk\t仮名\nきしゃ\t記者\n");
+    let export = write_skk_dictionary(&d, SkkEncoding::Utf8);
+    let text = String::from_utf8(export.bytes).unwrap();
+    assert_eq!((export.written, export.skipped), (1, 3), "{text}");
+}
+
+#[test]
+fn a_word_filed_under_the_row_of_small_kana_is_not_written() {
+    let d = user_custom("か*x\t亜\nきしゃ\t記者\n");
+    let export = write_skk_dictionary(&d, SkkEncoding::Utf8);
+    assert_eq!((export.written, export.skipped), (1, 1));
+}
+
+#[test]
+fn candidates_meeting_under_one_heading_go_cheapest_first() {
+    let (d, invalid) = TextDictionary::parse("たべ\t食べ\t下一段-バ行\t0\nた*b\t喰\t\t100\n");
+    assert_eq!(invalid, []);
+    let text = String::from_utf8(write_skk_dictionary(&d, SkkEncoding::Utf8).bytes).unwrap();
+    assert!(text.contains("たb /食/喰/\n"), "{text}");
 }

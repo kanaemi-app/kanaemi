@@ -11,6 +11,7 @@ encoding_rs = "0.8.42"
 fst = "0.4.7"
 kanaemi-core.workspace = true
 memmap2 = "0.9.11"
+plist = { version = "1.10.1", default-features = false }
 sha2 = "0.11.0"
 thiserror = "2.0.21"
 unicode-normalization = "0.1"

@@ -99,6 +99,53 @@ fn okuri_surface_stem(head: OkuriHead, word: &str) -> &str {
     }
 }
 
+/// A word a dictionary gives, or a pair it hides, as
+/// [`TextDictionary::words_in_order`] lists them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Word<'a> {
+    /// A word, which conjugates when it has a type.
+    Item {
+        reading: &'a str,
+        surface: &'a str,
+        conjugation: Option<&'a str>,
+    },
+    /// An okurigana word, its surface written as its line writes it.
+    Okuri {
+        stem: &'a str,
+        head: OkuriHead,
+        surface: &'a str,
+    },
+    Hidden {
+        reading: &'a str,
+        surface: &'a str,
+    },
+}
+
+impl Word<'_> {
+    fn rank(&self) -> u8 {
+        match self {
+            Word::Item { .. } => 0,
+            Word::Okuri { .. } => 1,
+            Word::Hidden { .. } => 2,
+        }
+    }
+
+    fn surface(&self) -> &str {
+        match self {
+            Word::Item { surface, .. }
+            | Word::Okuri { surface, .. }
+            | Word::Hidden { surface, .. } => surface,
+        }
+    }
+
+    fn conjugation(&self) -> Option<&str> {
+        match self {
+            Word::Item { conjugation, .. } => *conjugation,
+            _ => None,
+        }
+    }
+}
+
 enum Record {
     Word {
         reading: String,
@@ -252,6 +299,73 @@ impl TextDictionary {
     pub(crate) fn hide_line(reading: &str, surface: &str) -> String {
         let reading = escape_literal_reading(reading);
         format!("!{reading}\t{}", escape_surface(surface))
+    }
+
+    /// Whether `line` is a line a dictionary other than the user custom one
+    /// reads.
+    pub(crate) fn reads_line(line: &str) -> bool {
+        parse_line(line, false).is_ok()
+    }
+
+    /// Every word the dictionary gives and every pair it hides, by reading
+    /// (an okurigana word's stem and what follows its `*`), then cost,
+    /// cheapest first.
+    pub(crate) fn words_in_order(&self) -> Vec<Word<'_>> {
+        self.costed_words_in_order()
+            .into_iter()
+            .map(|(word, _)| word)
+            .collect()
+    }
+
+    /// [`Self::words_in_order`] with each word's cost; a hidden pair's is the
+    /// highest.
+    pub(crate) fn costed_words_in_order(&self) -> Vec<(Word<'_>, u32)> {
+        let mut words: Vec<(String, u32, Word<'_>)> = Vec::new();
+        for (reading, items) in &self.words {
+            for (item, cost) in costed(items) {
+                let word = Word::Item {
+                    reading,
+                    surface: &item.surface,
+                    conjugation: item.conjugation.as_deref(),
+                };
+                words.push((reading.clone(), cost, word));
+            }
+        }
+        for ((stem, head), items) in &self.okuri {
+            for (item, cost) in costed(items) {
+                let key = format!("{stem}{}", head.as_char());
+                let word = Word::Okuri {
+                    stem,
+                    head: *head,
+                    surface: &item.surface,
+                };
+                words.push((key, cost, word));
+            }
+        }
+        for (reading, surface) in &self.hidden {
+            words.push((reading.clone(), u32::MAX, Word::Hidden { reading, surface }));
+        }
+        // Hash maps give no order, so ties go by what is left to compare.
+        words.sort_by(|(a, a_cost, a_word), (b, b_cost, b_word)| {
+            (
+                a,
+                a_cost,
+                a_word.rank(),
+                a_word.surface(),
+                a_word.conjugation(),
+            )
+                .cmp(&(
+                    b,
+                    b_cost,
+                    b_word.rank(),
+                    b_word.surface(),
+                    b_word.conjugation(),
+                ))
+        });
+        words
+            .into_iter()
+            .map(|(_, cost, word)| (word, cost))
+            .collect()
     }
 
     fn apply(&mut self, record: Record) {
