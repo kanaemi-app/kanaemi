@@ -242,13 +242,18 @@ impl Engine {
         self.last.replace(None);
     }
 
-    /// Carries what the field taught and the lines not yet written over from
-    /// the engine this one replaces. The model stays this engine's own.
+    /// Carries what the field taught, the lines not yet written, and the
+    /// last conversion and commit over from the engine this one replaces, so
+    /// a candidate shown or committed before is still recorded, and its
+    /// commit undone, by the item it was filled from. The model and the
+    /// functions stay this engine's own.
     pub fn take_over(&mut self, previous: Engine) {
         self.field = previous.field;
         self.user.absorb(previous.user);
         self.selections = previous.selections;
         self.selections_changed = previous.selections_changed;
+        self.last = previous.last;
+        self.committed = previous.committed;
     }
 
     /// Learns what the core reports happened, in its order.

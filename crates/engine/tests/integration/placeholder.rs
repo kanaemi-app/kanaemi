@@ -44,6 +44,14 @@ fn engine(text: &str) -> (Engine, Lines) {
     (engine, lines)
 }
 
+/// An engine opened again on `old`'s functions, as a reload opens it.
+fn opened_again(old: Engine, functions: &Rc<Test>, text: &str) -> Engine {
+    let (mut new, _) = engine(text);
+    new.set_functions(Some(functions.clone() as Rc<dyn Functions>));
+    new.take_over(old);
+    new
+}
+
 fn surfaces(engine: &Engine, reading: &str) -> Vec<String> {
     engine
         .convert(reading, None)
@@ -145,6 +153,31 @@ fn withdrawing_a_commit_after_converting_again_withdraws_its_item() {
             .count(),
         0
     );
+}
+
+#[test]
+fn withdrawing_a_commit_made_before_opening_the_engine_again_withdraws_its_item() {
+    let functions = Rc::new(Test::default());
+    let (mut old, _) = engine("かず\t{-:count}");
+    old.set_functions(Some(functions.clone() as Rc<dyn Functions>));
+    assert_eq!(surfaces(&old, "かず"), ["1"]);
+    old.commit("かず", "1");
+    let mut new = opened_again(old, &functions, "かず\t{-:count}");
+    new.withdraw("かず", "1");
+    let text = new.take_selections().unwrap().to_text();
+    assert_eq!(text.matches("{-:count}").count(), 0, "{text}");
+}
+
+#[test]
+fn a_commit_converted_before_opening_the_engine_again_is_recorded_by_its_item() {
+    let functions = Rc::new(Test::default());
+    let (mut old, _) = engine("かず\t{-:count}");
+    old.set_functions(Some(functions.clone() as Rc<dyn Functions>));
+    assert_eq!(surfaces(&old, "かず"), ["1"]);
+    let mut new = opened_again(old, &functions, "かず\t{-:count}");
+    new.commit("かず", "1");
+    let text = new.take_selections().unwrap().to_text();
+    assert!(text.contains("\nかず\t{-:count}\t"), "{text}");
 }
 
 #[test]
