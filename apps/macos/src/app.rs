@@ -563,7 +563,7 @@ impl KanaemiController {
             Err(_) => {
                 // The event is left out: it may be a key the user typed.
                 tracing::warn!("handling an event panicked; the state was reset");
-                *ivars.field.borrow_mut() = new_field();
+                with_profile(|profile| ivars.field.borrow_mut().restart(profile));
                 if let Some(client) = client {
                     set_marked_text(client, "", 0);
                 }
