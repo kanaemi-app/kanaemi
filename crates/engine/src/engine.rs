@@ -18,6 +18,14 @@ use crate::{
 /// changes almost nothing.
 const CONJUGATED_COST: u32 = 500;
 
+/// How many readings a reading is completed with at most.
+const MAX_COMPLETIONS: usize = 100;
+
+/// How many readings going on from the one typed are looked at in each
+/// dictionary, in its order: a short reading starts tens of thousands in a
+/// large dictionary, too many to look up while a key waits.
+const COMPLETIONS_LOOKED_AT: usize = 5000;
+
 /// One place in the ordered dictionary list.
 pub enum Slot {
     UserCustom,
@@ -524,7 +532,79 @@ impl Engine {
     }
 }
 
+impl Engine {
+    /// Readings longer than `prefix` that start with it, to complete it
+    /// with: those committed in this field, latest first; those of pairs
+    /// picked again and again, heaviest first; then each dictionary's in
+    /// its priority, by the cheapest word that does not conjugate, then
+    /// shortest first. A reading with a placeholder is never one.
+    fn completions(&self, prefix: &str) -> Vec<String> {
+        if prefix.is_empty() {
+            return Vec::new();
+        }
+        let goes_on =
+            |r: &str| r.len() > prefix.len() && r.starts_with(prefix) && !r.contains(OPEN);
+        let mut readings: Vec<String> = Vec::new();
+        let add = |readings: &mut Vec<String>, reading: &str| {
+            if goes_on(reading) && !readings.iter().any(|r| r == reading) {
+                readings.push(reading.to_owned());
+            }
+        };
+        for (reading, _) in self.field.history.iter().rev() {
+            add(&mut readings, reading);
+        }
+        for reading in self.selections.favorite_readings(prefix) {
+            add(&mut readings, reading);
+        }
+        let user = self.user.dictionary();
+        for slot in &self.slots {
+            if readings.len() >= MAX_COMPLETIONS {
+                break;
+            }
+            let dictionary: &dyn Dictionary = match slot {
+                Slot::UserCustom => user,
+                Slot::Dictionary(d) => d.as_ref(),
+            };
+            let mut found: Vec<(u32, usize, String)> = dictionary
+                .readings_from(prefix, COMPLETIONS_LOOKED_AT)
+                .into_iter()
+                .filter(|r| goes_on(r) && !readings.contains(r))
+                .filter_map(|reading| {
+                    let cheapest = dictionary
+                        .lookup(&reading)
+                        .into_iter()
+                        .filter(|e| {
+                            e.conjugation.is_none() && !user.is_hidden(&reading, &e.surface)
+                        })
+                        .map(|e| e.cost)
+                        .min()?;
+                    Some((cheapest, reading.chars().count(), reading))
+                })
+                .collect();
+            found.sort_unstable();
+            for (_, _, reading) in found {
+                add(&mut readings, &reading);
+            }
+        }
+        readings.truncate(MAX_COMPLETIONS);
+        readings
+    }
+}
+
 impl Converter for Engine {
+    fn complete(&self, reading: &str) -> Vec<String> {
+        // Looked up as NFC, but each goes on from `reading` as given: the
+        // core keeps the readings that start with it.
+        let normal = nfc(reading);
+        self.completions(&normal)
+            .into_iter()
+            .filter_map(|completed| {
+                let added = completed.strip_prefix(normal.as_str())?;
+                Some(format!("{reading}{added}"))
+            })
+            .collect()
+    }
+
     fn convert(&self, reading: &str, okurigana: Option<&str>) -> Vec<Candidate> {
         let reading = &nfc(reading);
         let okurigana = okurigana.map(nfc);

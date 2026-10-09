@@ -340,6 +340,10 @@ impl Converter for SharedEngine {
     fn registered_text(&self, reading: &str, okurigana: Option<&str>, surface: &str) -> String {
         self.0.borrow().registered_text(reading, okurigana, surface)
     }
+
+    fn complete(&self, reading: &str) -> Vec<String> {
+        self.0.borrow().complete(reading)
+    }
 }
 
 #[cfg(test)]
@@ -563,6 +567,13 @@ mod tests {
             .converter()
             .registered_text("１２こ", None, "{kanji}個");
         assert_eq!(text, "十二個");
+    }
+
+    #[test]
+    fn a_field_completes_a_reading_with_the_profile_s_words() {
+        let mut profile = Profile::open(temp_dir("complete"));
+        register(&mut profile, "かくにんしょ", "確認書");
+        assert_eq!(profile.converter().complete("かくにん"), ["かくにんしょ"]);
     }
 
     #[test]
