@@ -52,6 +52,10 @@ mod server {
     const MAX_UNWRITTEN: usize = 1000;
     /// How long a client may take to send its line.
     const RECEIVE_TIMEOUT: Duration = Duration::from_secs(2);
+    /// How long a line waits for the lock on the user custom dictionary.
+    /// Longer than the IME waits: no key waits here, and a line that is not
+    /// written is written again only when the next one comes.
+    const LOCK_WAIT: Duration = Duration::from_secs(10);
     /// Keeps a console window from flashing for each `icacls`.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -319,7 +323,7 @@ mod server {
         /// Writes the lines waiting, oldest first; returns whether none is
         /// left.
         fn flush(&mut self) -> bool {
-            let mut sink = FileSink::new(&self.custom);
+            let mut sink = FileSink::waiting(&self.custom, LOCK_WAIT);
             while let Some(line) = self.unwritten.front() {
                 if let Err(error) = sink.append(line) {
                     tracing::warn!(%error, unwritten = self.unwritten.len(), "user custom dictionary not written");
