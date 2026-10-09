@@ -287,6 +287,7 @@ fn action_label(mode: &str, action: Action) -> &'static str {
         (_, Action::UndoCommit) => "直前の確定を取り消す",
         (_, Action::Complete) => "読みを補完する",
         (_, Action::CompletePrevious) => "読みを逆向きに補完する",
+        (_, Action::RereadKana) => "打ったかなを読みに戻す",
         (_, Action::Pick(place)) => SELECT_LABELS
             .get(usize::from(place))
             .copied()

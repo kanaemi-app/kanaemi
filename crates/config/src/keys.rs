@@ -54,8 +54,11 @@ impl Scene {
         use Action::*;
         match self {
             Self::Reading => !matches!(action, Forget | Pick(_) | UndoCommit),
-            Self::Completion => !matches!(action, Forget | UndoCommit),
-            Self::Candidates => !matches!(action, Delete | Left | Right | Home | End | UndoCommit),
+            Self::Completion => !matches!(action, Forget | UndoCommit | RereadKana),
+            Self::Candidates => !matches!(
+                action,
+                Delete | Left | Right | Home | End | UndoCommit | RereadKana
+            ),
             Self::Registration => matches!(
                 action,
                 Commit
@@ -70,7 +73,7 @@ impl Scene {
                     | Kana
                     | Begin
             ),
-            Self::Kana => matches!(action, Abc | Kana | Begin | UndoCommit),
+            Self::Kana => matches!(action, Abc | Kana | Begin | UndoCommit | RereadKana),
             Self::Abc => matches!(action, Abc | Kana),
         }
     }
@@ -173,7 +176,7 @@ fn every_action() -> Vec<Action> {
         Action::Begin,
     ]);
     all.extend((0..PICKABLE).map(Action::Pick));
-    all.push(Action::UndoCommit);
+    all.extend([Action::UndoCommit, Action::RereadKana]);
     all
 }
 
@@ -208,6 +211,7 @@ pub fn format_action(action: Action) -> String {
         Action::UndoCommit => "undo-commit".to_owned(),
         Action::Complete => "complete".to_owned(),
         Action::CompletePrevious => "complete-previous".to_owned(),
+        Action::RereadKana => "reread-kana".to_owned(),
     };
     format!("@{name}")
 }
