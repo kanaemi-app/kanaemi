@@ -278,6 +278,35 @@ impl Word {
         }
     }
 
+    /// Takes the first run of kana typed together off a stem the cursor is
+    /// at the end of, leaving at least one; `None` when there is no other.
+    pub(crate) fn take_first(&mut self) -> Option<String> {
+        if self.okurigana.is_some() || !self.stem.at_end() {
+            return None;
+        }
+        let group = self.stem_keys.first()?.group;
+        let count = self
+            .stem_keys
+            .iter()
+            .take_while(|k| k.group == group)
+            .count();
+        if count >= self.stem_keys.len() {
+            return None;
+        }
+        let stem = self.stem.as_str();
+        let end = stem
+            .char_indices()
+            .nth(count)
+            .map_or(stem.len(), |(i, _)| i);
+        let (first, rest) = stem.split_at(end);
+        let first = first.to_owned();
+        let mut taken = Editable::default();
+        taken.insert(rest);
+        self.stem = taken;
+        self.stem_keys.drain(..count);
+        Some(first)
+    }
+
     /// Removes pending romaji first, then okurigana, then the okurigana mark, then the stem.
     /// Kana the okurigana grew by go back to the romaji they were finished from.
     pub(crate) fn backspace(&mut self) {

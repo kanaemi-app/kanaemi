@@ -110,6 +110,16 @@ struct Completion {
     index: Option<usize>,
 }
 
+/// What the host is asked to erase before the core goes on.
+#[derive(Clone)]
+enum Erasing {
+    /// A commit undone, to choose again.
+    Commit(Undoable),
+    /// Kana typed without a reading, to read again: the kana and the keys
+    /// that made them, with the romaji still unfinished after them.
+    Kana(Word),
+}
+
 #[derive(Clone)]
 struct Registration {
     word: Word,
@@ -159,13 +169,23 @@ pub struct Core<C> {
     completion: Option<Completion>,
     /// The last candidate committed, while it can be undone.
     undoable: Option<Undoable>,
-    /// A commit undone, waiting for the host to erase it.
-    erasing: Option<Undoable>,
+    /// A commit undone or kana to read again, waiting for the host to erase it.
+    erasing: Option<Erasing>,
     /// Keys that came while the host was erasing.
     keys_waiting: Vec<KeyEvent>,
     /// A commit undone and being chosen again: its `after` follows whatever
     /// is committed next, and Cancel commits it as it was.
     redoing: Option<Undoable>,
+    /// The kana last typed in kana mode with nothing typed, one run of them
+    /// since the core last put anything else in the field, with the keys
+    /// that made them and the romaji still unfinished: what a reading
+    /// forgotten to begin is taken back from. Only kana, so that what is
+    /// read again can be converted.
+    kana_run: Option<Word>,
+    /// Kana taken back to the reading being typed, as they were taken, but
+    /// for those committed off its start since: Cancel types them again,
+    /// and while the reading is still them, RereadKana commits its first.
+    rereading: Option<Word>,
     commit: String,
     erase: Option<String>,
     send: Option<Chord>,
@@ -190,6 +210,8 @@ impl<C: Converter> Core<C> {
             erasing: None,
             keys_waiting: Vec::new(),
             redoing: None,
+            kana_run: None,
+            rereading: None,
             commit: String::new(),
             erase: None,
             send: None,
@@ -219,10 +241,11 @@ impl<C: Converter> Core<C> {
             Event::Key(key) => self.key_in_field(key),
             Event::CaretMoved => {
                 self.undoable = None;
+                self.kana_run = None;
                 false
             }
             Event::Erased(erased) => {
-                self.choose_again(erased);
+                self.erased(erased);
                 // Taken from the application already, they can no longer
                 // pass on to it, so they leave the caret where it is. One
                 // undoing again starts another wait, and the keys after it
@@ -246,11 +269,13 @@ impl<C: Converter> Core<C> {
             Event::FocusOut => {
                 self.settle_waiting();
                 self.release_modifiers();
+                self.unfinished_back();
                 self.commit_visible();
                 false
             }
             Event::Flush => {
                 self.settle_waiting();
+                self.unfinished_back();
                 self.commit_visible();
                 false
             }
@@ -276,12 +301,18 @@ impl<C: Converter> Core<C> {
             self.erasing = None;
             self.keys_waiting.clear();
             self.redoing = None;
+            self.kana_run = None;
+            self.rereading = None;
         }
         // A word chosen again and erased leaves what followed it.
         if !self.composing()
             && let Some(redoing) = self.redoing.take()
         {
             self.emit(&redoing.after);
+        }
+        // Kana read again are committed, dropped or typed again by now.
+        if !self.composing() {
+            self.rereading = None;
         }
         if !self.commit.is_empty() {
             self.effects.push(Effect::Typed(self.commit.clone()));
@@ -314,6 +345,7 @@ impl<C: Converter> Core<C> {
         if key.kind == KeyKind::Press && !is_modifier(key.key) && (!consumed || self.send.is_some())
         {
             self.undoable = None;
+            self.kana_run = None;
         }
         consumed
     }
@@ -733,8 +765,17 @@ impl<C: Converter> Core<C> {
     fn idle(&mut self, mut pending: String, key: Key) -> bool {
         match key {
             Key::Char(c) if self.config.romaji.is_input_char(c) => {
+                let waiting = pending.clone();
                 let kana = self.config.romaji.feed(&mut pending, c);
+                let run = self.registrations.is_empty().then(|| {
+                    let run = self.kana_run.take();
+                    self.grow_run(run, &waiting, c, &kana, &pending)
+                });
                 self.emit(&kana);
+                // Its own kana do not end the run.
+                if run.is_some() {
+                    self.kana_run = run;
+                }
                 self.state = State::Idle { pending };
             }
             Key::Char(c) => {
@@ -759,6 +800,39 @@ impl<C: Converter> Core<C> {
             }
         }
         true
+    }
+
+    /// The run of kana `run`, `c` typed after it made `kana` and left
+    /// `pending`, from `waiting`: grown by them, or started after them by
+    /// what is pending when they are not all kana. A run ended meanwhile
+    /// starts with the romaji that was waiting, which put nothing in the
+    /// field yet.
+    fn grow_run(
+        &self,
+        run: Option<Word>,
+        waiting: &str,
+        c: char,
+        kana: &str,
+        pending: &str,
+    ) -> Word {
+        let table = &self.config.romaji;
+        let typed = |keys: &str| {
+            let mut word = Word::default();
+            for c in keys.chars() {
+                word.feed(c, table);
+            }
+            word
+        };
+        kana.chars()
+            .all(is_kana)
+            .then(|| {
+                let mut run = run.unwrap_or_else(|| typed(waiting));
+                run.feed(c, table);
+                run
+            })
+            // The run keeps in step with what the field shows, or starts over.
+            .filter(|run| run.pending == pending && run.stem.as_str().ends_with(kana))
+            .unwrap_or_else(|| typed(pending))
     }
 
     /// Esc with nothing to cancel passes through and returns to ABC mode.
@@ -1051,9 +1125,24 @@ impl<C: Converter> Core<C> {
                 let Some(undoable) = self.undoable.take() else {
                     return Some(false);
                 };
+                // The kana typed after the commit are erased with it.
+                self.kana_run = None;
                 self.erase = Some(undoable.text());
-                self.erasing = Some(undoable);
+                self.erasing = Some(Erasing::Commit(undoable));
                 return None;
+            }
+            // The romaji still unfinished goes on after the kana, and waits
+            // with them for the host.
+            Action::RereadKana if self.registrations.is_empty() => {
+                if let Some(run) = self
+                    .kana_run
+                    .take()
+                    .filter(|run| !run.stem.is_empty() && run.pending == pending)
+                {
+                    self.erase = Some(run.stem.as_str().to_owned());
+                    self.erasing = Some(Erasing::Kana(run));
+                    return None;
+                }
             }
             _ => {}
         }
@@ -1131,7 +1220,21 @@ impl<C: Converter> Core<C> {
             Action::Cancel if self.redoing.is_some() && self.registrations.is_empty() => {
                 self.restore();
             }
+            Action::Cancel if self.rereading.is_some() && self.registrations.is_empty() => {
+                self.type_kana_again();
+            }
             Action::Cancel => {}
+            Action::RereadKana => {
+                let as_taken = self.registrations.is_empty()
+                    && self.rereading.as_ref().is_some_and(|taken| {
+                        taken.stem.as_str() == word.stem.as_str() && taken.pending == word.pending
+                    });
+                if as_taken && let Some(first) = word.take_first() {
+                    self.emit(&first);
+                    self.rereading = Some(word.clone());
+                }
+                self.state = State::Reading(word);
+            }
             Action::Backspace if !word.is_empty() => {
                 word.backspace();
                 self.state = State::Reading(word);
@@ -1364,12 +1467,18 @@ impl<C: Converter> Core<C> {
         self.retype(&keys);
     }
 
+    /// Once the host erased what it was asked to, goes on with it.
+    fn erased(&mut self, erased: bool) {
+        match self.erasing.take() {
+            Some(Erasing::Commit(undoable)) => self.choose_again(undoable, erased),
+            Some(Erasing::Kana(run)) => self.read_again(run, erased),
+            None => {}
+        }
+    }
+
     /// Once the host erased the commit undone, chooses it again; otherwise
     /// it stays committed, and can no longer be undone.
-    fn choose_again(&mut self, erased: bool) {
-        let Some(undoable) = self.erasing.take() else {
-            return;
-        };
+    fn choose_again(&mut self, undoable: Undoable, erased: bool) {
         if !erased {
             return;
         }
@@ -1385,6 +1494,63 @@ impl<C: Converter> Core<C> {
         self.effects.push(Effect::Erased(undoable.text()));
         self.state = State::Candidates(undoable.selection.clone());
         self.redoing = Some(undoable);
+    }
+
+    /// Once the host erased the kana, reads them again; otherwise they stay
+    /// in the field, and the romaji after them waits again.
+    fn read_again(&mut self, run: Word, erased: bool) {
+        let kana = run.stem.as_str().to_owned();
+        if erased {
+            self.effects.push(Effect::Erased(kana.clone()));
+            // A commit before the kana can still be undone, without them.
+            if let Some(undoable) = &mut self.undoable {
+                match undoable.after.strip_suffix(kana.as_str()) {
+                    Some(before) => undoable.after = before.to_owned(),
+                    None => self.undoable = None,
+                }
+            }
+            // A reading is typed in kana mode only: out of it meanwhile, the
+            // kana go back as they were.
+            if self.mode == Mode::Kana {
+                self.state = State::Reading(run.clone());
+                self.rereading = Some(run);
+                return;
+            }
+            self.emit(&kana);
+        }
+        let mut pending = run.pending;
+        match self.mode {
+            Mode::Kana => self.state = State::Idle { pending },
+            Mode::Abc => {
+                let kana = self.flush_unfinished(&mut pending);
+                self.emit(&kana);
+            }
+        }
+    }
+
+    /// Types the kana read again as they were taken, with the romaji that
+    /// was unfinished after them, to be read again once more.
+    fn type_kana_again(&mut self) {
+        let Some(run) = self.rereading.take() else {
+            return;
+        };
+        self.emit(run.stem.as_str());
+        self.state = State::Idle {
+            pending: run.pending.clone(),
+        };
+        self.kana_run = Some(run);
+    }
+
+    /// The romaji waiting with kana the host is erasing is unfinished again,
+    /// to be committed with what is visible.
+    fn unfinished_back(&mut self) {
+        if let Some(Erasing::Kana(run)) = &self.erasing
+            && self.registrations.is_empty()
+            && let State::Idle { pending } = &mut self.state
+            && pending.is_empty()
+        {
+            pending.clone_from(&run.pending);
+        }
     }
 
     /// Commits again what was undone, as it was, to be undone again.
@@ -1606,6 +1772,7 @@ impl<C: Converter> Core<C> {
         if text.is_empty() {
             return;
         }
+        self.kana_run = None;
         let after = self.redoing.take().map(|r| r.after).unwrap_or_default();
         for text in [text, &after] {
             self.commit.push_str(text);
@@ -1848,6 +2015,11 @@ fn word_form(word: &Word, form: Form, table: &romaji::RomajiTable) -> Option<Str
         Form::Alphanumeric => word.letters(table),
     };
     Some(surface).filter(|s| !s.is_empty())
+}
+
+/// A kana a reading can be made of, as typed from romaji.
+fn is_kana(c: char) -> bool {
+    matches!(c, 'ぁ'..='ゖ' | 'ゝ' | 'ゞ' | 'ー')
 }
 
 /// Where the page holding the candidate at `index` starts.

@@ -118,6 +118,9 @@ pub enum Action {
     Complete,
     /// Go round the readings [`Action::Complete`] gives the other way.
     CompletePrevious,
+    /// Take the kana just typed without a reading back to a reading; in a
+    /// reading taken back so and left as it was, commit its first kana.
+    RereadKana,
 }
 
 /// Where a key is pressed, which decides the list of bindings it is looked up in.
@@ -218,9 +221,14 @@ impl Bindings {
     }
 
     /// Whether the host is asked to send keys to the application: keys sent
-    /// in place of others, or Backspaces that erase a commit undone.
+    /// in place of others, or Backspaces that erase a commit undone or kana
+    /// taken back to a reading.
     pub fn sends_keys(&self) -> bool {
-        !self.application.is_empty() || self.kana.iter().any(|b| b.to == Action::UndoCommit)
+        !self.application.is_empty()
+            || self
+                .kana
+                .iter()
+                .any(|b| matches!(b.to, Action::UndoCommit | Action::RereadKana))
     }
 }
 
@@ -249,6 +257,10 @@ impl Default for Bindings {
             to,
         };
         let begin = key(Key::Char(';'), plain, Begin);
+        // The `;` forgotten, typed late with Ctrl. Also with only unfinished
+        // romaji, which looks keys up as a reading does. With no kana to take
+        // back it passes on, to what applications give it (today's date).
+        let reread = key(Key::Char(';'), ctrl, RereadKana);
         let deciding = [
             key(Key::Enter, plain, Commit),
             key(Key::Char('j'), ctrl, Commit),
@@ -322,7 +334,7 @@ impl Default for Bindings {
                 &to_abc,
                 &converting,
                 &completing,
-                &[begin],
+                &[begin, reread],
             ]
             .concat(),
             // The listed readings are gone through as candidates are, and
@@ -376,6 +388,7 @@ impl Default for Bindings {
                 &[off],
                 &[begin],
                 &[key(Key::Backspace, shift, UndoCommit)],
+                &[reread],
             ]
             .concat(),
             abc: [&to_kana[..], &[on]].concat(),
