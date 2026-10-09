@@ -113,3 +113,11 @@ fn picks_made_after_the_record_written_was_taken_are_made_again() {
     let merged = e.take_selections().expect("to be written");
     assert!(merged.to_text().contains("\nきしゃ\t記者\t"));
 }
+
+#[test]
+fn a_candidate_committed_for_an_empty_reading_is_not_recorded() {
+    let mut e = engine(Selections::default());
+    e.commit("", "ｐｄｆ");
+    e.withdraw("", "ｐｄｆ");
+    assert_eq!(e.take_selections(), None);
+}
