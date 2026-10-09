@@ -4,6 +4,7 @@
 use kanaemi_core::{Chord, Key, KeyEvent, KeyKind, Modifiers};
 
 pub const VK_BACK: u16 = 0x08;
+pub const VK_TAB: u16 = 0x09;
 pub const VK_RETURN: u16 = 0x0d;
 pub const VK_SHIFT: u16 = 0x10;
 pub const VK_CONTROL: u16 = 0x11;
@@ -149,8 +150,9 @@ fn sided(raw: &RawKey) -> Option<Key> {
 }
 
 /// The keys the core knows by name rather than by what they type.
-const NAMED: [(u16, Key); 15] = [
+const NAMED: [(u16, Key); 16] = [
     (VK_BACK, Key::Backspace),
+    (VK_TAB, Key::Tab),
     (VK_RETURN, Key::Enter),
     (VK_ESCAPE, Key::Esc),
     (VK_SPACE, Key::Space),
@@ -356,6 +358,21 @@ mod tests {
     #[test]
     fn caps_lock_let_go_is_left_out() {
         assert_eq!(translate(&raw(VK_CAPITAL, false)), None);
+    }
+
+    #[test]
+    fn tab_is_tab_with_or_without_shift() {
+        let tab = translate(&raw(VK_TAB, true)).unwrap();
+        assert_eq!((tab.key, tab.mods.shift), (Key::Tab, false));
+        let back_tab = translate(&RawKey {
+            mods: Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            ..raw(VK_TAB, true)
+        })
+        .unwrap();
+        assert_eq!((back_tab.key, back_tab.mods.shift), (Key::Tab, true));
     }
 
     #[test]

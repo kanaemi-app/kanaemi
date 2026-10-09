@@ -26,8 +26,9 @@ const SIDED: [(u32, Key); 8] = [
 ];
 
 /// The keys the core knows by name rather than by what they type.
-const NAMED: [(u32, Key); 15] = [
+const NAMED: [(u32, Key); 16] = [
     (0xff08, Key::Backspace),
+    (0xff09, Key::Tab),
     (0xff0d, Key::Enter),
     (0xff1b, Key::Esc),
     (0x0020, Key::Space),
@@ -44,10 +45,13 @@ const NAMED: [(u32, Key); 15] = [
     (0xff27, Key::Kana),
 ];
 
-/// The keypad's keys that the main keys have too. The keys the core sends
-/// are always the main ones.
-const KEYPAD: [(u32, Key); 9] = [
+/// The keypad's keys that the main keys have too, and Tab as X names it
+/// with Shift (ISO_Left_Tab). The keys the core sends are always the main
+/// ones.
+const KEYPAD: [(u32, Key); 11] = [
     (0xff80, Key::Space),
+    (0xff89, Key::Tab),
+    (0xfe20, Key::Tab),
     (0xff8d, Key::Enter),
     (0xff95, Key::Home),
     (0xff96, Key::Left),
@@ -229,6 +233,9 @@ mod tests {
         assert_eq!(translate(0x20, 0, 0).unwrap().key, Key::Space);
         assert_eq!(translate(0xffc2, 0, 0).unwrap().key, Key::F(5));
         assert_eq!(translate(0xff23, 0, 0).unwrap().key, Key::Henkan);
+        assert_eq!(translate(0xff09, 0, 0).unwrap().key, Key::Tab);
+        let back_tab = translate(0xfe20, SHIFT_MASK, 0).unwrap();
+        assert_eq!((back_tab.key, back_tab.mods.shift), (Key::Tab, true));
         assert_eq!(translate(0xff63, 0, 0).unwrap().key, Key::Other, "Insert");
     }
 
