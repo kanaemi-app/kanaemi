@@ -243,7 +243,7 @@ mod tests {
 
     use kanaemi_config::DICTIONARY_DIR;
     use kanaemi_core::{Converter, Effect};
-    use kanaemi_engine::{convert_text, replace_file};
+    use kanaemi_engine::convert_text;
 
     use super::*;
 
@@ -401,6 +401,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_stamps_change_when_a_file_is_replaced_within_the_same_tick() {
+        use kanaemi_engine::replace_file;
+
         let dir = temp_dir("stamp-tick");
         let dictionary = dir.join(DICTIONARY_DIR).join("a.tsv");
         let user = dir.join(USER_CUSTOM_FILE);
