@@ -323,3 +323,14 @@ fn undoing_a_commit_ends_the_run_after_it() {
     t.key(Key::Enter);
     assert_eq!(reread(&mut t).erase, None);
 }
+
+#[test]
+fn leaving_while_the_host_erases_commits_only_what_is_visible() {
+    for event in [Event::FocusOut, Event::Flush] {
+        let mut t = typed("ahn");
+        let out = reread(&mut t);
+        assert_eq!(out.erase.as_deref(), Some("あ"));
+        assert_eq!(out.preedit, "");
+        assert_eq!(t.handle(event).commit, None, "{event:?}");
+    }
+}

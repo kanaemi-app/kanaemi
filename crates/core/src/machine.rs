@@ -269,13 +269,11 @@ impl<C: Converter> Core<C> {
             Event::FocusOut => {
                 self.settle_waiting();
                 self.release_modifiers();
-                self.unfinished_back();
                 self.commit_visible();
                 false
             }
             Event::Flush => {
                 self.settle_waiting();
-                self.unfinished_back();
                 self.commit_visible();
                 false
             }
@@ -1539,18 +1537,6 @@ impl<C: Converter> Core<C> {
             pending: run.pending.clone(),
         };
         self.kana_run = Some(run);
-    }
-
-    /// The romaji waiting with kana the host is erasing is unfinished again,
-    /// to be committed with what is visible.
-    fn unfinished_back(&mut self) {
-        if let Some(Erasing::Kana(run)) = &self.erasing
-            && self.registrations.is_empty()
-            && let State::Idle { pending } = &mut self.state
-            && pending.is_empty()
-        {
-            pending.clone_from(&run.pending);
-        }
     }
 
     /// Commits again what was undone, as it was, to be undone again.
