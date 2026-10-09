@@ -108,19 +108,14 @@ pub fn Dictionaries() -> Element {
     rsx! {
         Group {
             title: "使う辞書",
-            note: "変換の候補を探す辞書です。上の辞書の候補ほど先に出ます。左のつまみをドラッグして順番を変え、スイッチで使うかどうかを決めます。辞書のファイル（.tsv と .kdic）は dictionaries フォルダ（中のフォルダも）に置くとここに出ます。SKK の辞書は取り込むと使えます。大きなテキストの辞書は「バイナリに変換」すると速く開けます。同じ名前の .kdic があれば、.tsv の代わりにそれを使います。",
+            note: "変換の候補を探す辞書です。上の辞書の候補ほど先に出ます。左のつまみをドラッグして順番を変え、スイッチで使うかどうかを決めます。辞書のファイル（.tsv と .kdic）は dictionaries フォルダ（中のフォルダも）に置くとここに出ます。ほかの IME や SKK の辞書は、下の「ほかの IME の辞書」から取り込めます。大きなテキストの辞書は「バイナリに変換」すると速く開けます。同じ名前の .kdic があれば、.tsv の代わりにそれを使います。",
             footer: rsx! {
                 button {
                     onclick: {
                         let folder = folder.clone();
-                        move |_| {
-                            let folder = folder.clone();
-                            spawn(async move { pick_and_import_skk(ctx, &folder).await });
-                        }
+                        move |_| open_folder(&folder)
                     },
-                    "SKK の辞書を取り込む…"
-                }
-                button { onclick: move |_| open_folder(&folder), Icon { paths: icons::FOLDER_OPEN } "dictionaries フォルダを開く" }
+                    Icon { paths: icons::FOLDER_OPEN } "dictionaries フォルダを開く" }
             },
             OrderedList {
                 items,
@@ -150,6 +145,7 @@ pub fn Dictionaries() -> Element {
             },
             None => rsx! {},
         }
+        OtherDictionaries { folder: folder.clone(), custom: custom_path.clone() }
         OfficialDictionaries { chosen: chosen_for_official }
         HiddenWords { custom: custom_path }
         PickRecord { path: store_dir.join(SELECTIONS_FILE) }
@@ -454,29 +450,306 @@ fn PickRecord(path: PathBuf) -> Element {
     }
 }
 
-/// Asks for an SKK dictionary and imports it into the dictionaries folder,
-/// where it shows like any other dictionary.
-async fn pick_and_import_skk(mut ctx: Ctx, folder: &Path) {
-    let Some(file) = rfd::AsyncFileDialog::new()
-        .set_title("取り込む SKK の辞書")
-        .pick_file()
-        .await
-    else {
-        return;
+/// The dictionaries of other input methods, each taken in as a dictionary of
+/// its own after a look at what it takes and leaves out, and the user custom
+/// dictionary written out as them.
+#[component]
+fn OtherDictionaries(folder: PathBuf, custom: PathBuf) -> Element {
+    let mut ctx = use_context::<Ctx>();
+    let mut format = use_signal(|| DictionaryFormat::offered()[0]);
+    // How the last import or export went, or why it failed.
+    let mut outcome = use_signal(|| None::<Result<String, String>>);
+    // An import read and waiting to be confirmed.
+    let mut previewing = use_signal(|| None::<ImportPreview>);
+    let import = move |_| {
+        spawn(async move {
+            let format = format();
+            let source = match format.finding() {
+                Finding::Known(source) => source,
+                Finding::Missing(message) => {
+                    outcome.set(Some(Err(message)));
+                    return;
+                }
+                Finding::Pick(folder) => {
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title(format!("取り込む {} の辞書", format.label()));
+                    let dialog = match folder {
+                        Some(folder) => dialog.set_directory(folder),
+                        None => dialog,
+                    };
+                    let Some(file) = dialog.pick_file().await else {
+                        return;
+                    };
+                    Source::picked(file.path().to_owned())
+                }
+            };
+            match in_background(move || preview_import(&source, format)).await {
+                Ok(preview) => {
+                    outcome.set(None);
+                    previewing.set(Some(preview));
+                }
+                Err(e) => outcome.set(Some(Err(format!("取り込めません（{e}）")))),
+            }
+        });
     };
-    match import_skk(file.path(), folder) {
-        Ok(_) => {
-            ctx.errors.write().remove("dictionaries");
+    let confirm = move |_| {
+        let folder = folder.clone();
+        let Some(preview) = previewing.take() else {
+            return;
+        };
+        spawn(async move {
+            outcome.set(Some(
+                in_background(move || write_import(&preview, &folder))
+                    .await
+                    .map_err(|e| format!("取り込めません（{e}）")),
+            ));
+            // The folder now holds a new file.
+            ctx.store.write();
+        });
+    };
+    let export = move |_| {
+        let custom = custom.clone();
+        spawn(async move {
+            let format = format();
+            let dialog = rfd::AsyncFileDialog::new()
+                .set_title(format!("{} の形式で書き出す", format.label()))
+                .set_file_name(format.file_name());
+            let dialog = match format.export_folder().filter(|f| f.is_dir()) {
+                Some(folder) => dialog.set_directory(folder),
+                None => dialog,
+            };
+            let Some(file) = dialog.save_file().await else {
+                return;
+            };
+            let target = file.path().to_owned();
+            outcome.set(Some(
+                in_background(move || export_dictionary(&custom, &target, format))
+                    .await
+                    .map_err(|e| format!("書き出せません（{e}）")),
+            ));
+        });
+    };
+    let finding = format().finding();
+    let picks = matches!(finding, Finding::Pick(_));
+    let missing = match finding {
+        Finding::Missing(message) => Some(message),
+        _ => None,
+    };
+    rsx! {
+        Group {
+            title: "ほかの IME の辞書",
+            note: "ほかの IME の辞書を、別の辞書として取り込みます。ユーザー辞書の語を、その形式で書き出すこともできます。",
+            div { class: "row",
+                div { class: "row-main",
+                    div { class: "row-text",
+                        span { class: "label", "形式" }
+                        span { class: "description", {format_note(format())} }
+                        if let Some(missing) = missing.as_ref() {
+                            span { class: "description", "{missing}。取り込めませんが、書き出せます。" }
+                        }
+                    }
+                    div { class: "control",
+                        Select {
+                            choices: DictionaryFormat::offered()
+                                .into_iter()
+                                .map(|f| Choice {
+                                    value: f.label().to_owned(),
+                                    label: f.label().to_owned(),
+                                    description: Some(f.description().to_owned()),
+                                })
+                                .collect::<Vec<_>>(),
+                            value: format().label(),
+                            onchange: move |value: String| {
+                                if let Some(f) = DictionaryFormat::all().into_iter().find(|f| f.label() == value) {
+                                    format.set(f);
+                                }
+                            },
+                        }
+                        button {
+                            // An SKK implementation not on this machine has nothing to
+                            // take in, though a dictionary can be written out for it.
+                            disabled: missing.is_some(),
+                            onclick: import,
+                            if picks { "取り込む…" } else { "取り込む" }
+                        }
+                        button { onclick: export, "書き出す…" }
+                    }
+                }
+            }
+            match outcome() {
+                Some(Ok(message)) => rsx! {
+                    p { class: "note", "{message}" }
+                },
+                Some(Err(error)) => rsx! {
+                    p { class: "error", "{error}" }
+                },
+                None => rsx! {},
+            }
         }
-        Err(error) => {
-            ctx.errors.write().insert(
-                "dictionaries".to_owned(),
-                format!("取り込めません（{error}）"),
-            );
+        if let Some(preview) = previewing() {
+            ImportPreviewModal {
+                preview,
+                on_import: confirm,
+                on_close: move |_| previewing.set(None),
+            }
         }
     }
-    // The folder now holds a new file.
-    ctx.store.write();
+}
+
+/// Where the import reads, and what to do with the file written out.
+fn format_note(format: DictionaryFormat) -> String {
+    let skk_export = match format {
+        DictionaryFormat::Skk(skk) if skk.encoding() == SkkEncoding::EucJp => {
+            "書き出すファイルは EUC-JP の SKK 辞書です。"
+        }
+        _ => "書き出すファイルは UTF-8 の SKK 辞書です。",
+    };
+    match format {
+        DictionaryFormat::Ime(ImeFormat::MsIme) => {
+            "ユーザー辞書ツールの「一覧の出力」で書き出したテキストを選びます。書き出したファイルは「テキストファイルからの登録」で読み込めます。".to_owned()
+        }
+        DictionaryFormat::Ime(ImeFormat::Google) => {
+            "辞書ツールの「エクスポート」で書き出したテキストを選びます。書き出したファイルは「インポート」で読み込めます。".to_owned()
+        }
+        DictionaryFormat::Ime(ImeFormat::Atok) => {
+            "ATOK の辞書ユーティリティで単語の一覧を書き出したテキストを選びます。書き出したファイルも、辞書ユーティリティで登録できます。".to_owned()
+        }
+        DictionaryFormat::Ime(ImeFormat::MacOs) if cfg!(target_os = "macos") => {
+            "システム設定の「キーボード」のユーザ辞書（テキスト置換）を、そのまま読みます。書き出した plist は、その一覧にドラッグすると読み込めます。".to_owned()
+        }
+        DictionaryFormat::Ime(ImeFormat::MacOs) => {
+            "macOS のユーザ辞書（テキスト置換）の一覧から、項目をドラッグして書き出した plist を選びます。書き出したファイルは、その一覧にドラッグすると読み込めます。".to_owned()
+        }
+        DictionaryFormat::Skk(SkkSource::File) => format!(
+            "SKK-JISYO.L のような辞書や、SKK のユーザー辞書を選びます。文字コードは 1 行目の coding: で決まり、ないときは EUC-JP です。{skk_export}"
+        ),
+        DictionaryFormat::Skk(SkkSource::MacSkk) => format!(
+            "macSKK のユーザー辞書（skk-jisyo.utf8）を、そのまま読みます。{skk_export}macSKK の辞書のフォルダに書き出すと、macSKK の設定の「辞書」で使えます。"
+        ),
+        DictionaryFormat::Skk(_) => format!(            "{} のユーザー辞書を、そのまま読みます。{skk_export}",
+            format.label()
+        ),
+    }
+}
+
+/// How many rows of each list the preview of an import draws; a large SKK
+/// dictionary has far more than anyone reads through.
+const PREVIEW_ROWS: usize = 300;
+
+/// What an import takes and leaves out, shown before it writes anything.
+#[component]
+fn ImportPreviewModal(
+    preview: ImportPreview,
+    on_import: EventHandler<()>,
+    on_close: EventHandler<()>,
+) -> Element {
+    let mut showing_skipped = use_signal(|| false);
+    let words = preview.word_count();
+    let skipped = preview.skipped.len();
+    let summary = if skipped == 0 {
+        format!("{words} 語を取り込みます。")
+    } else {
+        format!("{words} 語を取り込みます。{skipped} 件は取り込みません。")
+    };
+    let more = |total: usize| total.saturating_sub(PREVIEW_ROWS);
+    rsx! {
+        div { class: "modal-backdrop", onclick: move |_| on_close.call(()),
+            div {
+                class: "modal",
+                onclick: move |e| e.stop_propagation(),
+                header {
+                    div {
+                        h2 { "{preview.name} を取り込む" }
+                        p { class: "item-description",
+                            "{summary}取り込むと、dictionaries フォルダに別の辞書として置きます。"
+                        }
+                    }
+                }
+                div { class: "view-switch",
+                    button {
+                        class: if !showing_skipped() { "selected" } else { "" },
+                        onclick: move |_| showing_skipped.set(false),
+                        "取り込む語（{words}）"
+                    }
+                    button {
+                        class: if showing_skipped() { "selected" } else { "" },
+                        onclick: move |_| showing_skipped.set(true),
+                        "取り込まないもの（{skipped}）"
+                    }
+                }
+                div { class: "modal-body",
+                    if !showing_skipped() {
+                        if words == 0 {
+                            p { class: "description", "取り込める語はありません" }
+                        } else {
+                            table { class: "rules",
+                                thead {
+                                    tr {
+                                        th { "読み" }
+                                        th { "表記" }
+                                        th { "活用" }
+                                    }
+                                }
+                                tbody {
+                                    for (reading , surface , conjugation) in preview.words().take(PREVIEW_ROWS) {
+                                        tr {
+                                            td { "{reading}" }
+                                            td { "{surface}" }
+                                            td { class: "item-description", "{conjugation}" }
+                                        }
+                                    }
+                                }
+                            }
+                            if more(words) > 0 {
+                                p { class: "description", "ほか {more(words)} 語" }
+                            }
+                        }
+                    } else if skipped == 0 {
+                        p { class: "description", "取り込まないものはありません" }
+                    } else {
+                        table { class: "rules",
+                            thead {
+                                tr {
+                                    th { "行" }
+                                    th { "内容" }
+                                    th { "わけ" }
+                                }
+                            }
+                            tbody {
+                                for skip in preview.skipped.iter().take(PREVIEW_ROWS) {
+                                    tr {
+                                        td { "{skip.line}" }
+                                        td { "{skip.text}" }
+                                        td { class: "item-description", {skip_reason(skip.reason)} }
+                                    }
+                                }
+                            }
+                        }
+                        if more(skipped) > 0 {
+                            p { class: "description", "ほか {more(skipped)} 件" }
+                        }
+                    }
+                }
+                div { class: "modal-footer",
+                    button { onclick: move |_| on_close.call(()), "キャンセル" }
+                    button {
+                        class: "primary",
+                        disabled: words == 0,
+                        onclick: move |_| on_import.call(()),
+                        "取り込む"
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn skip_reason(reason: SkipReason) -> &'static str {
+    match reason {
+        SkipReason::Unreadable => "読みか語がない",
+        SkipReason::Unrepresentable => "かなえみで表せない",
+        SkipReason::Hidden => "抑制単語は、取り込んだ辞書では隠せない",
+    }
 }
 
 /// Makes the text dictionary `name` binary, and uses the binary one where the
