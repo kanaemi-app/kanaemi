@@ -62,6 +62,23 @@ impl Registration {
             Record::Hide { .. } => false,
         }
     }
+
+    /// The word, as registering one writes it: its reading (the stem of an
+    /// okurigana word, with placeholders as an item holds them), the head of
+    /// its okurigana, and its surface. `None` for a word with a conjugation
+    /// type or a cost, which only a person writes.
+    pub(crate) fn plain(&self) -> Option<(&str, Option<OkuriHead>, &str)> {
+        let (reading, head, item) = match &self.0 {
+            Record::Word { reading, item } => (reading, None, item),
+            Record::Okuri { stem, head, item } => (stem, Some(*head), item),
+            Record::Hide { .. } => return None,
+        };
+        (item.conjugation.is_none() && item.cost.is_none()).then_some((
+            reading.as_str(),
+            head,
+            item.surface.as_str(),
+        ))
+    }
 }
 
 /// Whether the okurigana word of `stem` and `head`, written `word`, gives

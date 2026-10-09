@@ -17,6 +17,7 @@ mod skk;
 mod stamp;
 mod text_dictionary;
 mod user_custom;
+mod user_words;
 
 pub use binary_dictionary::*;
 pub use conjugation::*;
@@ -31,6 +32,7 @@ pub use skk::*;
 pub use stamp::*;
 pub use text_dictionary::*;
 pub use user_custom::*;
+pub use user_words::*;
 
 #[cfg(test)]
 mod test_support;

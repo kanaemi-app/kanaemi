@@ -12,3 +12,4 @@ mod selections;
 mod skk;
 mod training;
 mod user_custom_file;
+mod user_words;
