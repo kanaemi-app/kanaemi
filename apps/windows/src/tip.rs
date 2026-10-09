@@ -425,16 +425,25 @@ impl State {
     }
 
     /// Feeds `event` to the field, if there is one, and tells the server
-    /// what changed.
+    /// what changed. A panic starts the field over: the output then clears
+    /// the composition and the candidates, and hands the key to the
+    /// application.
     fn handle(&self, event: Event) -> Option<Output> {
         let output = {
             let mut field = self.field.borrow_mut();
             let field = field.as_mut()?;
             with_profile(|profile| {
-                if CLICKED.take() {
-                    field.handle(profile, Event::CaretMoved);
-                }
-                field.handle(profile, event)
+                let handled = catch_unwind(AssertUnwindSafe(|| {
+                    if CLICKED.take() {
+                        field.handle(profile, Event::CaretMoved);
+                    }
+                    field.handle(profile, event)
+                }));
+                handled.unwrap_or_else(|_| {
+                    // The event is left out: it may be a key the user typed.
+                    tracing::warn!("handling an event panicked; the state was reset");
+                    field.restart(profile)
+                })
             })?
         };
         let (thread, now) = unsafe { (GetCurrentThreadId(), GetTickCount64()) };
@@ -513,15 +522,22 @@ impl State {
         if CLICKED.take() {
             self.handle(Event::CaretMoved);
         }
-        let Some(output) = self
-            .field
-            .borrow()
-            .as_ref()
-            .map(|field| field.preview(event))
-        else {
+        let field = self.field.borrow();
+        let Some(field) = field.as_ref() else {
             return false;
         };
-        output.consumed || output.commit.is_some() || output.send.is_some()
+        match catch_unwind(AssertUnwindSafe(|| field.preview(event))) {
+            Ok(output) => output.consumed || output.commit.is_some() || output.send.is_some(),
+            Err(_) => {
+                // Said not to be eaten, the key is handled by the test,
+                // where a field that panics again starts over in `handle`.
+                // Unwinding would skip that, and the field would never
+                // start over in applications that send only keys the test
+                // eats.
+                tracing::warn!("trying an event panicked");
+                false
+            }
+        }
     }
 
     fn show(self: &Rc<Self>, output: &Output, context: &ITfContext, sync: bool) {

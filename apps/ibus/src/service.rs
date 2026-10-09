@@ -99,8 +99,7 @@ impl Shell {
             Err(_) => {
                 // The event is left out: it may be a key the user typed.
                 tracing::warn!("handling an event panicked; the state was reset");
-                context.field = Field::new(profile);
-                context.field.set_private(context.private);
+                context.field.restart(profile);
                 Reply {
                     consumed: false,
                     signals: vec![Signal::Preedit(String::new(), 0), Signal::HideCandidates],
@@ -149,8 +148,7 @@ impl Shell {
         let dropped = catch_unwind(AssertUnwindSafe(|| context.field.drop_focus(profile)));
         if dropped.is_err() {
             tracing::warn!("dropping the focus panicked; the state was reset");
-            context.field = Field::new(profile);
-            context.field.set_private(context.private);
+            context.field.restart(profile);
         }
     }
 
