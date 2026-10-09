@@ -253,6 +253,17 @@ impl Engine {
 
     /// Learns what the core reports happened, in its order.
     pub fn learn(&mut self, effect: &Effect) {
+        // A word is kept for its reading: a candidate of letters that made
+        // no kana (`pdf`) has none, and a line without one cannot be read
+        // back.
+        if let Effect::Committed { reading, .. }
+        | Effect::Registered { reading, .. }
+        | Effect::Forgotten { reading, .. }
+        | Effect::Withdrawn { reading, .. } = effect
+            && reading.is_empty()
+        {
+            return;
+        }
         match effect {
             Effect::Committed {
                 reading,
