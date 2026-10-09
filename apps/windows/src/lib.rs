@@ -16,6 +16,7 @@ pub mod control;
 mod focus;
 #[cfg(windows)]
 mod indicator;
+mod input_scope;
 mod keys;
 #[cfg(windows)]
 pub mod link;

@@ -28,7 +28,7 @@ use crate::keys::{self, Keys, RawKey};
 use crate::per_thread::PerThread;
 use crate::pipe::{self, PipeSink};
 use crate::ui_element::{CandidateList, Listed};
-use crate::{candidates, indicator, remote};
+use crate::{candidates, indicator, input_scope, remote};
 
 thread_local! {
     /// The settings and the engine every field of this thread shares, while
@@ -382,6 +382,30 @@ impl ITfEditSession_Impl for Session_Impl {
     }
 }
 
+/// Reads whether the field at `context` asks not to be recorded, from its
+/// input scopes, which are read only in an edit session.
+#[implement(ITfEditSession)]
+struct ScopeSession {
+    state: Rc<State>,
+    context: ITfContext,
+}
+
+impl ITfEditSession_Impl for ScopeSession_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        guarded(Err(E_FAIL.into()), || {
+            // The focus may have gone elsewhere before the session ran.
+            if self.state.focused.borrow().as_ref() != Some(&self.context) {
+                return Ok(());
+            }
+            let private = input_scope::asks_for_no_record(&input_scope::of(&self.context, ec));
+            if let Some(field) = self.state.field.borrow_mut().as_mut() {
+                field.set_private(private);
+            }
+            Ok(())
+        })
+    }
+}
+
 impl State {
     fn composition(&self, context: &ITfContext) -> Option<ITfComposition> {
         self.compositions
@@ -577,10 +601,43 @@ impl State {
         if self.field.borrow().is_none() {
             *self.field.borrow_mut() = with_profile(|profile| Field::new(profile));
         }
+        self.read_privacy(context);
         // Windows turns input methods off in a password field, so a field
         // the text service sees is never one. The context shows the switch
         // to the mode a field starts in.
         self.dispatch(Event::FocusIn { password: false }, context, false);
+    }
+
+    /// Marks the field as one that asks not to be recorded when the input
+    /// scopes of `context` say so. Until they are read, which the
+    /// application may let happen only later, the field is taken to ask it,
+    /// so nothing typed there meanwhile is recorded.
+    fn read_privacy(self: &Rc<Self>, context: Option<&ITfContext>) {
+        let set = |private| {
+            if let Some(field) = self.field.borrow_mut().as_mut() {
+                field.set_private(private);
+            }
+        };
+        let Some(context) = context else {
+            set(false);
+            return;
+        };
+        set(true);
+        let session: ITfEditSession = ScopeSession {
+            state: self.clone(),
+            context: context.clone(),
+        }
+        .into();
+        let flags = TF_ES_ASYNCDONTCARE | TF_ES_READ;
+        let result = unsafe { context.RequestEditSession(self.client_id.get(), &session, flags) };
+        let failure = match result {
+            Ok(outcome) => outcome.is_err().then(|| Error::from(outcome)),
+            Err(error) => Some(error),
+        };
+        if let Some(error) = failure {
+            tracing::warn!(%error, "the input scopes could not be read");
+            set(false);
+        }
     }
 
     /// The focus leaves `context`; the core forgets what it was erasing.
