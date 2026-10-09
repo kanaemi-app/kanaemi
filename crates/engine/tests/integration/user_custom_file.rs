@@ -1,13 +1,16 @@
 use std::fs;
+use std::io;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use kanaemi_core::Converter;
 use kanaemi_engine::{
     Engine, FileLock, FileSink, InvalidReason, LineSink, Slot, TextDictionary, open_dictionary,
-    registered, replace_file, unhide, unregister,
+    registered, replace_file, replace_file_unsynced, unhide, unregister,
 };
 
-use crate::common::{Discard, dictionary, temp_path};
+use crate::common::{Discard, Learn, dictionary, temp_path};
 
 #[test]
 fn appending_creates_the_file() {
@@ -80,9 +83,19 @@ fn a_broken_binary_dictionary_does_not_open() {
 
 #[test]
 fn a_replaced_file_holds_only_the_new_bytes_and_leaves_nothing_beside_it() {
+    let replaces: [fn(&std::path::Path, &str) -> io::Result<()>; 2] = [
+        |path, bytes| replace_file(path, bytes),
+        |path, bytes| replace_file_unsynced(path, bytes),
+    ];
+    for replace in replaces {
+        replaced_holds_only_the_new_bytes(replace);
+    }
+}
+
+fn replaced_holds_only_the_new_bytes(replace: fn(&std::path::Path, &str) -> io::Result<()>) {
     let path = temp_path("replaced.tsv");
     fs::write(&path, "old and longer").unwrap();
-    replace_file(&path, "new").unwrap();
+    replace(&path, "new").unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "new");
     let folder = path.parent().unwrap();
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -109,6 +122,9 @@ fn files_of_what_the_user_types_are_theirs_alone() {
     let replaced = temp_path("private-replace.tsv");
     replace_file(&replaced, b"x").unwrap();
     assert_eq!(mode(&replaced), 0o600);
+    let unsynced = temp_path("private-replace-unsynced.tsv");
+    replace_file_unsynced(&unsynced, b"x").unwrap();
+    assert_eq!(mode(&unsynced), 0o600);
 }
 
 /// きしゃ 記者, a line cut off inside か, and かく 書く.
@@ -309,4 +325,55 @@ fn a_lock_held_elsewhere_is_not_waited_for_beyond_the_time_given() {
     assert!(start.elapsed() < Duration::from_secs(1));
     drop(held);
     assert!(FileLock::try_hold(&path, Duration::ZERO).unwrap().is_some());
+}
+
+#[test]
+fn appending_while_the_lock_is_held_elsewhere_fails_instead_of_waiting() {
+    let path = temp_path("held-append.tsv");
+    fs::write(&path, "かく\t書く\n").unwrap();
+    let held = FileLock::hold(&path).unwrap();
+    // Appended on another thread, so a wait without end fails the test
+    // rather than hanging it. The bound is far above the sink's wait.
+    let (done, appended) = mpsc::channel();
+    let appending = path.clone();
+    thread::spawn(move || {
+        let _ = done.send(FileSink::new(&appending).append("きしゃ\t記者"));
+    });
+    let error = appended
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the append waits for the lock without end")
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "かく\t書く\n");
+    drop(held);
+    FileSink::waiting(&path, Duration::ZERO)
+        .append("きしゃ\t記者")
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "かく\t書く\nきしゃ\t記者\n"
+    );
+}
+
+#[test]
+fn a_word_registered_while_the_file_is_locked_is_written_when_the_focus_moves() {
+    let path = temp_path("held-register.tsv");
+    let held = FileLock::hold(&path).unwrap();
+    let mut e = Engine::new(
+        [Slot::UserCustom],
+        TextDictionary::parse_user_custom("").0,
+        FileSink::waiting(&path, Duration::ZERO),
+    );
+    e.register("きしゃ", "記者");
+    let errors = e.take_write_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(!path.exists());
+    assert_eq!(e.convert("きしゃ", None)[0].surface, "記者");
+    // Still locked: kept for later again.
+    e.move_focus();
+    assert_eq!(e.take_write_errors().len(), 1);
+    drop(held);
+    e.move_focus();
+    assert!(e.take_write_errors().is_empty());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "きしゃ\t記者\n");
 }
