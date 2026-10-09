@@ -38,7 +38,8 @@ pub enum WriteError {
 
 /// The user custom dictionary as the engine holds it: what is in memory, and
 /// where its new lines go. A line the sink fails to write still applies in
-/// memory and is written again before the next one.
+/// memory and is written again before the next one, or when
+/// [`UserCustom::flush`] is called.
 pub(crate) struct UserCustom {
     dictionary: TextDictionary,
     sink: Box<dyn LineSink>,
@@ -67,6 +68,12 @@ impl UserCustom {
             return;
         }
         self.unwritten.push_back(line);
+        self.flush();
+    }
+
+    /// Writes the lines not yet written, oldest first, up to the first that
+    /// fails again.
+    pub(crate) fn flush(&mut self) {
         while let Some(line) = self.unwritten.front() {
             if let Err(e) = self.sink.append(line) {
                 self.errors.push(e.into());
@@ -117,20 +124,42 @@ impl TextDictionary {
 
 /// Appends lines to a text dictionary file under the lock of [`FileLock`], so the
 /// settings app and other IME processes never interleave a line.
+///
+/// It is called while the IME handles a key, so it waits for the lock only a
+/// short while: when another holds it longer, such as the settings app
+/// rewriting the file, the line is not written and the append fails with
+/// [`io::ErrorKind::WouldBlock`], to be written again later.
 pub struct FileSink {
     path: PathBuf,
+    wait: Duration,
 }
 
 impl FileSink {
+    /// How long [`FileSink::new`] waits for the lock.
+    pub const WAIT: Duration = Duration::from_millis(50);
+
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self::waiting(path, Self::WAIT)
+    }
+
+    /// A sink that waits for the lock at most `wait`.
+    pub fn waiting(path: impl Into<PathBuf>, wait: Duration) -> Self {
+        Self {
+            path: path.into(),
+            wait,
+        }
     }
 }
 
 impl LineSink for FileSink {
     fn append(&mut self, line: &str) -> io::Result<()> {
         // Locked before opening: a rewrite may replace the file meanwhile.
-        let _lock = FileLock::hold(&self.path)?;
+        let Some(_lock) = FileLock::try_hold(&self.path, self.wait)? else {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "locked elsewhere; written again later",
+            ));
+        };
         let mut file =
             private(OpenOptions::new().read(true).append(true).create(true)).open(&self.path)?;
         append_line(&mut file, line)

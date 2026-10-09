@@ -1,4 +1,7 @@
 use std::fs;
+use std::io;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use kanaemi_core::Converter;
@@ -7,7 +10,7 @@ use kanaemi_engine::{
     registered, replace_file, unhide, unregister,
 };
 
-use crate::common::{Discard, dictionary, temp_path};
+use crate::common::{Discard, Learn, dictionary, temp_path};
 
 #[test]
 fn appending_creates_the_file() {
@@ -309,4 +312,55 @@ fn a_lock_held_elsewhere_is_not_waited_for_beyond_the_time_given() {
     assert!(start.elapsed() < Duration::from_secs(1));
     drop(held);
     assert!(FileLock::try_hold(&path, Duration::ZERO).unwrap().is_some());
+}
+
+#[test]
+fn appending_while_the_lock_is_held_elsewhere_fails_instead_of_waiting() {
+    let path = temp_path("held-append.tsv");
+    fs::write(&path, "かく\t書く\n").unwrap();
+    let held = FileLock::hold(&path).unwrap();
+    // Appended on another thread, so a wait without end fails the test
+    // rather than hanging it. The bound is far above the sink's wait.
+    let (done, appended) = mpsc::channel();
+    let appending = path.clone();
+    thread::spawn(move || {
+        let _ = done.send(FileSink::new(&appending).append("きしゃ\t記者"));
+    });
+    let error = appended
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the append waits for the lock without end")
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "かく\t書く\n");
+    drop(held);
+    FileSink::waiting(&path, Duration::ZERO)
+        .append("きしゃ\t記者")
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "かく\t書く\nきしゃ\t記者\n"
+    );
+}
+
+#[test]
+fn a_word_registered_while_the_file_is_locked_is_written_when_the_focus_moves() {
+    let path = temp_path("held-register.tsv");
+    let held = FileLock::hold(&path).unwrap();
+    let mut e = Engine::new(
+        [Slot::UserCustom],
+        TextDictionary::parse_user_custom("").0,
+        FileSink::waiting(&path, Duration::ZERO),
+    );
+    e.register("きしゃ", "記者");
+    let errors = e.take_write_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(!path.exists());
+    assert_eq!(e.convert("きしゃ", None)[0].surface, "記者");
+    // Still locked: kept for later again.
+    e.move_focus();
+    assert_eq!(e.take_write_errors().len(), 1);
+    drop(held);
+    e.move_focus();
+    assert!(e.take_write_errors().is_empty());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "きしゃ\t記者\n");
 }

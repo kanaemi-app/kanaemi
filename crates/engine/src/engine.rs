@@ -304,7 +304,12 @@ impl Engine {
             }
             Effect::Typed(text) => self.field.type_text(&nfc(text)),
             Effect::Erased(text) => self.field.erase(&nfc(text)),
-            Effect::FocusMoved => self.field = FieldSession::default(),
+            Effect::FocusMoved => {
+                self.field = FieldSession::default();
+                // A line the sink could not take, as when the file was
+                // locked elsewhere, is not left waiting for the next one.
+                self.user.flush();
+            }
         }
     }
 
