@@ -28,7 +28,7 @@ use crate::keys::{self, Keys, RawKey};
 use crate::per_thread::PerThread;
 use crate::pipe::{self, PipeSink};
 use crate::ui_element::{CandidateList, Listed};
-use crate::{candidates, indicator, remote};
+use crate::{candidates, indicator, input_scope, remote};
 
 thread_local! {
     /// The settings and the engine every field of this thread shares, while
@@ -382,6 +382,30 @@ impl ITfEditSession_Impl for Session_Impl {
     }
 }
 
+/// Reads whether the field at `context` asks not to be recorded, from its
+/// input scopes, which are read only in an edit session.
+#[implement(ITfEditSession)]
+struct ScopeSession {
+    state: Rc<State>,
+    context: ITfContext,
+}
+
+impl ITfEditSession_Impl for ScopeSession_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        guarded(Err(E_FAIL.into()), || {
+            // The focus may have gone elsewhere before the session ran.
+            if self.state.focused.borrow().as_ref() != Some(&self.context) {
+                return Ok(());
+            }
+            let private = input_scope::asks_for_no_record(&input_scope::of(&self.context, ec));
+            if let Some(field) = self.state.field.borrow_mut().as_mut() {
+                field.set_private(private);
+            }
+            Ok(())
+        })
+    }
+}
+
 impl State {
     fn composition(&self, context: &ITfContext) -> Option<ITfComposition> {
         self.compositions
@@ -401,16 +425,25 @@ impl State {
     }
 
     /// Feeds `event` to the field, if there is one, and tells the server
-    /// what changed.
+    /// what changed. A panic starts the field over: the output then clears
+    /// the composition and the candidates, and hands the key to the
+    /// application.
     fn handle(&self, event: Event) -> Option<Output> {
         let output = {
             let mut field = self.field.borrow_mut();
             let field = field.as_mut()?;
             with_profile(|profile| {
-                if CLICKED.take() {
-                    field.handle(profile, Event::CaretMoved);
-                }
-                field.handle(profile, event)
+                let handled = catch_unwind(AssertUnwindSafe(|| {
+                    if CLICKED.take() {
+                        field.handle(profile, Event::CaretMoved);
+                    }
+                    field.handle(profile, event)
+                }));
+                handled.unwrap_or_else(|_| {
+                    // The event is left out: it may be a key the user typed.
+                    tracing::warn!("handling an event panicked; the state was reset");
+                    field.restart(profile)
+                })
             })?
         };
         let (thread, now) = unsafe { (GetCurrentThreadId(), GetTickCount64()) };
@@ -489,15 +522,22 @@ impl State {
         if CLICKED.take() {
             self.handle(Event::CaretMoved);
         }
-        let Some(output) = self
-            .field
-            .borrow()
-            .as_ref()
-            .map(|field| field.preview(event))
-        else {
+        let field = self.field.borrow();
+        let Some(field) = field.as_ref() else {
             return false;
         };
-        output.consumed || output.commit.is_some() || output.send.is_some()
+        match catch_unwind(AssertUnwindSafe(|| field.preview(event))) {
+            Ok(output) => output.consumed || output.commit.is_some() || output.send.is_some(),
+            Err(_) => {
+                // Said not to be eaten, the key is handled by the test,
+                // where a field that panics again starts over in `handle`.
+                // Unwinding would skip that, and the field would never
+                // start over in applications that send only keys the test
+                // eats.
+                tracing::warn!("trying an event panicked");
+                false
+            }
+        }
     }
 
     fn show(self: &Rc<Self>, output: &Output, context: &ITfContext, sync: bool) {
@@ -577,10 +617,43 @@ impl State {
         if self.field.borrow().is_none() {
             *self.field.borrow_mut() = with_profile(|profile| Field::new(profile));
         }
+        self.read_privacy(context);
         // Windows turns input methods off in a password field, so a field
         // the text service sees is never one. The context shows the switch
         // to the mode a field starts in.
         self.dispatch(Event::FocusIn { password: false }, context, false);
+    }
+
+    /// Marks the field as one that asks not to be recorded when the input
+    /// scopes of `context` say so. Until they are read, which the
+    /// application may let happen only later, the field is taken to ask it,
+    /// so nothing typed there meanwhile is recorded.
+    fn read_privacy(self: &Rc<Self>, context: Option<&ITfContext>) {
+        let set = |private| {
+            if let Some(field) = self.field.borrow_mut().as_mut() {
+                field.set_private(private);
+            }
+        };
+        let Some(context) = context else {
+            set(false);
+            return;
+        };
+        set(true);
+        let session: ITfEditSession = ScopeSession {
+            state: self.clone(),
+            context: context.clone(),
+        }
+        .into();
+        let flags = TF_ES_ASYNCDONTCARE | TF_ES_READ;
+        let result = unsafe { context.RequestEditSession(self.client_id.get(), &session, flags) };
+        let failure = match result {
+            Ok(outcome) => outcome.is_err().then(|| Error::from(outcome)),
+            Err(error) => Some(error),
+        };
+        if let Some(error) = failure {
+            tracing::warn!(%error, "the input scopes could not be read");
+            set(false);
+        }
     }
 
     /// The focus leaves `context`; the core forgets what it was erasing.

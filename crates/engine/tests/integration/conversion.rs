@@ -551,3 +551,13 @@ fn the_user_dictionary_in_memory_carries_registrations_into_another_engine() {
     other.replace_user(e.user_dictionary().clone());
     assert_eq!(surfaces(&other, "きしゃ", None), ["汽車"]);
 }
+
+#[test]
+fn nothing_is_written_for_an_empty_reading() {
+    let (mut e, lines) = engine(vec![Slot::UserCustom], "");
+    e.register("", "あ");
+    e.register("*ぬ", "xぬ");
+    e.delete("", "ｐｄｆ");
+    assert!(lines.0.borrow().is_empty(), "{:?}", lines.0.borrow());
+    assert!(e.take_write_errors().is_empty());
+}

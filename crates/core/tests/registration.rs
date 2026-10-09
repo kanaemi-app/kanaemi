@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Action, Binding, Chord, Gesture, Key, Modifiers};
+use kanaemi_core::{Action, Binding, Chord, Event, Gesture, Key, Modifiers};
 
 #[test]
 fn registration_collects_what_is_typed_and_registers_on_enter() {
@@ -340,4 +340,62 @@ fn the_registration_key_can_be_changed() {
         Some("漢字０"),
         "0 is typed again"
     );
+}
+
+/// Candidates for `;pdf`, a reading of letters that made no kana, chosen
+/// again after F9 committed it in full-width letters.
+fn choosing_pdf_again() -> T {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";pdf");
+    assert_eq!(t.key(Key::F(9)).commit.as_deref(), Some("ｐｄｆ"));
+    t.press(
+        Key::Backspace,
+        Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(t.handle(Event::Erased(true)).preedit, "»ｐｄｆ");
+    t
+}
+
+#[test]
+fn past_the_last_candidate_of_a_reading_without_kana_is_the_first() {
+    let mut t = choosing_pdf_again();
+    assert_eq!(t.key(Key::Space).preedit, "»pdf");
+    assert_eq!(t.key(Key::Space).preedit, "»ｐｄｆ");
+    t.typ("a");
+    t.key(Key::Enter);
+    assert!(t.converter().registered.is_empty());
+}
+
+#[test]
+fn the_registration_key_does_nothing_for_a_reading_without_kana() {
+    let mut t = choosing_pdf_again();
+    assert_eq!(t.ch('0').preedit, "»ｐｄｆ");
+    assert!(t.converter().registered.is_empty());
+}
+
+#[test]
+fn a_reading_without_kana_does_not_start_a_registration() {
+    let mut config = config();
+    config.bindings.reading.push(Binding {
+        from: Chord {
+            key: Key::Char('r'),
+            mods: Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        },
+        gesture: Gesture::Press,
+        to: Action::Register,
+    });
+    let mut t = T::with_config(config);
+    t.kana();
+    let typed = t.typ(";pdf").1.preedit;
+    assert_eq!(t.ctrl('r').preedit, typed);
+    t.typ("a");
+    t.key(Key::Enter);
+    assert!(t.converter().registered.is_empty());
 }

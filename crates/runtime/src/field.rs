@@ -60,6 +60,32 @@ impl Field {
         output
     }
 
+    /// Starts the field over with a new core, for a platform that caught a
+    /// panic in it: the state the panic left may be broken, and would panic
+    /// again on every key. The field stays the same one to the profile and
+    /// stays private if it was. Returns what to show now: nothing typed, no
+    /// candidates, and the key passed on to the application, as the event
+    /// that panicked is left out.
+    pub fn restart(&mut self, profile: &Profile) -> Output {
+        *self = Self {
+            id: self.id,
+            private: self.private,
+            ..Self::new(profile)
+        };
+        Output {
+            consumed: false,
+            erase: None,
+            commit: None,
+            preedit: String::new(),
+            cursor: 0,
+            candidates: None,
+            mode: self.core.mode(),
+            indicator: None,
+            send: None,
+            effects: Vec::new(),
+        }
+    }
+
     fn run(&mut self, profile: &mut Profile, event: Event, learn_typed: bool) -> Output {
         let before = self.core.mode();
         if let Event::FocusIn { .. } = event {
@@ -459,6 +485,45 @@ mod tests {
         );
     }
 
+    /// `;pdf` committed with F9, undone, gone past its candidates, then `a`
+    /// and Enter: a reading of letters that made no kana has nothing to
+    /// register or record a word for.
+    #[test]
+    fn a_reading_without_kana_is_neither_registered_nor_recorded() {
+        let dir = temp_dir("no-kana");
+        let mut profile = Profile::open(&dir);
+        let mut field = Field::new(&profile);
+        field.handle(&mut profile, FOCUS_IN);
+        field.handle(&mut profile, press(Key::Kana));
+        typ(&mut field, &mut profile, ";pdf");
+        let output = field.handle(&mut profile, press(Key::F(9)));
+        assert_eq!(output.commit.as_deref(), Some("ｐｄｆ"));
+        let undo = Event::Key(KeyEvent {
+            key: Key::Backspace,
+            mods: Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+            kind: KeyKind::Press,
+            time_ms: 0,
+        });
+        field.handle(&mut profile, undo);
+        field.handle(&mut profile, Event::Erased(true));
+        field.handle(&mut profile, press(Key::Space));
+        let output = field.handle(&mut profile, press(Key::Space));
+        assert!(!output.preedit.ends_with(" « "), "{}", output.preedit);
+        typ(&mut field, &mut profile, "a");
+        field.handle(&mut profile, press(Key::Enter));
+        field.handle(&mut profile, Event::FocusOut);
+        let custom = fs::read_to_string(dir.join(USER_CUSTOM_FILE)).unwrap_or_default();
+        assert_eq!(custom, "");
+        let selections = fs::read_to_string(dir.join(SELECTIONS_FILE)).unwrap_or_default();
+        assert!(
+            !selections.lines().any(|line| line.starts_with('\t')),
+            "{selections}"
+        );
+    }
+
     #[test]
     fn a_field_stays_private_when_changed_settings_rebuild_its_core() {
         let dir = picks_dir("private-rebuilt");
@@ -467,6 +532,40 @@ mod tests {
         field.set_private(true);
         change_settings(&dir, "");
         field.handle(&mut profile, FOCUS_IN);
+        field.handle(&mut profile, press(Key::Kana));
+        let output = typ(&mut field, &mut profile, "a");
+        assert_eq!(output.commit.as_deref(), Some("あ"));
+        assert_eq!(output.effects, []);
+    }
+
+    #[test]
+    fn a_restarted_field_shows_nothing_and_starts_over_in_abc() {
+        let dir = picks_dir("restart");
+        let mut profile = Profile::open(&dir);
+        let mut field = picking_kisha(&mut profile, false);
+        let output = field.restart(&profile);
+        assert_eq!(
+            (
+                output.consumed,
+                output.commit,
+                output.preedit.as_str(),
+                output.candidates,
+                output.mode,
+                output.send,
+            ),
+            (false, None, "", None, Mode::Abc, None)
+        );
+        let output = typ(&mut field, &mut profile, "a");
+        assert_eq!(output.preedit, "", "nothing left of what was typed");
+        assert_eq!(output.mode, Mode::Abc);
+    }
+
+    #[test]
+    fn a_restarted_field_stays_private() {
+        let dir = picks_dir("restart-private");
+        let mut profile = Profile::open(&dir);
+        let mut field = picking_kisha(&mut profile, true);
+        field.restart(&profile);
         field.handle(&mut profile, press(Key::Kana));
         let output = typ(&mut field, &mut profile, "a");
         assert_eq!(output.commit.as_deref(), Some("あ"));

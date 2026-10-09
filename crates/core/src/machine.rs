@@ -1055,11 +1055,18 @@ impl<C: Converter> Core<C> {
                 word.delete(&self.config.romaji);
                 self.state = State::Reading(word);
             }
+            // A word is registered for kana: letters that made none (`pdf`)
+            // have no reading to register it for.
             Action::Register
                 if !word.is_empty() && self.registrations.len() < MAX_REGISTRATION_DEPTH =>
             {
-                word.flush(&self.config.romaji);
-                self.start_registration(word);
+                let mut flushed = word.clone();
+                flushed.flush(&self.config.romaji);
+                if flushed.kana().is_empty() {
+                    self.state = State::Reading(word);
+                } else {
+                    self.start_registration(flushed);
+                }
             }
             action => {
                 if let Some(to) = cursor_move(action)
@@ -1076,7 +1083,9 @@ impl<C: Converter> Core<C> {
 
     fn act_candidates(&mut self, mut selection: Selection, action: Action) -> Option<bool> {
         let len = selection.candidates.len();
-        let can_register = self.registrations.len() < MAX_REGISTRATION_DEPTH;
+        // A reading without kana (`pdf`) has nothing to register a word for.
+        let can_register =
+            self.registrations.len() < MAX_REGISTRATION_DEPTH && !selection.word.kana().is_empty();
         let forgetting = mem::take(&mut selection.forgetting);
         match action {
             Action::Next if selection.index + 1 < len => {
