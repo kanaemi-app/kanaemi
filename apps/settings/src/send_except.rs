@@ -6,7 +6,7 @@ use dioxus::prelude::*;
 
 use crate::Ctx;
 use crate::apps::{self, App};
-use crate::controls::{Group, ResetLine};
+use crate::controls::{Filter, Group, ResetLine};
 use crate::icons::{self, Icon};
 
 const ITEM: &str = "keys.send_except";
@@ -155,12 +155,7 @@ fn AppPicker(
                     }
                     button { onclick: move |_| on_close.call(()), "閉じる" }
                 }
-                input {
-                    class: "filter",
-                    placeholder: "名前で絞り込む…",
-                    value: "{filter}",
-                    oninput: move |e| filter.set(e.value()),
-                }
+                Filter { placeholder: "名前で絞り込む…", oninput: move |text| filter.set(text) }
                 div { class: "modal-body",
                     for (app , added) in listed {
                         button {
@@ -204,9 +199,14 @@ fn AppPicker(
 #[component]
 fn NameField(on_add: Callback<String, bool>) -> Element {
     let mut adding = use_signal(String::new);
+    // The field is made anew for each name added, which empties it: it is
+    // never given the value it holds, as one written while an IME is
+    // composing in it ends the composing.
+    let mut added = use_signal(|| 0_u32);
     let mut add = move || {
         if on_add.call(adding()) {
             adding.set(String::new());
+            added += 1;
         }
     };
     rsx! {
@@ -215,16 +215,18 @@ fn NameField(on_add: Callback<String, bool>) -> Element {
                 "Windows では実行ファイル名（WindowsTerminal.exe）、Linux では GTK のプログラム名（ghostty）で書きます。大文字と小文字は区別しません。"
             }
             div { class: "except-add",
-                input {
-                    r#type: "text",
-                    placeholder: "アプリの名前",
-                    value: "{adding}",
-                    oninput: move |e| adding.set(e.value()),
-                    onkeydown: move |e: KeyboardEvent| {
-                        if e.key() == Key::Enter {
-                            add();
-                        }
-                    },
+                for n in [added()] {
+                    input {
+                        key: "{n}",
+                        r#type: "text",
+                        placeholder: "アプリの名前",
+                        oninput: move |e| adding.set(e.value()),
+                        onkeydown: move |e: KeyboardEvent| {
+                            if e.key() == Key::Enter {
+                                add();
+                            }
+                        },
+                    }
                 }
                 button {
                     disabled: adding().trim().is_empty(),

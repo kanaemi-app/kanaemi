@@ -88,7 +88,10 @@ pub fn Display() -> Element {
                 input {
                     class: "mark",
                     value: "{value}",
-                    oninput: move |e| ctx.change(&["marks", key], Some(e.value().into())),
+                    // Written once typed, not as it is typed: the value given
+                    // back while an IME is composing in the field would end
+                    // the composing.
+                    onchange: move |e| ctx.change(&["marks", key], Some(e.value().into())),
                 }
             }
         }

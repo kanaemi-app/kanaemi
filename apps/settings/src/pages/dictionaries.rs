@@ -630,12 +630,7 @@ fn DictionaryEntries(
                     }
                     button { onclick: move |_| on_close.call(()), "閉じる" }
                 }
-                input {
-                    class: "filter",
-                    placeholder: "読みで絞り込む…",
-                    value: "{reading}",
-                    oninput: move |e| reading.set(e.value()),
-                }
+                Filter { placeholder: "読みで絞り込む…", oninput: move |text| reading.set(text) }
                 div { class: "modal-body",
                     match found {
                         Err(error) => rsx! { p { class: "error", "読めません：{error}" } },

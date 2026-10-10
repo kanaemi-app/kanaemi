@@ -255,12 +255,7 @@ fn RomajiRules(name: String, text: String, on_close: EventHandler<()>) -> Elemen
                     }
                     button { onclick: move |_| on_close.call(()), "閉じる" }
                 }
-                input {
-                    class: "filter",
-                    placeholder: "ローマ字やかなで絞り込む…",
-                    value: "{filter}",
-                    oninput: move |e| filter.set(e.value()),
-                }
+                Filter { placeholder: "ローマ字やかなで絞り込む…", oninput: move |text| filter.set(text) }
                 div { class: "modal-body",
                     table { class: "rules",
                         thead {

@@ -29,7 +29,9 @@ use kanaemi_engine::{
 use unicode_normalization::UnicodeNormalization;
 
 use crate::checks::invalid_lines;
-use crate::controls::{Group, KeyToggle, ListItem, OrderedList, ResetLine, Row, SwitchList};
+use crate::controls::{
+    Filter, Group, KeyToggle, ListItem, OrderedList, ResetLine, Row, SwitchList,
+};
 use crate::convert::{Conversion, conversion, convert, import_skk, is_binary};
 use crate::icons::{self, Icon};
 use crate::logs;

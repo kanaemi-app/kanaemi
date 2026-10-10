@@ -11,6 +11,7 @@ use kanaemi_core::{Action, Bindings, Config, Form};
 
 use crate::Ctx;
 use crate::complete::KeyInput;
+use crate::controls::Filter;
 use crate::icons::{self, Icon};
 use crate::intents::{self, Change, GROUPS, Intent};
 use crate::send_except::SendExcept;
@@ -444,12 +445,7 @@ pub fn Keys() -> Element {
         p { class: "lead",
             "押したキーに機能を割り当てます。たとえば Space と Ctrl+N には「次の候補」が割り当ててあり、どちらでも次の候補に進めます。場面ごとに決められ、行をクリックすると変えられます。"
         }
-        input {
-            class: "filter",
-            placeholder: "キーで絞り込む…",
-            value: "{filter}",
-            oninput: move |e| filter.set(e.value()),
-        }
+        Filter { placeholder: "キーで絞り込む…", oninput: move |text| filter.set(text) }
         for (mode , title , note) in modes {
             BindingSection {
                 key: "{mode}",
