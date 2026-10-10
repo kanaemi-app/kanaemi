@@ -611,9 +611,18 @@ fn each_table_offers_only_the_actions_that_work_there() {
     assert!(!actions("reading").contains(&Action::Forget));
     assert_eq!(
         actions("kana"),
-        [Action::Abc, Action::Kana, Action::Begin, Action::UndoCommit]
+        [
+            Action::Abc,
+            Action::Kana,
+            Action::Begin,
+            Action::UndoCommit,
+            Action::RereadKana
+        ]
     );
     assert!(!actions("candidates").contains(&Action::UndoCommit));
+    assert!(actions("reading").contains(&Action::RereadKana));
+    assert!(!actions("candidates").contains(&Action::RereadKana));
+    assert!(!actions("registration").contains(&Action::RereadKana));
     assert_eq!(actions("abc"), [Action::Abc, Action::Kana]);
     assert_eq!(actions(APPLICATION_TABLE), []);
 }

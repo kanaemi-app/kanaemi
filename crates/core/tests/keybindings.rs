@@ -14,8 +14,15 @@ fn bindings_tell_whether_keys_are_sent_to_the_application() {
     };
     assert!(undo_only.sends_keys(), "undoing a commit erases by keys");
 
-    let mut neither = undo_only;
-    neither.kana.retain(|b| b.to != Action::UndoCommit);
+    let mut reread_only = undo_only;
+    reread_only.kana.retain(|b| b.to != Action::UndoCommit);
+    assert!(
+        reread_only.sends_keys(),
+        "reading kana again erases by keys"
+    );
+
+    let mut neither = reread_only;
+    neither.kana.retain(|b| b.to != Action::RereadKana);
     assert!(!neither.sends_keys());
 }
 

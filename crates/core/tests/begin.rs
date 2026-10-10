@@ -263,6 +263,8 @@ fn a_begin_shortcut_on_an_empty_reading_in_a_registration_only_leaves_the_readin
         &mut config.bindings.registration,
         &mut config.bindings.reading,
     ] {
+        // In place of the key's own binding, as the settings file binds it.
+        scene.retain(|b| b.from != ctrl_semicolon());
         scene.push(Binding {
             from: ctrl_semicolon(),
             gesture: Gesture::Press,

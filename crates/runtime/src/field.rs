@@ -501,6 +501,53 @@ mod tests {
         assert_eq!(output.effects, []);
     }
 
+    /// `kisha` typed without beginning a reading, then read again with the
+    /// shipped key and settings: the engine converts the kana erased.
+    #[test]
+    fn kana_typed_without_a_reading_are_read_again_and_converted() {
+        let dir = picks_dir("reread");
+        let mut profile = Profile::open(&dir);
+        let mut field = Field::new(&profile);
+        field.handle(&mut profile, FOCUS_IN);
+        field.handle(&mut profile, press(Key::Kana));
+        let mut typed = String::new();
+        for c in "kisha".chars() {
+            let output = field.handle(&mut profile, press(Key::Char(c)));
+            typed.push_str(output.commit.as_deref().unwrap_or_default());
+        }
+        assert_eq!(typed, "きしゃ");
+        let reread = Event::Key(KeyEvent {
+            key: Key::Char(';'),
+            mods: Modifiers {
+                ctrl: true,
+                ..Modifiers::default()
+            },
+            kind: KeyKind::Press,
+            time_ms: 0,
+        });
+        let output = field.handle(&mut profile, reread);
+        assert!(output.consumed);
+        assert_eq!(output.erase.as_deref(), Some("きしゃ"));
+        let output = field.handle(&mut profile, Event::Erased(true));
+        assert_eq!(output.preedit, "›きしゃ");
+        assert_eq!(output.effects, [Effect::Erased("きしゃ".to_owned())]);
+        assert_eq!(
+            field.handle(&mut profile, press(Key::Space)).preedit,
+            "»記者"
+        );
+        assert_eq!(
+            field.handle(&mut profile, press(Key::Space)).preedit,
+            "»貴社"
+        );
+        let output = field.handle(&mut profile, press(Key::Enter));
+        assert_eq!(output.commit.as_deref(), Some("貴社"));
+        assert!(output.effects.contains(&Effect::Committed {
+            reading: "きしゃ".to_owned(),
+            okurigana: None,
+            surface: "貴社".to_owned(),
+        }));
+    }
+
     #[test]
     fn a_word_registered_in_a_private_field_still_goes_to_the_dictionary() {
         let dir = temp_dir("private-register");
