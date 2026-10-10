@@ -330,6 +330,12 @@ impl Reader<'_> {
             self.settings.config.pass_while_composing = pass;
             return;
         }
+        if key == "send_except" {
+            if let Some(apps) = self.strings(item, value) {
+                self.settings.config.send_except = apps;
+            }
+            return;
+        }
         if key == "tap_timeout_ms" {
             match value.as_integer().and_then(|ms| u64::try_from(ms).ok()) {
                 Some(ms) if ms > 0 => self.settings.config.tap_timeout_ms = ms,
