@@ -53,6 +53,10 @@ macos-release-identity folder:
 install-ibus:
     apps/ibus/install.sh
 
+# Build the Fcitx5 add-on and install it under /usr/local/lib/kanaemi; asks for sudo, and runs outside the Nix shell, against the Fcitx5 that loads it.
+install-fcitx5:
+    apps/fcitx5/install.sh
+
 # Build the Windows input method and install it into Program Files; run from an elevated shell.
 install-windows:
     powershell -NoProfile -ExecutionPolicy Bypass -File apps/windows/install.ps1
