@@ -40,6 +40,12 @@ fn the_empty_function_writes_the_number_as_typed() {
 }
 
 #[test]
+fn the_empty_function_keeps_the_leading_zeros() {
+    let (e, _) = engine("{}こ\t{}個", "");
+    assert_eq!(surfaces(&e, "007こ"), ["007個"]);
+}
+
+#[test]
 fn each_number_fills_the_placeholder_of_its_place() {
     let (e, _) = engine("{}がつ{}にち\t{kanji}月{wide-num}日", "");
     assert_eq!(surfaces(&e, "１２がつ２５にち"), ["十二月２５日"]);

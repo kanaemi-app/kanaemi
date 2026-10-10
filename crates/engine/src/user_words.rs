@@ -369,6 +369,11 @@ mod tests {
     }
 
     #[test]
+    fn a_surface_is_trimmed_and_normalized_as_a_reading_is() {
+        assert_eq!(line("がっこう", " カ\u{3099}ッコウ "), "がっこう\tガッコウ");
+    }
+
+    #[test]
     fn a_reading_must_be_hiragana() {
         assert!(matches!(word("", "記者"), Err(WordError::EmptyReading)));
         assert!(matches!(word("  ", "記者"), Err(WordError::EmptyReading)));

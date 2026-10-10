@@ -8,7 +8,7 @@ use kanaemi_core::{
 };
 use kanaemi_engine::{Dictionary, Engine, Selections, Slot, TextDictionary, convert_text};
 
-use crate::common::{Discard, Learn, dictionary, temp_path};
+use crate::common::{Discard, Learn, Notations, dictionary, model, temp_path};
 
 /// Words of readings going on from かく, with costs, beside a word of
 /// かく itself, a conjugating stem, an okurigana word and a numeric item.
@@ -31,11 +31,7 @@ fn text_dictionary() -> Box<dyn Dictionary> {
 /// The words converted to a binary dictionary, opened as the input method
 /// opens one.
 fn binary_dictionary() -> Box<dyn Dictionary> {
-    let (bytes, invalid) = convert_text(WORDS);
-    assert_eq!(invalid, []);
-    let path = temp_path("completion.kdic");
-    fs::write(&path, bytes).unwrap();
-    kanaemi_engine::open_dictionary(&path).unwrap().0
+    binary(WORDS)
 }
 
 fn engine_with(dictionary: Box<dyn Dictionary>, user: &str) -> Engine {
@@ -244,4 +240,131 @@ fn a_reading_nothing_goes_on_from_stays_as_typed() {
     let out = field.key(Key::Tab);
     assert!(out.consumed);
     assert_eq!(out.preedit, "›さかな");
+}
+
+/// `count` readings of かく and two or more kana after it, in the order of
+/// their characters, each with `cost`.
+fn readings_of_kaku(count: usize, cost: u32) -> Vec<String> {
+    const KANA: [char; 10] = ['あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ'];
+    (0..count)
+        .map(|i| {
+            let digits = format!("{i:04}");
+            let kana: String = digits
+                .chars()
+                .map(|d| KANA[d.to_digit(10).unwrap() as usize])
+                .collect();
+            format!("かく{kana}\t語\t\t{cost}\n")
+        })
+        .collect()
+}
+
+#[test]
+fn readings_of_the_same_cost_and_length_complete_in_the_order_of_their_characters() {
+    let words = "かくい\t語\t\t5\nかくあ\t語\t\t5\n";
+    for dictionary in [dictionary(words), binary(words)] {
+        let e = engine_with(dictionary, "");
+        assert_eq!(e.complete("かく"), ["かくあ", "かくい"]);
+    }
+}
+
+#[test]
+fn at_most_a_hundred_readings_complete() {
+    let words = readings_of_kaku(150, 10).concat();
+    let e = engine_with(dictionary(&words), "");
+    assert_eq!(e.complete("かく").len(), 100);
+}
+
+#[test]
+fn each_dictionary_looks_at_its_first_5000_readings_in_the_order_of_their_characters() {
+    let mut lines = readings_of_kaku(5001, 10);
+    let past = lines.pop().unwrap().replace("\t10\n", "\t1\n");
+    let past_reading = past.split('\t').next().unwrap().to_owned();
+    let last = lines.pop().unwrap().replace("\t10\n", "\t2\n");
+    let last_reading = last.split('\t').next().unwrap().to_owned();
+    let words = [lines.concat(), last, past].concat();
+    for dictionary in [dictionary(&words), binary(&words)] {
+        let completed = engine_with(dictionary, "").complete("かく");
+        assert_eq!(completed[0], last_reading, "the 5000th is looked at");
+        assert!(!completed.contains(&past_reading), "the 5001st is not");
+    }
+}
+
+#[test]
+fn the_first_5000_readings_are_counted_for_each_dictionary_on_its_own() {
+    // Stems complete nothing, so the first dictionary leaves the list empty
+    // while it takes up what it may look at.
+    let first = readings_of_kaku(5000, 10)
+        .concat()
+        .replace("\t語\t\t", "\t書\t五段-カ行\t");
+    let mut second: Vec<String> = readings_of_kaku(5000, 10)
+        .into_iter()
+        .map(|line| line.replacen("かく", "かくん", 1))
+        .collect();
+    let last = second.pop().unwrap().replace("\t10\n", "\t1\n");
+    let last_reading = last.split('\t').next().unwrap().to_owned();
+    second.push(last);
+    let first = dictionary(&first);
+    assert_eq!(first.readings_from("かく", usize::MAX).len(), 5000);
+    let e = Engine::new(
+        [
+            Slot::UserCustom,
+            Slot::Dictionary(first),
+            Slot::Dictionary(dictionary(&second.concat())),
+        ],
+        TextDictionary::parse_user_custom("").0,
+        Discard,
+    );
+    assert_eq!(e.complete("かく")[0], last_reading);
+}
+
+#[test]
+fn readings_committed_or_picked_complete_though_no_dictionary_has_them() {
+    let mut e = engine_with(text_dictionary(), "");
+    e.replace_selections(Selections::default());
+    e.commit("かくめい", "革命");
+    assert_eq!(e.complete("かく")[0], "かくめい", "committed in the field");
+    for _ in 0..2 {
+        e.move_focus();
+        e.commit("かくめい", "革命");
+    }
+    e.move_focus();
+    assert_eq!(e.complete("かく")[0], "かくめい", "picked again and again");
+}
+
+#[test]
+fn a_reading_with_a_placeholder_committed_does_not_complete() {
+    let mut e = engine_with(dictionary("かく{}ばん\t{}番\n"), "");
+    e.set_functions(Notations::shared());
+    assert_eq!(surfaces_of(&e, "かく１ばん"), ["１番"]);
+    e.commit("かく１ばん", "１番");
+    assert_eq!(e.complete("かく"), Vec::<String>::new());
+}
+
+#[test]
+fn the_ranking_model_does_not_order_the_readings_completed() {
+    let mut e = engine_with(text_dictionary(), "");
+    let without = e.complete("かく");
+    e.set_model(Some(model(
+        16,
+        &[("s\u{1f}隠し", 9.0), ("s\u{1f}覚悟", 5.0)],
+    )));
+    assert_eq!(e.complete("かく"), without);
+}
+
+/// `words` converted to a binary dictionary, opened as the input method
+/// opens one.
+fn binary(words: &str) -> Box<dyn Dictionary> {
+    let (bytes, invalid) = convert_text(words);
+    assert_eq!(invalid, []);
+    let path = temp_path("completion.kdic");
+    fs::write(&path, bytes).unwrap();
+    kanaemi_engine::open_dictionary(&path).unwrap().0
+}
+
+fn surfaces_of(engine: &Engine, reading: &str) -> Vec<String> {
+    engine
+        .convert(reading, None)
+        .into_iter()
+        .map(|c| c.surface)
+        .collect()
 }
