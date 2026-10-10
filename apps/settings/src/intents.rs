@@ -21,6 +21,7 @@ const CONVERTING: &[&str] = &["reading", "candidates"];
 const EDITING: &[&str] = &["reading", "registration"];
 const COMPLETION: &str = "completion";
 const COMPLETING: &[&str] = &["reading", COMPLETION, "candidates"];
+const LISTING: &[&str] = &[COMPLETION, "candidates"];
 
 /// The intents, by the group they are shown in.
 pub const GROUPS: &[(&str, &[Intent])] = &[
@@ -44,6 +45,18 @@ pub const GROUPS: &[(&str, &[Intent])] = &[
                 note: "読みの途中では、変換して最後の候補を選びます",
                 action: Action::Previous,
                 scenes: CONVERTING,
+            },
+            Intent {
+                title: "次のページ",
+                note: "候補や補完する読みの一覧が出ているとき、次のページの最初を選びます。最後のページの次は、候補では最初のページ、補完では打ったままの読みです",
+                action: Action::NextPage,
+                scenes: LISTING,
+            },
+            Intent {
+                title: "前のページ",
+                note: "",
+                action: Action::PreviousPage,
+                scenes: LISTING,
             },
             Intent {
                 title: "読みを補完する",
@@ -442,6 +455,23 @@ mod tests {
             keys(Action::UndoCommit).map(|k| k.everywhere),
             Some(vec!["shift+backspace".to_owned()])
         );
+    }
+
+    #[test]
+    fn turning_pages_is_shown_beside_the_next_and_previous_candidate_with_its_shipped_keys() {
+        let shipped = Bindings::default();
+        let (_, group) = GROUPS
+            .iter()
+            .find(|(_, group)| group.iter().any(|i| i.action == Action::Next))
+            .unwrap();
+        let place = |action| group.iter().position(|i| i.action == action).unwrap();
+        assert_eq!(place(Action::NextPage), place(Action::Previous) + 1);
+        assert_eq!(place(Action::PreviousPage), place(Action::NextPage) + 1);
+        let keys = |action| group[place(action)].keys(&shipped).everywhere;
+        assert_eq!(keys(Action::NextPage), ["ctrl+n"]);
+        assert_eq!(keys(Action::PreviousPage), ["ctrl+p"]);
+        assert!(!keys(Action::Next).contains(&"ctrl+n".to_owned()));
+        assert!(!keys(Action::Previous).contains(&"ctrl+p".to_owned()));
     }
 
     #[test]

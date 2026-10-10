@@ -66,6 +66,8 @@ fn note(name: &str) -> &'static str {
         "down" => "下の矢印キー",
         "home" => "先頭へ動くキー",
         "end" => "末尾へ動くキー",
+        "page-up" => "前のページへ送るキー",
+        "page-down" => "次のページへ送るキー",
         _ if name.starts_with('f') => "ファンクションキー",
         _ => "",
     }

@@ -44,6 +44,8 @@ pub fn recorded(held: Held, key: &str, code: &str) -> Option<String> {
         "ArrowDown" => "down".to_owned(),
         "Home" => "home".to_owned(),
         "End" => "end".to_owned(),
+        "PageUp" => "page-up".to_owned(),
+        "PageDown" => "page-down".to_owned(),
         "Alphanumeric" | "Eisu" | "Lang2" => "eisu".to_owned(),
         "KanaMode" | "Lang1" => "kana".to_owned(),
         "Convert" => "henkan".to_owned(),
@@ -254,6 +256,8 @@ fn action_label(mode: &str, action: Action) -> &'static str {
         ("candidates", Action::Begin) => "確定して次の読みを始める",
         ("completion", Action::Complete) => "次の補完の読みにする",
         ("completion", Action::CompletePrevious) => "前の補完の読みにする",
+        ("completion", Action::NextPage) => "次のページの補完の読みにする",
+        ("completion", Action::PreviousPage) => "前のページの補完の読みにする",
         ("completion", Action::Pick(place)) => COMPLETION_SELECT_LABELS
             .get(usize::from(place))
             .copied()
@@ -289,6 +293,8 @@ fn action_label(mode: &str, action: Action) -> &'static str {
         (_, Action::Complete) => "読みを補完する",
         (_, Action::CompletePrevious) => "読みを逆向きに補完する",
         (_, Action::RereadKana) => "打ったかなを読みに戻す",
+        (_, Action::NextPage) => "次のページ",
+        (_, Action::PreviousPage) => "前のページ",
         (_, Action::Pick(place)) => SELECT_LABELS
             .get(usize::from(place))
             .copied()
@@ -1504,6 +1510,8 @@ pub fn shown(text: &str) -> String {
         "down" => "↓".to_owned(),
         "home" => "Home".to_owned(),
         "end" => "End".to_owned(),
+        "page-up" => "Page Up".to_owned(),
+        "page-down" => "Page Down".to_owned(),
         "left-shift" => "左 Shift".to_owned(),
         "right-shift" => "右 Shift".to_owned(),
         "left-ctrl" => "左 Ctrl".to_owned(),
@@ -1785,6 +1793,20 @@ mod tests {
         assert_eq!(
             recorded(Held::default(), "Lang2", "Lang2").as_deref(),
             Some("eisu")
+        );
+    }
+
+    #[test]
+    fn the_page_keys_are_named_and_recorded() {
+        assert_eq!(shown("page-down"), "Page Down");
+        assert_eq!(shown("page-up"), "Page Up");
+        assert_eq!(
+            recorded(Held::default(), "PageDown", "PageDown").as_deref(),
+            Some("page-down")
+        );
+        assert_eq!(
+            recorded(Held::default(), "PageUp", "PageUp").as_deref(),
+            Some("page-up")
         );
     }
 
