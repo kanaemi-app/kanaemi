@@ -1,3 +1,4 @@
+use super::words::UserWords;
 use super::*;
 
 #[component]
@@ -130,14 +131,24 @@ pub fn Dictionaries() -> Element {
                 on_convert,
             }
         }
-        if let Some((label, path, lookup)) = looked {
-            DictionaryEntries {
-                key: "{path.display()}",
-                label,
-                path,
-                lookup,
-                on_close: move |_| looking.set(None),
-            }
+        match looked {
+            Some((_, _, Lookup::UserCustom)) => rsx! {
+                UserWords {
+                    custom: custom_path.clone(),
+                    functions: store_dir.join(FUNCTIONS_DIR),
+                    on_close: move |_| looking.set(None),
+                }
+            },
+            Some((label, path, lookup)) => rsx! {
+                DictionaryEntries {
+                    key: "{path.display()}",
+                    label,
+                    path,
+                    lookup,
+                    on_close: move |_| looking.set(None),
+                }
+            },
+            None => rsx! {},
         }
         OfficialDictionaries { chosen: chosen_for_official }
         HiddenWords { custom: custom_path }

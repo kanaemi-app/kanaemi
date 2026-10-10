@@ -168,7 +168,7 @@ fn stamp(folder: &Path) -> Stamp {
 }
 
 /// The function files of `folder`: those at its top, by name.
-fn function_files(folder: &Path) -> Vec<(String, PathBuf)> {
+pub(super) fn function_files(folder: &Path) -> Vec<(String, PathBuf)> {
     let mut files: Vec<(String, PathBuf)> = fs::read_dir(folder)
         .into_iter()
         .flatten()

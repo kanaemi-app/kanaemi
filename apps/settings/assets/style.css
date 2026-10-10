@@ -388,7 +388,7 @@ table.bindings tr + tr td { border-top: 1px solid var(--separator); }
 .status { text-align: right; white-space: nowrap; }
 .problems .item { color: var(--muted); font-size: 13px; }
 
-.box > .add {
+.box > .add, .modal-body > .add {
   margin: 8px 0 14px;
   padding: 5px 14px;
   border: 1px dashed var(--control-border);
@@ -396,7 +396,7 @@ table.bindings tr + tr td { border-top: 1px solid var(--separator); }
   background: none;
   color: var(--muted);
 }
-.box > .add:hover { color: var(--text); }
+.box > .add:hover, .modal-body > .add:hover { color: var(--text); }
 
 .binding-form {
   margin: 8px 0 12px;
@@ -443,6 +443,11 @@ table.bindings tr + tr td { border-top: 1px solid var(--separator); }
 .binding-form button.record.recording { color: var(--accent); }
 .binding-form button.danger { color: var(--error); }
 .binding-form .error { margin-top: 8px; }
+
+/* A word of the user dictionary: its reading and surface side by side. */
+.word-form .binding-form-row { align-items: flex-start; }
+.word-field { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 180px; }
+.word-field > span { font-size: 12px; color: var(--muted); }
 
 /* About */
 .about { display: flex; flex-direction: column; align-items: center; margin: 12px auto 22px; }
@@ -526,6 +531,9 @@ pre.source {
 table.rules { width: 100%; border-collapse: collapse; }
 table.rules th { text-align: left; font-weight: 500; font-size: 13px; color: var(--muted); padding: 6px 8px; }
 table.rules td { padding: 6px 8px; border-top: 1px solid var(--separator); }
+table.rules.words td { vertical-align: middle; }
+table.rules.words td.word-actions { text-align: right; white-space: nowrap; width: 1%; }
+table.rules.words td.word-actions button + button { margin-left: 6px; }
 /* The backdrop covers the window, not the column the pages are set in. */
 .content > .modal-backdrop { max-width: none; margin: 0; }
 

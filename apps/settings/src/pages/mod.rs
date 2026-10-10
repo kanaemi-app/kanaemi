@@ -5,6 +5,7 @@ mod dictionaries;
 mod display;
 mod functions;
 mod input;
+mod words;
 
 use std::cell::RefCell;
 use std::fs;
