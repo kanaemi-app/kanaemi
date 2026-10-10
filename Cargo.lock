@@ -2727,11 +2727,21 @@ version = "0.0.0"
 dependencies = [
  "kanaemi-config",
  "kanaemi-core",
+ "kanaemi-linux",
  "kanaemi-runtime",
  "serde",
  "tracing",
  "zbus",
  "zvariant",
+]
+
+[[package]]
+name = "kanaemi-linux"
+version = "0.0.0"
+dependencies = [
+ "kanaemi-core",
+ "kanaemi-runtime",
+ "tracing",
 ]
 
 [[package]]

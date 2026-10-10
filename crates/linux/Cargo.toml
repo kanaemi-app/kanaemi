@@ -1,0 +1,13 @@
+[package]
+name = "kanaemi-linux"
+description = "What the Linux input methods tell IBus and Fcitx5 alike: the keys, the text and the candidates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kanaemi-core.workspace = true
+# The keys to erase text are counted there.
+kanaemi-runtime.workspace = true
+tracing = { version = "0.1", features = ["release_max_level_info"] }
