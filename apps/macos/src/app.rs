@@ -3,6 +3,7 @@
 //! beyond what talking to the client needs.
 
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
@@ -11,7 +12,7 @@ use std::time::Duration;
 
 use block2::RcBlock;
 use dispatch2::{DispatchQueue, DispatchTime};
-use kanaemi_core::{Chord, Event, Key, KeyEvent, Modifiers, Output};
+use kanaemi_core::{Chord, Event, Key, KeyEvent, KeyKind, Modifiers, Output};
 use kanaemi_runtime::{Field, Profile};
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::{AnyObject, Bool, NSObject};
@@ -37,7 +38,9 @@ use objc2_input_method_kit::{
 
 use crate::keys::{Keys, POSTED_MARK, RawEvent, RawKind, key_to_send, utf16_offset};
 use crate::posted::{self, Posted, Purpose};
-use crate::{accessibility, candidates, indicator, input_monitoring, key_tap, secure_input};
+use crate::{
+    accessibility, candidates, handled, indicator, input_monitoring, key_tap, secure_input,
+};
 
 const CONNECTION_NAME: &str = "io.github.kanaemi-app.inputmethod.Kanaemi_Connection";
 
@@ -59,6 +62,49 @@ thread_local! {
     /// Told of every click in another application, kept for as long as
     /// the IME runs.
     static CLICKS: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
+    /// Keys handled without changing the text, marked through until their
+    /// application is done with them, oldest first.
+    static UNSEEN: RefCell<VecDeque<Unseen>> = const { RefCell::new(VecDeque::new()) };
+}
+
+/// A key handled without changing the text, marked through with text that
+/// shows nothing: the text to erase and the key to send wait until the mark
+/// is taken back, as an application takes a key that comes while text is
+/// marked for the input method's.
+struct Unseen {
+    controller: Retained<KanaemiController>,
+    client: Retained<AnyObject>,
+    erase: Option<String>,
+    send: Option<Chord>,
+}
+
+/// Whether text is being erased: Backspaces posted and not yet back, or
+/// waiting for a mark to go before they are posted.
+fn erasing() -> bool {
+    POSTED.with_borrow(Posted::erasing)
+        || UNSEEN.with_borrow(|unseen| unseen.iter().any(|u| u.erase.is_some()))
+}
+
+/// Takes back the mark through the oldest key handled without changing the
+/// text, then erases and sends what the key asked for. Run from the main
+/// queue, once the application is done with the key.
+fn unmark_unseen() {
+    let Some(unseen) = UNSEEN.with_borrow_mut(VecDeque::pop_front) else {
+        return;
+    };
+    // A key since may have marked text of its own in place of the mark.
+    if !unseen.controller.ivars().marked.get() {
+        set_marked_text(&unseen.client, "", 0);
+        // A call that answers returns once the client has taken the mark
+        // back, so the keys posted next reach it with nothing marked.
+        let _: NSRange = unsafe { msg_send![&*unseen.client, markedRange] };
+    }
+    if let Some(text) = unseen.erase {
+        unseen.controller.erase(&text, Some(&unseen.client));
+    }
+    if let Some(chord) = unseen.send {
+        send_key(chord, Purpose::InPlace);
+    }
 }
 
 fn with_profile<T>(f: impl FnOnce(&mut Profile) -> T) -> T {
@@ -551,8 +597,46 @@ impl KanaemiController {
     fn dispatch(&self, event: Event, client: Option<&AnyObject>) -> bool {
         let ivars = self.ivars();
         let handled = catch_unwind(AssertUnwindSafe(|| {
+            let marked_before = ivars.marked.get();
             let output = with_profile(|profile| ivars.field.borrow_mut().handle(profile, event));
             tracing::debug!(?event, ?output, "handled");
+            let pressed = matches!(
+                event,
+                Event::Key(KeyEvent {
+                    kind: KeyKind::Press | KeyKind::Repeat,
+                    ..
+                })
+            );
+            // Many applications, terminals among them, pass on a key the
+            // input method handled unless it changed the text: it is marked
+            // through, and what it erases or sends waits for the mark to go.
+            // Without the permission to post keys, nothing is erased or sent,
+            // and the key goes on as below. Marked text with nothing marked
+            // takes the place of the selection, so a selection is left alone.
+            // While text is being erased, the core keeps the keys typed and
+            // changes nothing for them; a mark then would take the
+            // Backspaces on their way in place of the text.
+            let posts = output.erase.is_some() || output.send.is_some();
+            if pressed
+                && let Some(client) = client
+                && handled::changes_nothing(&output, marked_before)
+                && (!posts || accessibility::trusted())
+                && !erasing()
+                && selection_is_empty(client)
+            {
+                self.draw(&output, client);
+                set_marked_text(client, handled::UNSEEN, 0);
+                UNSEEN.with_borrow_mut(|unseen| {
+                    unseen.push_back(Unseen {
+                        controller: self.retain(),
+                        client: client.retain(),
+                        erase: output.erase.clone(),
+                        send: output.send,
+                    });
+                });
+                DispatchQueue::main().exec_async(|| guarded((), unmark_unseen));
+                return true;
+            }
             let erasing = output
                 .erase
                 .as_deref()
@@ -674,6 +758,12 @@ fn hide_candidates() {
             unsafe { panel.hide() };
         }
     });
+}
+
+/// Whether `client` has no text selected, only a caret.
+fn selection_is_empty(client: &AnyObject) -> bool {
+    let selection: NSRange = unsafe { msg_send![client, selectedRange] };
+    selection.length == 0
 }
 
 /// The bundle identifier of the application `client` is in.
