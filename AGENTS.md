@@ -34,8 +34,8 @@ Run `just ci` before reporting a change as done. CI runs the same recipe.
 
 | Path | What lives there |
 | --- | --- |
-| `apps/` | the input method for each OS (`macos`, `windows`, `ibus`) and the settings app (`settings`) |
-| `crates/` | libraries: `core`, `engine`, `config`, `runtime`, `functions`, `bench-support` |
+| `apps/` | the input method for each OS (`macos`, `windows`, `ibus`, `fcitx5`) and the settings app (`settings`) |
+| `crates/` | libraries: `core`, `engine`, `config`, `runtime`, `functions`, `linux`, `bench-support` |
 | `docs/` | concept, ADRs, specs, references |
 | `.github/` | CI, packaging and release workflows, and the scripts they run |
 | `.cargo/` | Cargo configuration for the build |
@@ -71,10 +71,12 @@ Scoped Commits, from now on; earlier history stays as it is:
 | `config` | `crates/config/` |
 | `runtime` | `crates/runtime/` |
 | `functions` | `crates/functions/` |
+| `linux` | `crates/linux/` |
 | `bench` | `crates/bench-support/` and the benchmarks |
 | `macos` | `apps/macos/` |
 | `windows` | `apps/windows/` |
 | `ibus` | `apps/ibus/` |
+| `fcitx5` | `apps/fcitx5/` |
 | `settings` | `apps/settings/` |
 | `adr` | `docs/adr/` |
 | `spec` | `docs/spec/` |
