@@ -561,3 +561,70 @@ fn nothing_is_written_for_an_empty_reading() {
     assert!(lines.0.borrow().is_empty(), "{:?}", lines.0.borrow());
     assert!(e.take_write_errors().is_empty());
 }
+
+fn sources(engine: &Engine, reading: &str) -> Vec<(String, Option<String>)> {
+    engine
+        .convert(reading, None)
+        .into_iter()
+        .map(|c| (c.surface, c.source))
+        .collect()
+}
+
+#[test]
+fn a_candidate_names_the_first_dictionary_in_the_list_that_gave_it() {
+    let (mut e, _) = engine(
+        vec![
+            Slot::UserCustom,
+            Slot::Named("A".to_owned(), dictionary("きしゃ\t汽車\nきしゃ\t記者")),
+            Slot::Named("B".to_owned(), dictionary("きしゃ\t記者\nきしゃ\t帰社")),
+            text("きしゃ\t喜捨"),
+        ],
+        "きしゃ\t貴社",
+    );
+    e.set_user_custom_name(Some("ユーザー辞書".to_owned()));
+    let named = |surface: &str, name: Option<&str>| (surface.to_owned(), name.map(str::to_owned));
+    assert_eq!(
+        sources(&e, "きしゃ"),
+        [
+            named("貴社", Some("ユーザー辞書")),
+            named("記者", Some("A")),
+            named("汽車", Some("A")),
+            named("帰社", Some("B")),
+            named("喜捨", None),
+        ]
+    );
+}
+
+#[test]
+fn a_word_built_from_a_conjugating_stem_names_its_dictionary() {
+    let (e, _) = engine(
+        vec![Slot::Named(
+            "活用".to_owned(),
+            dictionary("か\t書\t五段-カ行"),
+        )],
+        "",
+    );
+    assert_eq!(
+        sources(&e, "かく"),
+        [("書く".to_owned(), Some("活用".to_owned()))]
+    );
+}
+
+#[test]
+fn a_preview_of_a_reading_is_its_candidates_as_converting_ranks_them() {
+    let (mut e, _) = engine(
+        vec![
+            Slot::UserCustom,
+            text("きしゃ\t汽車\nきしゃ\t記者\nきしゃ\t帰社"),
+        ],
+        "",
+    );
+    assert_eq!(e.preview("きしゃ", 2), ["帰社", "記者"]);
+    e.commit("きしゃ", "汽車");
+    assert_eq!(
+        e.preview("きしゃ", 1),
+        ["汽車"],
+        "ranked as converting is, after what was committed"
+    );
+    assert_eq!(e.preview("ないよみ", 3), Vec::<String>::new());
+}
