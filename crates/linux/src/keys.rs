@@ -195,7 +195,8 @@ pub fn key_to_send(chord: Chord) -> Option<(u32, u32)> {
         (chord.mods.shift, SHIFT_MASK),
         (chord.mods.ctrl, CONTROL_MASK),
         (chord.mods.alt, MOD1_MASK),
-        (chord.mods.cmd, SUPER_MASK),
+        // Qt, XIM and Wayland read only Mod4.
+        (chord.mods.cmd, SUPER_MASK | MOD4_MASK),
     ] {
         if on {
             state |= mask;
@@ -357,4 +358,15 @@ mod tests {
         assert_eq!(send(Key::Char('a'), false), None);
     }
 
+    #[test]
+    fn super_is_sent_as_gtk_and_qt_both_read_it() {
+        let chord = Chord {
+            key: Key::Left,
+            mods: Modifiers {
+                cmd: true,
+                ..Default::default()
+            },
+        };
+        assert_eq!(key_to_send(chord), Some((0xff51, SUPER_MASK | MOD4_MASK)));
+    }
 }
