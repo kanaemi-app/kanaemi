@@ -215,6 +215,17 @@
 
 # ふだん（変換中の文字がないとき）。押したキーを、書いたキーに置き換えてアプリに送る。扱うキーは、文字や F キーでない、名前のあるキーだけ。
 #[keys.application]
+#"ctrl+m" = "enter"
+
+# OS を限った置き換え。書き方は上と同じで、動いている OS の表だけを上の表のあとに当てる。
+# 同じキーなら OS の表が勝ち、"@none" でその OS では上の置き換えを外す。ほかの OS の表も、書き間違いは知らせる。
+# macOS だけ。Ctrl+H や Ctrl+A などは、macOS の文字欄がもともと扱う。
+#[keys.application.macos]
+#"ctrl+backspace" = "alt+backspace"
+#"ctrl+delete" = "alt+delete"
+
+# Windows だけ
+#[keys.application.windows]
 #"ctrl+h" = "backspace"
 #"ctrl+d" = "delete"
 #"ctrl+b" = "left"
@@ -223,4 +234,14 @@
 #"ctrl+e" = "end"
 #"ctrl+n" = "down"
 #"ctrl+p" = "up"
-#"ctrl+m" = "enter"
+
+# Linux だけ
+#[keys.application.linux]
+#"ctrl+h" = "backspace"
+#"ctrl+d" = "delete"
+#"ctrl+b" = "left"
+#"ctrl+f" = "right"
+#"ctrl+a" = "home"
+#"ctrl+e" = "end"
+#"ctrl+n" = "down"
+#"ctrl+p" = "up"

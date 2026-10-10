@@ -1,7 +1,10 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Action, Binding, Bindings, Chord, Config, Gesture, Key, Mode, Modifiers};
+use kanaemi_core::{
+    Action, Binding, Bindings, Chord, Config, Gesture, Key, Mode, Modifiers, Os, Remap,
+    default_remaps,
+};
 
 #[test]
 fn bindings_tell_whether_keys_are_sent_to_the_application() {
@@ -311,17 +314,116 @@ fn a_bound_key_with_nothing_being_typed_is_sent_to_the_application_as_another_ke
         if kana {
             t.kana();
         }
-        let out = t.ctrl('h');
+        let out = t.ctrl('m');
         assert!(out.consumed, "kana: {kana}");
         assert_eq!(
             out.send,
             Some(Chord {
-                key: Key::Backspace,
+                key: Key::Enter,
                 mods: Modifiers::default()
             }),
             "kana: {kana}"
         );
     }
+}
+
+#[test]
+fn ctrl_backspace_and_ctrl_delete_delete_a_word_the_way_macos_does_only_there() {
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    let alt = Modifiers {
+        alt: true,
+        ..Default::default()
+    };
+    for key in [Key::Backspace, Key::Delete] {
+        let mut t = T::new();
+        let out = t.press(key, ctrl);
+        let word = cfg!(target_os = "macos").then_some(Chord { key, mods: alt });
+        assert_eq!(out.send, word, "{key:?}");
+    }
+}
+
+fn with(mods: Modifiers, key: Key) -> Chord {
+    Chord { key, mods }
+}
+
+fn ctrl_remap(from: Key, to: Chord) -> Remap {
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    Remap {
+        from: with(ctrl, from),
+        to,
+    }
+}
+
+/// The Emacs keys that move the caret and delete, as Kanaemi sends them.
+fn emacs_editing() -> Vec<Remap> {
+    [
+        ('h', Key::Backspace),
+        ('d', Key::Delete),
+        ('b', Key::Left),
+        ('f', Key::Right),
+        ('a', Key::Home),
+        ('e', Key::End),
+        ('n', Key::Down),
+        ('p', Key::Up),
+    ]
+    .into_iter()
+    .map(|(c, to)| ctrl_remap(Key::Char(c), with(Modifiers::default(), to)))
+    .collect()
+}
+
+fn ctrl_m_enter() -> Remap {
+    ctrl_remap(Key::Char('m'), with(Modifiers::default(), Key::Enter))
+}
+
+#[test]
+fn macos_leaves_the_emacs_keys_its_text_fields_already_have_alone() {
+    let alt = Modifiers {
+        alt: true,
+        ..Default::default()
+    };
+
+    let remaps = default_remaps(Some(Os::MacOs));
+
+    for key in emacs_editing().into_iter().map(|r| r.from) {
+        assert!(remaps.iter().all(|r| r.from != key), "{key:?}");
+    }
+    assert_eq!(
+        remaps,
+        [
+            ctrl_m_enter(),
+            ctrl_remap(Key::Backspace, with(alt, Key::Backspace)),
+            ctrl_remap(Key::Delete, with(alt, Key::Delete)),
+        ]
+    );
+}
+
+#[test]
+fn every_other_os_sends_the_emacs_keys_and_leaves_ctrl_backspace_alone() {
+    for os in [Some(Os::Windows), Some(Os::Linux), None] {
+        let remaps = default_remaps(os);
+
+        let expected = [vec![ctrl_m_enter()], emacs_editing()].concat();
+        assert_eq!(remaps, expected, "{os:?}");
+    }
+}
+
+#[test]
+fn the_shipped_remaps_are_those_of_the_running_os() {
+    assert_eq!(Bindings::default().application, default_remaps(Os::RUNNING));
+    let running = [
+        (cfg!(target_os = "macos"), Os::MacOs),
+        (cfg!(target_os = "windows"), Os::Windows),
+        (cfg!(target_os = "linux"), Os::Linux),
+    ]
+    .into_iter()
+    .find_map(|(on, os)| on.then_some(os));
+    assert_eq!(Os::RUNNING, running);
 }
 
 #[test]
@@ -360,11 +462,11 @@ fn keys_pass_on_as_they_are_in_an_application_keys_are_not_sent_to() {
         ..config()
     });
     t.core.set_application("com.example.terminal");
-    let out = t.ctrl('h');
+    let out = t.ctrl('m');
     assert!(!out.consumed, "the name is matched ignoring case");
     assert_eq!(out.send, None);
     t.core.set_application("com.example.Editor");
-    assert!(t.ctrl('h').send.is_some());
+    assert!(t.ctrl('m').send.is_some());
 }
 
 #[test]

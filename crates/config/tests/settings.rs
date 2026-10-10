@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -5,11 +6,14 @@ use proptest::collection::{btree_map, vec};
 use proptest::prelude::*;
 
 use kanaemi_config::{
-    APPLICATION_TABLE, DictionarySource, FILE_NAME, ProblemKind, Settings, TEMPLATE, UNBOUND,
-    actions, binding_tables, bindings_table, default_romaji_table, format_action, key_names,
-    parse_action, parse_binding_key, parse_chord, read_or_create, read_romaji_table, sendable_keys,
+    APPLICATION_TABLE, ApplicationTables, DictionarySource, FILE_NAME, ProblemKind, Settings,
+    TEMPLATE, UNBOUND, actions, binding_tables, bindings_table, default_romaji_table,
+    format_action, key_names, os_table, parse_action, parse_binding_key, parse_chord,
+    read_or_create, read_romaji_table, sendable_keys,
 };
-use kanaemi_core::{Action, Binding, Chord, Config, Gesture, Key, Modifiers, Remap, RomajiTable};
+use kanaemi_core::{
+    Action, Binding, Chord, Config, Gesture, Key, Modifiers, Os, Remap, RomajiTable,
+};
 
 fn load(text: &str) -> (Settings, Vec<String>) {
     load_in(text, Path::new("/nonexistent"))
@@ -418,6 +422,172 @@ fn keys_sent_to_the_application_must_be_named_keys() {
     );
 }
 
+/// A shared table and a table of `os` that changes, takes out and adds keys
+/// over it.
+fn written_for_an_os(os: &str) -> String {
+    format!(
+        "[keys.application]\n\"ctrl+k\" = \"end\"\n\"ctrl+h\" = \"backspace\"\n\"shift+left\" = \"home\"\n\
+         [keys.application.{os}]\n\"ctrl+k\" = \"shift+end\"\n\"ctrl+h\" = \"@none\"\n\"ctrl+u\" = \"home\"\n\"shift+left\" = \"end\"\n"
+    )
+}
+
+fn shift(key: Key) -> Chord {
+    Chord {
+        key,
+        mods: Modifiers {
+            shift: true,
+            ..Default::default()
+        },
+    }
+}
+
+#[test]
+fn the_table_of_the_running_os_is_written_over_the_shared_one() {
+    let Some(os) = Os::RUNNING else {
+        return;
+    };
+
+    let (settings, problems) = load(&written_for_an_os(os_table(os)));
+
+    assert_eq!(problems, Vec::<String>::new());
+    let application = &settings.config.bindings.application;
+    assert_eq!(sent(application, ctrl('k')), Some(shift(Key::End)));
+    assert_eq!(sent(application, ctrl('h')), None, "taken off on this OS");
+    assert_eq!(sent(application, ctrl('u')), Some(plain(Key::Home)));
+    assert_eq!(sent(application, shift(Key::Left)), Some(plain(Key::End)));
+}
+
+#[test]
+fn every_table_is_kept_as_it_is_written_whichever_os_runs() {
+    for os in Os::ALL {
+        let (settings, _) = load(&written_for_an_os(os_table(os)));
+
+        let tables = &settings.application_tables;
+        assert_eq!(
+            tables.shared,
+            [
+                (ctrl('k'), Some(plain(Key::End))),
+                (ctrl('h'), Some(plain(Key::Backspace))),
+                (shift(Key::Left), Some(plain(Key::Home))),
+            ],
+            "{os:?}"
+        );
+        assert_eq!(
+            tables.os,
+            HashMap::from([(
+                os,
+                vec![
+                    (ctrl('k'), Some(shift(Key::End))),
+                    (ctrl('h'), None),
+                    (ctrl('u'), Some(plain(Key::Home))),
+                    (shift(Key::Left), Some(plain(Key::End))),
+                ]
+            )]),
+            "{os:?}"
+        );
+    }
+}
+
+#[test]
+fn a_key_written_twice_in_a_table_is_kept_once_as_the_later() {
+    let (settings, _) = load(
+        "[keys.application]\n\"ctrl+shift+h\" = \"end\"\n\"shift+ctrl+h\" = \"home\"\n\
+         [keys.application.linux]\n\"ctrl+shift+h\" = \"end\"\n\"shift+ctrl+h\" = \"@none\"\n",
+    );
+
+    let shift_ctrl_h = Chord {
+        key: Key::Char('H'),
+        mods: Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        },
+    };
+    let tables = &settings.application_tables;
+    assert_eq!(tables.shared, [(shift_ctrl_h, Some(plain(Key::Home)))]);
+    assert_eq!(tables.os[&Os::Linux], [(shift_ctrl_h, None)]);
+}
+
+#[test]
+fn nothing_written_leaves_every_table_empty() {
+    let (settings, _) = load("");
+
+    assert_eq!(settings.application_tables, ApplicationTables::default());
+}
+
+#[test]
+fn a_table_of_another_os_is_not_used_but_its_mistakes_are_reported() {
+    for os in Os::ALL.into_iter().filter(|os| Some(*os) != Os::RUNNING) {
+        let table = os_table(os);
+        let text = format!(
+            "[keys.application.{table}]\n\"ctrl+k\" = \"end\"\n\"ctrl+y\" = \"f5\"\n\"left-shift\" = \"enter\"\n\"nowhere\" = \"end\"\n\"ctrl+j\" = 1\n"
+        );
+
+        let (settings, problems) = load(&text);
+
+        assert_eq!(
+            problems,
+            [
+                format!("keys.application.{table}.ctrl+y"),
+                format!("keys.application.{table}.left-shift"),
+                format!("keys.application.{table}.nowhere"),
+                format!("keys.application.{table}.ctrl+j"),
+            ]
+        );
+        assert_eq!(sent(&settings.config.bindings.application, ctrl('k')), None);
+        assert_eq!(
+            settings.application_tables.os[&os],
+            [(ctrl('k'), Some(plain(Key::End)))],
+            "only what can be read is kept"
+        );
+    }
+}
+
+#[test]
+fn only_an_os_names_a_table_inside_the_application_table() {
+    let (_, problems) = Settings::load(
+        "[keys.application.beos]\n\"ctrl+k\" = \"end\"\n[keys.reading.macos]\n\"ctrl+k\" = \"@end\"\n",
+        Path::new("/nonexistent"),
+    );
+
+    let problems: Vec<_> = problems.into_iter().map(|p| (p.item, p.kind)).collect();
+    assert_eq!(
+        problems,
+        [
+            ("keys.application.beos".to_owned(), ProblemKind::UnknownItem),
+            ("keys.reading.macos".to_owned(), ProblemKind::NotAString),
+        ]
+    );
+}
+
+#[test]
+fn the_template_shows_a_table_for_each_os() {
+    for os in Os::ALL.map(os_table) {
+        assert!(
+            TEMPLATE.contains(&format!("#[keys.application.{os}]")),
+            "{os}"
+        );
+    }
+}
+
+#[test]
+fn the_template_states_the_remaps_of_every_os() {
+    let (settings, problems) = load(&uncommented_template());
+    assert_eq!(problems, Vec::<String>::new());
+
+    let tables = &settings.application_tables;
+    for os in Os::ALL {
+        let mut remaps: Vec<Remap> = Vec::new();
+        let own = tables.os.get(&os).into_iter().flatten();
+        for &(from, to) in tables.shared.iter().chain(own) {
+            remaps.retain(|r| r.from != from);
+            remaps.extend(to.map(|to| Remap { from, to }));
+        }
+
+        assert_eq!(remaps, kanaemi_core::default_remaps(Some(os)), "{os:?}");
+    }
+}
+
 #[test]
 fn a_shifted_letter_is_written_lower_case_but_matches_the_capital() {
     assert_eq!(
@@ -601,7 +771,7 @@ fn the_bindings_tables_are_written_as_the_file_writes_them() {
     let application = bindings_table(&bindings, APPLICATION_TABLE);
 
     assert!(reading.contains(&("ctrl+n".to_owned(), "@next".to_owned())));
-    assert!(application.contains(&("ctrl+h".to_owned(), "backspace".to_owned())));
+    assert!(application.contains(&("ctrl+m".to_owned(), "enter".to_owned())));
     assert_eq!(bindings_table(&bindings, "nowhere"), []);
 }
 
@@ -901,6 +1071,10 @@ const PLACES: &[(&str, &[&str])] = &[
     ("keys.registration", BINDING_KEYS),
     ("keys.abc", BINDING_KEYS),
     ("keys.application", BINDING_KEYS),
+    ("keys.application.macos", BINDING_KEYS),
+    ("keys.application.windows", BINDING_KEYS),
+    ("keys.application.linux", BINDING_KEYS),
+    ("keys.application.unknown", BINDING_KEYS),
     ("keys.unknown", BINDING_KEYS),
 ];
 
