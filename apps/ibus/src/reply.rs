@@ -109,6 +109,16 @@ pub fn content_type(purpose: u32, hints: u32) -> (bool, bool) {
     )
 }
 
+/// The program an input context's client (`FocusInId`) is, when it says:
+/// GTK's input modules append it (`gtk4-im:ghostty`), and XIM or GNOME
+/// Shell's own entries tell none.
+pub fn program(client: &str) -> Option<&str> {
+    match client.split_once(':') {
+        Some(("gtk-im" | "gtk3-im" | "gtk4-im", program)) => Some(program),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use kanaemi_core::{CandidateView, Chord, Key, Modifiers};
@@ -248,5 +258,18 @@ mod tests {
         assert_eq!(content_type(9, 0), (true, false));
         assert_eq!(content_type(0, 1 << 11), (false, true));
         assert_eq!(content_type(0, 0), (false, false));
+    }
+
+    #[test]
+    fn a_gtk_client_names_its_program_and_others_name_none() {
+        assert_eq!(program("gtk4-im:ghostty"), Some("ghostty"));
+        assert_eq!(
+            program("gtk3-im:gnome-terminal-server"),
+            Some("gnome-terminal-server")
+        );
+        assert_eq!(program("gtk-im:firefox"), Some("firefox"));
+        assert_eq!(program("xim"), None);
+        assert_eq!(program("gnome-shell"), None);
+        assert_eq!(program("fake"), None);
     }
 }

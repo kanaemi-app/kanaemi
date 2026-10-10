@@ -122,6 +122,12 @@ impl Shell {
         self.handle(id, Event::FocusIn { password })
     }
 
+    fn set_application(&mut self, id: u32, program: &str) {
+        if let Some(context) = self.contexts.get_mut(&id) {
+            context.field.set_application(program);
+        }
+    }
+
     /// Takes the field's purpose and hints. IBus tells them after the focus
     /// comes in, so a field that turns out to be a password one is focused
     /// again with that known.
@@ -409,7 +415,13 @@ impl Engine {
         });
     }
 
-    async fn focus_in_id(&self, _object_path: &str, _client: &str) {
+    async fn focus_in_id(&self, _object_path: &str, client: &str) {
+        // The one engine moves between fields: one naming no program is in
+        // none, not in the one before.
+        let id = self.id;
+        let program = reply::program(client).unwrap_or_default().to_owned();
+        self.shell
+            .ask(move |shell| shell.set_application(id, &program));
         self.focus_in().await;
     }
 
@@ -457,10 +469,10 @@ impl Engine {
     async fn panel_extension_received(&self, _event: Value<'_>) {}
     async fn panel_extension_register_keys(&self, _data: Value<'_>) {}
 
-    /// IBus asks for the focus by plain `FocusIn`.
+    /// IBus asks for the focus by `FocusInId`, which names the client.
     #[zbus(property)]
     fn focus_id(&self) -> bool {
-        false
+        true
     }
 
     /// The text around the cursor is not used.

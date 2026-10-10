@@ -23,6 +23,7 @@ X11 の GTK3・GTK4 と、GNOME Shell（Wayland）の GTK4 の入力欄で確か
 ### フォーカス
 
 - IBus は、エンジンを 1 つだけ作り、フォーカスの移った入力欄に付け替えて使う（グローバルエンジン）。付け替えたあとで前の入力欄の `FocusOut` を送るので、それに答えて送った `CommitText` は次の入力欄に届く。
+- エンジンの `FocusId` プロパティを `true` にすると、`FocusIn`／`FocusOut` の代わりに `FocusInId`／`FocusOutId` が来る。`FocusInId` の `client` は、GTK の入力モジュールなら `gtk4-im:プログラム名`（`gtk3-im:`・`gtk-im:` も）、XIM なら `xim`、GNOME Shell が受け持つ入力欄なら `gnome-shell` で、プログラム名は GTK の入力モジュールのときだけ分かる（[ibusengine.c](https://github.com/ibus/ibus/blob/main/src/ibusengine.c) の `focus-in-id` シグナルの説明）。
 
 ### 表示
 
