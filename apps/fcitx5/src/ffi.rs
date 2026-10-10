@@ -33,6 +33,9 @@ pub struct Callbacks {
     ),
     hide_candidates: unsafe extern "C" fn(ic: *mut c_void),
     forward: unsafe extern "C" fn(ic: *mut c_void, keysym: u32, state: u32),
+    /// Deletes the characters just before the caret, as Unicode counts
+    /// them, from the text around it.
+    delete_before: unsafe extern "C" fn(ic: *mut c_void, chars: usize),
     indicator: unsafe extern "C" fn(ic: *mut c_void, label: *const c_char, len: usize),
     /// Asks for [`kanaemi_fcitx5_serve`] on the event loop; called from
     /// another thread.
@@ -72,7 +75,7 @@ impl Addon {
             callbacks: &self.callbacks,
             ic: ic as *mut c_void,
         };
-        show::tell(&mut context, &reply.signals);
+        show::tell(&mut context, &reply.signals, self.shell.erasing(ic));
         reply.consumed
     }
 }
@@ -129,6 +132,10 @@ impl Host for Context<'_> {
 
     fn forward(&mut self, keysym: u32, state: u32) {
         unsafe { (self.callbacks.forward)(self.ic, keysym, state) }
+    }
+
+    fn delete_before(&mut self, chars: usize) {
+        unsafe { (self.callbacks.delete_before)(self.ic, chars) }
     }
 
     fn indicator(&mut self, label: &str) {
@@ -265,11 +272,14 @@ pub unsafe extern "C" fn kanaemi_fcitx5_focus_in(
     ic: *mut c_void,
     flags: u64,
     program: *const c_char,
+    held_modifiers: bool,
 ) {
     let addon = unsafe { &mut *addon };
     let program = unsafe { string(program) };
     guarded((), || {
-        let reply = addon.shell.focus_in(ic as Id, flags, program);
+        let reply = addon
+            .shell
+            .focus_in(ic as Id, flags, program, held_modifiers);
         addon.tell(ic as Id, reply);
     });
 }
@@ -343,12 +353,12 @@ pub unsafe extern "C" fn kanaemi_fcitx5_serve(addon: *mut Addon) {
         let Addon {
             shell, callbacks, ..
         } = addon;
-        shell.serve_control(|ic, reply| {
+        shell.serve_control(|ic, reply, erasing| {
             let mut context = Context {
                 callbacks,
                 ic: ic as *mut c_void,
             };
-            show::tell(&mut context, &reply.signals);
+            show::tell(&mut context, &reply.signals, erasing);
         });
     });
 }

@@ -14,7 +14,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use kanaemi_core::Event;
-use kanaemi_linux::keys::{Keys, RELEASE_MASK};
+use kanaemi_linux::keys::{self, Keys, RELEASE_MASK};
 use kanaemi_linux::reply::{self, Reply, Signal};
 use kanaemi_runtime::{Field, Profile};
 use zbus::names::BusName;
@@ -278,14 +278,19 @@ async fn emit(
                 }
                 send(connection, path, "HideLookupTable", &()).await
             }
-            Signal::Forward(keyval, state) => {
-                let press = (keyval, 0u32, state);
-                let release = (keyval, 0u32, state | RELEASE_MASK);
-                match send(connection, path, "ForwardKeyEvent", &press).await {
-                    Ok(()) => send(connection, path, "ForwardKeyEvent", &release).await,
-                    failed => failed,
+            // Forwarded keys reach the application in order, before what
+            // follows.
+            Signal::Erase(text) => {
+                let mut sent = Ok(());
+                for (keyval, state) in keys::erasing(&text) {
+                    sent = forward(connection, path, keyval, state).await;
+                    if sent.is_err() {
+                        break;
+                    }
                 }
+                sent
             }
+            Signal::Forward(keyval, state) => forward(connection, path, keyval, state).await,
             Signal::Indicator(mode) => {
                 let label = ibus::text(reply::mode_label(mode));
                 let shown = send(connection, path, "UpdateAuxiliaryText", &(label, true)).await;
@@ -297,6 +302,19 @@ async fn emit(
             tracing::warn!(%error, "IBus not told");
         }
     }
+}
+
+/// Presses and lets go of a key in the application.
+async fn forward(
+    connection: &Connection,
+    path: &ObjectPath<'_>,
+    keyval: u32,
+    state: u32,
+) -> zbus::Result<()> {
+    let press = (keyval, 0u32, state);
+    let release = (keyval, 0u32, state | RELEASE_MASK);
+    send(connection, path, "ForwardKeyEvent", &press).await?;
+    send(connection, path, "ForwardKeyEvent", &release).await
 }
 
 async fn send<B>(

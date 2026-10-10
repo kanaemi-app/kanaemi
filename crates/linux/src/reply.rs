@@ -1,7 +1,7 @@
 //! What an input method tells its framework after an event, decided apart
 //! from the framework so it builds and tests on every platform.
 
-use kanaemi_core::{Candidate, CandidateView, Chord, Key, Mode, Modifiers, Output};
+use kanaemi_core::{Candidate, CandidateView, Mode, Output};
 
 use crate::keys;
 
@@ -15,6 +15,8 @@ pub enum Signal {
     /// it, if anything.
     Candidates(Vec<Item>, usize, Option<String>),
     HideCandidates,
+    /// Text just before the caret to erase, ahead of what follows.
+    Erase(String),
     Forward(u32, u32),
     /// The mode to show by the caret for a moment, after it changed.
     Indicator(Mode),
@@ -47,16 +49,8 @@ impl Reply {
 /// where the panel shows it well (`indicator`).
 pub fn reply(output: &Output, indicator: bool) -> Reply {
     let mut signals = Vec::new();
-    // Forwarded keys reach the application in order, before what follows.
     if let Some(text) = &output.erase {
-        let backspace = Chord {
-            key: Key::Backspace,
-            mods: Modifiers::default(),
-        };
-        if let Some((keyval, state)) = keys::key_to_send(backspace) {
-            let presses = kanaemi_runtime::backspaces(text);
-            signals.extend((0..presses).map(|_| Signal::Forward(keyval, state)));
-        }
+        signals.push(Signal::Erase(text.clone()));
     }
     if let Some(text) = &output.commit {
         signals.push(Signal::Commit(text.clone()));
@@ -182,19 +176,17 @@ mod tests {
     }
 
     #[test]
-    fn text_to_erase_goes_first_as_backspaces() {
+    fn text_to_erase_goes_first() {
         let output = Output {
             erase: Some("記者𥸮".to_owned()),
+            commit: Some("木".to_owned()),
             ..output()
         };
-        let backspace = Signal::Forward(0xff08, 0);
         assert_eq!(
-            reply(&output, false).signals[..4],
+            reply(&output, false).signals[..2],
             [
-                backspace.clone(),
-                backspace.clone(),
-                backspace,
-                Signal::Preedit(String::new(), 0)
+                Signal::Erase("記者𥸮".to_owned()),
+                Signal::Commit("木".to_owned())
             ]
         );
     }

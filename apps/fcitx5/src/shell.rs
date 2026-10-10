@@ -13,6 +13,7 @@ use kanaemi_runtime::{Field, Profile};
 
 use crate::content::content;
 use crate::repeat;
+use crate::show::Erasing;
 
 /// An input context, as the C++ layer names it.
 pub(crate) type Id = usize;
@@ -20,6 +21,7 @@ pub(crate) type Id = usize;
 struct Context {
     field: Field,
     password: bool,
+    erasing: Erasing,
 }
 
 pub(crate) struct Shell {
@@ -46,6 +48,7 @@ impl Shell {
         let context = Context {
             field: Field::new(&self.profile),
             password: false,
+            erasing: Erasing::ByKeys,
         };
         self.contexts.insert(id, context);
     }
@@ -84,15 +87,24 @@ impl Shell {
     }
 
     /// The focus comes into a field of `program`, with the capability
-    /// flags Fcitx5 holds for it.
-    pub fn focus_in(&mut self, id: Id, flags: u64, program: &str) -> Reply {
+    /// flags Fcitx5 holds for it. Where a key forwarded to the field carries
+    /// the modifiers held down rather than its own (`held_modifiers`), no
+    /// key is sent in place of another, and text is erased from the text
+    /// around the caret.
+    pub fn focus_in(&mut self, id: Id, flags: u64, program: &str, held_modifiers: bool) -> Reply {
         let Some(context) = self.contexts.get_mut(&id) else {
             return Reply::NOTHING;
         };
         let (password, private) = content(flags);
         context.password = password;
+        context.erasing = if held_modifiers {
+            Erasing::AroundTheCaret
+        } else {
+            Erasing::ByKeys
+        };
         context.field.set_private(private);
         context.field.set_application(program);
+        context.field.set_sends_keys(!held_modifiers);
         self.focused = Some(id);
         self.handle(id, Event::FocusIn { password })
     }
@@ -128,6 +140,13 @@ impl Shell {
         Reply::NOTHING
     }
 
+    /// How text before the caret is erased in the context.
+    pub fn erasing(&self, id: Id) -> Erasing {
+        self.contexts
+            .get(&id)
+            .map_or(Erasing::ByKeys, |context| context.erasing)
+    }
+
     /// The application asks for the preedit to be committed, as on a click.
     pub fn reset(&mut self, id: Id) -> Reply {
         self.handle(id, Event::Flush)
@@ -139,13 +158,13 @@ impl Shell {
 
     /// Answers the requests other programs sent; a mode to set goes to the
     /// field with the focus first, which is told what came of it.
-    pub fn serve_control(&mut self, mut tell: impl FnMut(Id, Reply)) {
+    pub fn serve_control(&mut self, mut tell: impl FnMut(Id, Reply, Erasing)) {
         for request in self.profile.take_control_requests() {
             if let Some(mode) = request.mode_to_set()
                 && let Some(id) = self.focused
             {
                 let reply = self.handle(id, Event::SetMode(mode));
-                tell(id, reply);
+                tell(id, reply, self.erasing(id));
             }
             self.profile.answer(request);
         }

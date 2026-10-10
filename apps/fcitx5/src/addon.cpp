@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -44,11 +45,18 @@ struct Callbacks {
                        size_t selected, const char *aside, size_t aside_len);
     void (*hide_candidates)(void *ic);
     void (*forward)(void *ic, uint32_t keysym, uint32_t state);
+    void (*delete_before)(void *ic, size_t chars);
     void (*indicator)(void *ic, const char *label, size_t len);
     void (*wake)(void *engine);
 };
 
 struct Addon;
+
+// Which frontend serves the context. Not frontendName(), which Fcitx5 has
+// only from 5.0.22: the packages are built against an older one.
+std::string_view frontend(const fcitx::InputContext *ic) {
+    return ic->frontend();
+}
 
 } // namespace
 
@@ -61,7 +69,7 @@ void kanaemi_fcitx5_destroy(Addon *addon, void *ic);
 bool kanaemi_fcitx5_key(Addon *addon, void *ic, uint32_t keysym, uint32_t code,
                         uint32_t state, bool release);
 void kanaemi_fcitx5_focus_in(Addon *addon, void *ic, uint64_t flags,
-                             const char *program);
+                             const char *program, bool held_modifiers);
 void kanaemi_fcitx5_set_capabilities(Addon *addon, void *ic, uint64_t flags);
 void kanaemi_fcitx5_focus_out(Addon *addon, void *ic, bool committable);
 void kanaemi_fcitx5_reset(Addon *addon, void *ic);
@@ -199,19 +207,23 @@ public:
         ic->propertyFor(&factory_);
         ic->statusArea().addAction(fcitx::StatusGroup::InputMethod,
                                    &settings_);
+        // Wayland's second input method protocol forwards a key through a
+        // virtual keyboard, with the modifiers held down instead of the
+        // key's own.
         kanaemi_fcitx5_focus_in(
             addon_, ic, static_cast<uint64_t>(ic->capabilityFlags()),
-            ic->program().c_str());
+            ic->program().c_str(), frontend(ic) == "wayland_v2");
     }
 
     void deactivate(const fcitx::InputMethodEntry &,
                     fcitx::InputContextEvent &event) override {
         auto *ic = event.inputContext();
-        // Wayland's first input method protocol lets the field go before the
-        // focus leaves it, and drops what is committed after.
+        // Wayland's input method protocols let the field go before the focus
+        // leaves it, and drop what is committed after.
         bool committable =
             event.type() != fcitx::EventType::InputContextFocusOut ||
-            ic->frontendName() != "wayland";
+            (frontend(ic) != "wayland" &&
+             frontend(ic) != "wayland_v2");
         kanaemi_fcitx5_focus_out(addon_, ic, committable);
         // What is left of the panel goes with the focus.
         ic->inputPanel().reset();
@@ -294,6 +306,11 @@ private:
         c->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     }
 
+    static void deleteBefore(void *ic, size_t chars) {
+        auto count = static_cast<int>(chars);
+        context(ic)->deleteSurroundingText(-count, count);
+    }
+
     static void forward(void *ic, uint32_t keysym, uint32_t state) {
         fcitx::Key key(static_cast<fcitx::KeySym>(keysym),
                        fcitx::KeyStates(state));
@@ -340,8 +357,8 @@ private:
     }
 
     static constexpr Callbacks CALLBACKS{
-        commit,   preedit,   candidates, hideCandidates,
-        forward,  indicator, wake,
+        commit,  preedit,      candidates, hideCandidates,
+        forward, deleteBefore, indicator,  wake,
     };
 
     // Fcitx5 makes one engine of an add-on.

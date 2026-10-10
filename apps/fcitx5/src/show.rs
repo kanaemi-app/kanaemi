@@ -1,6 +1,7 @@
 //! What the add-on tells Fcitx5 for each signal, in the shape Fcitx5 takes
 //! it, decided apart from Fcitx5 so it builds and tests on every platform.
 
+use kanaemi_linux::keys;
 use kanaemi_linux::reply::{self, Item, Signal};
 
 /// Between a candidate and what follows it in the panel's text.
@@ -16,8 +17,21 @@ pub(crate) trait Host {
     fn candidates(&mut self, items: &[Candidate<'_>], selected: usize, aside: Option<&str>);
     fn hide_candidates(&mut self);
     fn forward(&mut self, keysym: u32, state: u32);
+    /// Deletes the characters just before the caret from the text around
+    /// it, as Unicode counts them.
+    fn delete_before(&mut self, chars: usize);
     /// The mode's name to show by the caret for a moment.
     fn indicator(&mut self, label: &str);
+}
+
+/// How text before the caret is erased in a context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Erasing {
+    /// By Backspaces sent to the application.
+    ByKeys,
+    /// From the text around the caret, where a Backspace sent would carry
+    /// the modifiers held down.
+    AroundTheCaret,
 }
 
 /// A candidate as the panel lists it: the candidate, and its dictionary or
@@ -30,9 +44,17 @@ pub(crate) struct Candidate<'a> {
 }
 
 /// Tells `host` each of `signals`, in order.
-pub(crate) fn tell(host: &mut impl Host, signals: &[Signal]) {
+pub(crate) fn tell(host: &mut impl Host, signals: &[Signal], erasing: Erasing) {
     for signal in signals {
         match signal {
+            Signal::Erase(text) => match erasing {
+                Erasing::ByKeys => {
+                    for (keysym, state) in keys::erasing(text) {
+                        host.forward(keysym, state);
+                    }
+                }
+                Erasing::AroundTheCaret => host.delete_before(text.chars().count()),
+            },
             Signal::Commit(text) => host.commit(text),
             Signal::Preedit(text, cursor) => host.preedit(text, byte_offset(text, *cursor)),
             Signal::Candidates(items, selected, aside) => {
@@ -81,6 +103,7 @@ mod tests {
         Candidates(Vec<(String, String)>, usize, Option<String>),
         HideCandidates,
         Forward(u32, u32),
+        DeleteBefore(usize),
         Indicator(String),
     }
 
@@ -108,15 +131,33 @@ mod tests {
         fn forward(&mut self, keysym: u32, state: u32) {
             self.0.push(Told::Forward(keysym, state));
         }
+        fn delete_before(&mut self, chars: usize) {
+            self.0.push(Told::DeleteBefore(chars));
+        }
         fn indicator(&mut self, label: &str) {
             self.0.push(Told::Indicator(label.to_owned()));
         }
     }
 
     fn told(signals: &[Signal]) -> Vec<Told> {
+        told_in(signals, Erasing::ByKeys)
+    }
+
+    fn told_in(signals: &[Signal], erasing: Erasing) -> Vec<Told> {
         let mut recorder = Recorder::default();
-        tell(&mut recorder, signals);
+        tell(&mut recorder, signals, erasing);
         recorder.0
+    }
+
+    #[test]
+    fn text_is_erased_by_backspaces_or_from_the_text_around_the_caret() {
+        let erase = [Signal::Erase("記者𥸮".to_owned())];
+        let backspace = || Told::Forward(0xff08, 0);
+        assert_eq!(told(&erase), [backspace(), backspace(), backspace()]);
+        assert_eq!(
+            told_in(&erase, Erasing::AroundTheCaret),
+            [Told::DeleteBefore(3)]
+        );
     }
 
     #[test]

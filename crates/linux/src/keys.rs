@@ -205,6 +205,19 @@ pub fn key_to_send(chord: Chord) -> Option<(u32, u32)> {
     Some((*keyval, state))
 }
 
+/// The keysym and modifier state of each Backspace that erases `text` just
+/// before the caret.
+pub fn erasing(text: &str) -> impl Iterator<Item = (u32, u32)> {
+    let backspace = Chord {
+        key: Key::Backspace,
+        mods: Modifiers::default(),
+    };
+    let presses = kanaemi_runtime::backspaces(text);
+    key_to_send(backspace)
+        .into_iter()
+        .flat_map(move |key| std::iter::repeat_n(key, presses))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,6 +369,12 @@ mod tests {
         assert_eq!(send(Key::Backspace, false), Some((0xff08, 0)));
         assert_eq!(send(Key::Left, true), Some((0xff51, CONTROL_MASK)));
         assert_eq!(send(Key::Char('a'), false), None);
+    }
+
+    #[test]
+    fn text_is_erased_by_a_backspace_for_each_character() {
+        let keys: Vec<_> = erasing("記者𥸮").collect();
+        assert_eq!(keys, [(0xff08, 0); 3]);
     }
 
     #[test]
