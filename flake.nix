@@ -174,6 +174,8 @@
               pkgs.glib
               pkgs.openssl
               pkgs.xdotool
+              # What the Fcitx5 add-on's C++ layer builds against.
+              pkgs.fcitx5
             ];
           };
         }
