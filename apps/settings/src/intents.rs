@@ -67,6 +67,18 @@ pub const GROUPS: &[(&str, &[Intent])] = &[
                 action: Action::Cancel,
                 scenes: COMPOSING,
             },
+            Intent {
+                title: "打ったかなを読みに戻す",
+                note: "読みを始めずに打ったかなを読みに戻して、変換できるようにします。戻した読みでもう一度押すと、最初のかなを確定します",
+                action: Action::RereadKana,
+                scenes: &["kana", "reading"],
+            },
+            Intent {
+                title: "直前の確定を取り消す",
+                note: "何も打っていないときに押すと、直前に確定した候補を選び直せるように戻します",
+                action: Action::UndoCommit,
+                scenes: &["kana"],
+            },
         ],
     ),
     (
@@ -428,6 +440,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn taking_text_back_is_shown_with_its_shipped_keys() {
+        let shipped = Bindings::default();
+        let keys = |action| {
+            intents()
+                .find(|i| i.action == action)
+                .map(|i| i.keys(&shipped))
+        };
+        assert_eq!(
+            keys(Action::RereadKana).map(|k| k.everywhere),
+            Some(vec!["ctrl+;".to_owned()])
+        );
+        assert_eq!(
+            keys(Action::UndoCommit).map(|k| k.everywhere),
+            Some(vec!["shift+backspace".to_owned()])
+        );
     }
 
     #[test]
