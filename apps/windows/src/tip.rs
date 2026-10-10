@@ -616,6 +616,13 @@ impl State {
         *self.focused.borrow_mut() = context.cloned();
         if self.field.borrow().is_none() {
             *self.field.borrow_mut() = with_profile(|profile| Field::new(profile));
+            // The text service runs inside the application it serves.
+            let exe = std::env::current_exe().ok();
+            if let Some(field) = self.field.borrow_mut().as_mut()
+                && let Some(name) = exe.as_deref().and_then(|exe| exe.file_name())
+            {
+                field.set_application(name.to_string_lossy());
+            }
         }
         self.read_privacy(context);
         // Windows turns input methods off in a password field, so a field

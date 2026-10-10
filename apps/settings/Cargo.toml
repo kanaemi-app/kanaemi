@@ -22,6 +22,14 @@ unicode-normalization = "0.1"
 ureq = "3.4.2"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
 
+# Applications are listed and drawn by AppKit to pick them by their icons.
+[target.'cfg(target_os = "macos")'.dependencies]
+base64 = "0.22.1"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSBitmapImageRep", "NSGraphicsContext", "NSImage", "NSImageRep", "NSRunningApplication", "NSWorkspace", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGImage"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSBundle", "NSData", "NSDictionary", "NSGeometry", "NSString", "NSURL"] }
+
 [dev-dependencies]
 xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 

@@ -17,6 +17,8 @@ pub struct Field {
     /// The settings the core was built from.
     generation: u64,
     private: bool,
+    /// The application the field is in, told again to a core built anew.
+    application: String,
 }
 
 impl Field {
@@ -28,7 +30,27 @@ impl Field {
             engine: profile.converter(),
             generation: profile.generation(),
             private: false,
+            application: String::new(),
         }
+    }
+
+    /// Tells which application the field is in, as the host names it; the
+    /// keys sent in place of others are not sent in one the settings except.
+    pub fn set_application(&mut self, app: impl Into<String>) {
+        self.application = app.into();
+        self.core.set_application(&self.application);
+    }
+
+    /// A field built again from `profile`, still the same one to it.
+    fn rebuilt(&self, profile: &Profile) -> Self {
+        let mut field = Self {
+            id: self.id,
+            private: self.private,
+            application: self.application.clone(),
+            ..Self::new(profile)
+        };
+        field.core.set_application(&field.application);
+        field
     }
 
     /// Marks the field as one that asks not to be recorded, such as one in a
@@ -67,11 +89,7 @@ impl Field {
     /// candidates, and the key passed on to the application, as the event
     /// that panicked is left out.
     pub fn restart(&mut self, profile: &Profile) -> Output {
-        *self = Self {
-            id: self.id,
-            private: self.private,
-            ..Self::new(profile)
-        };
+        *self = self.rebuilt(profile);
         Output {
             consumed: false,
             erase: None,
@@ -91,11 +109,7 @@ impl Field {
         if let Event::FocusIn { .. } = event {
             profile.reload_if_changed();
             if self.generation != profile.generation() {
-                *self = Self {
-                    id: self.id,
-                    private: self.private,
-                    ..Self::new(profile)
-                };
+                *self = self.rebuilt(profile);
             }
         }
         let mut output = self.core.handle(event);
@@ -252,6 +266,31 @@ mod tests {
         field.handle(&mut profile, Event::FocusOut);
         field.handle(&mut profile, FOCUS_IN);
         assert_eq!(field.handle(&mut profile, press(Key::Kana)).indicator, None);
+    }
+
+    #[test]
+    fn the_application_with_the_focus_outlives_a_core_built_again() {
+        let dir = temp_dir("application");
+        let except = "[keys]\nsend_except = [\"com.example.Terminal\"]\n";
+        fs::write(dir.join(FILE_NAME), except).unwrap();
+        let mut profile = Profile::open(&dir);
+        let mut field = Field::new(&profile);
+        field.set_application("com.example.Terminal");
+        let ctrl_h = Event::Key(KeyEvent {
+            key: Key::Char('h'),
+            mods: Modifiers {
+                ctrl: true,
+                ..Modifiers::default()
+            },
+            kind: KeyKind::Press,
+            time_ms: 0,
+        });
+        field.handle(&mut profile, FOCUS_IN);
+        assert_eq!(field.handle(&mut profile, ctrl_h).send, None);
+        field.handle(&mut profile, Event::FocusOut);
+        change_settings(&dir, &format!("mode_indicator = false\n{except}"));
+        field.handle(&mut profile, FOCUS_IN);
+        assert_eq!(field.handle(&mut profile, ctrl_h).send, None);
     }
 
     #[test]

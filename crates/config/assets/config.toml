@@ -58,6 +58,9 @@
 # 入力中、割り当てのない Cmd・Ctrl・Option 付きのキーは何もしない。
 # ここに書いた修飾キー（"cmd"・"ctrl"・"alt"）のキーは、確定してからアプリに渡す。
 #pass_while_composing = []
+# [keys.application] の置き換えをしないアプリ。そのアプリでは、置き換えのないキーと同じに扱う。
+# アプリは、macOS ではバンドル ID、Windows では実行ファイル名、Linux では GTK のプログラム名で書く。大文字と小文字は区別しない。
+#send_except = []
 # 単独押し（#tap）とみなす、押してから離すまでの長さ（ミリ秒）。
 #tap_timeout_ms = 300
 

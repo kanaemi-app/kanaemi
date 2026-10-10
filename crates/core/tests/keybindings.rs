@@ -347,6 +347,60 @@ fn the_keys_sent_to_the_application_can_be_changed() {
 }
 
 #[test]
+fn keys_pass_on_as_they_are_in_an_application_keys_are_not_sent_to() {
+    let mut t = T::with_config(Config {
+        send_except: vec!["com.example.Terminal".to_owned()],
+        ..config()
+    });
+    t.core.set_application("com.example.terminal");
+    let out = t.ctrl('h');
+    assert!(!out.consumed, "the name is matched ignoring case");
+    assert_eq!(out.send, None);
+    t.core.set_application("com.example.Editor");
+    assert!(t.ctrl('h').send.is_some());
+}
+
+#[test]
+fn a_key_in_an_application_keys_are_not_sent_to_works_as_if_not_replaced() {
+    let replacing = |except: &[&str]| {
+        let mut bindings = Bindings::default();
+        bindings.application.push(kanaemi_core::Remap {
+            from: Chord {
+                key: Key::Char('a'),
+                mods: Modifiers::default(),
+            },
+            to: Chord {
+                key: Key::Left,
+                mods: Modifiers::default(),
+            },
+        });
+        let mut t = T::with_config(Config {
+            bindings,
+            send_except: except.iter().map(|&app| app.to_owned()).collect(),
+            ..config()
+        });
+        t.core.set_application("com.example.Terminal");
+        t.kana();
+        t
+    };
+    let mut plain = T::new();
+    plain.kana();
+    let unreplaced = plain.ch('a');
+    let out = replacing(&["com.example.Terminal"]).ch('a');
+    assert_eq!(
+        (out.consumed, out.send, out.commit, out.preedit),
+        (
+            unreplaced.consumed,
+            None,
+            unreplaced.commit,
+            unreplaced.preedit
+        ),
+        "typed as kana, as if not replaced"
+    );
+    assert!(replacing(&[]).ch('a').send.is_some());
+}
+
+#[test]
 fn ctrl_n_converts_a_reading_but_types_no_space_in_the_text_to_register() {
     let mut t = reading_kanji();
     assert!(

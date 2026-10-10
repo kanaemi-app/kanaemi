@@ -442,6 +442,7 @@ impl KanaemiController {
                 .is_some_and(|active| std::ptr::eq(active, self))
         }) {
             self.make_active();
+            self.note_application(sender);
         }
         // A key let go before this one goes first, as it did on the keyboard,
         // so it was let go no later than this one was pressed: the main thread
@@ -501,9 +502,17 @@ impl KanaemiController {
         follow_hold();
     }
 
+    /// Tells the field which application `client` is in.
+    fn note_application(&self, client: Option<&AnyObject>) {
+        if let Some(app) = client.and_then(bundle_identifier) {
+            self.ivars().field.borrow_mut().set_application(app);
+        }
+    }
+
     fn activate(&self, sender: Option<&AnyObject>) {
         self.make_active();
         secure_input::check();
+        self.note_application(sender);
         // macOS turns input methods off in a secure field, so a field the
         // IME sees is never a password field.
         self.dispatch(Event::FocusIn { password: false }, sender);
@@ -665,6 +674,12 @@ fn hide_candidates() {
             unsafe { panel.hide() };
         }
     });
+}
+
+/// The bundle identifier of the application `client` is in.
+fn bundle_identifier(client: &AnyObject) -> Option<String> {
+    let id: Option<Retained<NSString>> = unsafe { msg_send![client, bundleIdentifier] };
+    id.map(|id| id.to_string())
 }
 
 /// Posts `chord` as a key press and release for `purpose`, kept until it

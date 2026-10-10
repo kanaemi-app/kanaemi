@@ -239,6 +239,16 @@ fn modifiers_that_commit_and_pass_while_composing() {
 }
 
 #[test]
+fn applications_the_keys_are_not_sent_in_replace_the_shipped_ones() {
+    let (settings, problems) = load("[keys]\nsend_except = [\"com.example.Terminal\"]");
+    assert_eq!(problems, Vec::<String>::new());
+    assert_eq!(settings.config.send_except, ["com.example.Terminal"]);
+    let (settings, problems) = load("[keys]\nsend_except = [1]");
+    assert_eq!(problems, ["keys.send_except"]);
+    assert_eq!(settings.config.send_except, defaults().send_except);
+}
+
+#[test]
 fn dictionaries_are_listed_in_order() {
     let dir = Path::new("/base");
     let (settings, problems) = load_in("dictionaries = [\"a.tsv\", \"custom\", \"b.tsv\"]", dir);
@@ -867,7 +877,13 @@ const PLACES: &[(&str, &[&str])] = &[
     ("functions", &["disabled", "unknown"]),
     (
         "keys",
-        &["pass_while_composing", "tap_timeout_ms", "kana", "unknown"],
+        &[
+            "pass_while_composing",
+            "send_except",
+            "tap_timeout_ms",
+            "kana",
+            "unknown",
+        ],
     ),
     ("keys.kana", BINDING_KEYS),
     ("keys.reading", BINDING_KEYS),
@@ -892,6 +908,7 @@ const VALUES: &[&str] = &[
     "[\"custom\"]", "[\"builtin:date\"]", "[\"builtin:unknown\"]", "[\"../x.tsv\"]",
     "[\"/x.tsv\"]", "[\"sub/a.tsv\"]", "[\"custom\", \"custom\"]", "[\"hepburn\", \"azik\"]",
     "[\"unknown\"]", "[\"cmd\", \"ctrl\", \"alt\"]", "[\"shift\"]", "[1]", "{ a = 1 }",
+    "[\"com.mitchellh.ghostty\", \"WindowsTerminal.exe\"]",
 ];
 
 fn settings_text() -> impl Strategy<Value = String> {
