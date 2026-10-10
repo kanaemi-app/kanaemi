@@ -484,6 +484,19 @@ fn keys_pass_on_as_they_are_in_an_application_keys_are_not_sent_to() {
 }
 
 #[test]
+fn keys_pass_on_as_they_are_where_the_host_cannot_send_them() {
+    let mut t = T::new();
+    t.core.set_sends_keys(false);
+    let out = t.ctrl('m');
+    assert!(!out.consumed);
+    assert_eq!(out.send, None);
+    t.core.set_application("com.example.Editor");
+    assert_eq!(t.ctrl('m').send, None, "whatever the application");
+    t.core.set_sends_keys(true);
+    assert!(t.ctrl('m').send.is_some());
+}
+
+#[test]
 fn a_key_in_an_application_keys_are_not_sent_to_works_as_if_not_replaced() {
     let replacing = |except: &[&str]| {
         let mut bindings = Bindings::default();
