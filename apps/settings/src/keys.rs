@@ -13,6 +13,7 @@ use crate::Ctx;
 use crate::complete::KeyInput;
 use crate::icons::{self, Icon};
 use crate::intents::{self, Change, GROUPS, Intent};
+use crate::send_except::SendExcept;
 
 /// The modifiers held with a recorded key.
 #[derive(Clone, Copy, Default)]
@@ -375,6 +376,7 @@ pub fn Keys() -> Element {
                 "やりたいことごとに、使うキーを決めます。キーは、そのことが働くどの場面でも同じように使えます。場面ごとに分けて決めたいときは「アドバンスド」で。キーをクリックすると変えられ、× で外せます。点線のキーは、一部の場面にだけ割り当ててあるもので、その場面を添えて示します。"
             }
             SimpleKeys { current }
+            SendExcept { apps: config.send_except }
         };
     }
     let modes = [
@@ -431,6 +433,7 @@ pub fn Keys() -> Element {
                 filter: filter(),
             }
         }
+        SendExcept { apps: config.send_except }
     }
 }
 

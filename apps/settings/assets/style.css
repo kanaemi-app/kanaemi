@@ -302,6 +302,31 @@ button:disabled { opacity: 0.35; }
   border: 1px solid var(--control-border);
   border-radius: 8px;
 }
+/* Applications, by their icons and names */
+.app-row { display: flex; align-items: center; gap: 12px; }
+.app-icon { width: 32px; height: 32px; flex-shrink: 0; }
+.app-icon.blank { display: inline-block; border-radius: 7px; background: var(--control); }
+.app-id { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.icon-button { border: none; background: none; color: var(--muted); padding: 4px; }
+.icon-button:hover { color: var(--text); }
+.row .none { color: var(--muted); font-size: 13px; }
+.app-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  text-align: left;
+}
+.app-choice:hover:not(:disabled) { background: var(--control); }
+.app-choice:disabled { opacity: 0.5; cursor: default; }
+.app-choice-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.modal-footer { display: flex; justify-content: flex-end; margin-top: 12px; }
+.except-add { display: flex; gap: 8px; margin-top: 10px; }
+.except-add input { flex: 1; min-width: 0; }
 .chip button { border: none !important; box-shadow: none !important; background: none !important; padding: 0 6px !important; color: var(--muted); }
 
 

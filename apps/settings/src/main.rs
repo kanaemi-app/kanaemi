@@ -19,6 +19,7 @@ use dioxus::desktop::{Config, LogicalSize, WindowBuilder, WindowEvent, use_wry_e
 use dioxus::prelude::*;
 use kanaemi_config::Value;
 
+mod apps;
 mod cache;
 mod checks;
 mod complete;
@@ -33,6 +34,7 @@ mod messages;
 mod official;
 mod pages;
 mod reorder;
+mod send_except;
 mod store;
 
 use icons::Icon;
