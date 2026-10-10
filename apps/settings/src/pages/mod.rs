@@ -80,11 +80,11 @@ fn files_with(dir: &Path, extensions: &[&str]) -> Vec<String> {
     names
 }
 
-/// The description on a file's first line, read without reading the rest:
-/// a dictionary can be large.
-fn file_description(path: &Path) -> Option<String> {
+/// The description on a text file's first line, read without reading the
+/// rest: a dictionary can be large. A binary file has none.
+fn text_description(path: &Path) -> Option<String> {
     if is_binary(path) {
-        return Some("バイナリの辞書".to_owned());
+        return None;
     }
     let mut first = String::new();
     BufReader::new(fs::File::open(path).ok()?)
