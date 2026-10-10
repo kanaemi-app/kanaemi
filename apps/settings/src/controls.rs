@@ -1,6 +1,8 @@
 //! Controls shared by the pages. Each setting that is off its default offers
 //! the way back, naming the default it goes back to.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use dioxus::prelude::*;
 
 use crate::Ctx;
@@ -18,6 +20,207 @@ pub fn Filter(placeholder: String, oninput: EventHandler<String>) -> Element {
             // typing writes back an older value, and written while an IME is
             // composing in it, that ends the composing.
             oninput: move |e| oninput.call(e.value()),
+        }
+    }
+}
+
+/// One of the choices a [`Select`] offers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice {
+    pub value: String,
+    pub label: String,
+    /// What the choice is, under its name in the open menu.
+    pub description: Option<String>,
+}
+
+/// A choice among a few: a button the size of the others beside it, opening
+/// into a menu that says what each choice is. Drawn by the page, as the OS
+/// menu of a `select` keeps its own height and has no room to explain.
+#[component]
+pub fn Select(choices: Vec<Choice>, value: String, onchange: EventHandler<String>) -> Element {
+    // The room above and below the button as the menu opened. The page
+    // cannot draw past the window, so the menu opens to the side with the
+    // more room and scrolls within it.
+    let mut room = use_signal(|| None::<Room>);
+    let mut active = use_signal(|| 0);
+    let id = use_hook(|| {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        format!("select-{}", NEXT.fetch_add(1, Ordering::Relaxed))
+    });
+    let chosen = choices.iter().position(|c| c.value == value);
+    let label = chosen.map(|i| choices[i].label.clone()).unwrap_or_default();
+    let values: Vec<String> = choices.iter().map(|c| c.value.clone()).collect();
+    let open = move || room().is_some();
+    // Arrow keys move through a menu taller than the window without its
+    // scrolling, so the active choice is brought into view.
+    let reveal = {
+        let id = id.clone();
+        move |i: usize| {
+            document::eval(&format!(
+                "document.getElementById('{id}-{i}')?.scrollIntoView({{block: 'nearest'}})"
+            ));
+        }
+    };
+    let show = {
+        let id = id.clone();
+        move || {
+            active.set(chosen.unwrap_or(0));
+            let script = format!(
+                "const r = document.getElementById('{id}').getBoundingClientRect(); \
+                 return [r.top, r.bottom, window.innerWidth - r.right, r.width, window.innerHeight];"
+            );
+            spawn(async move {
+                let Ok((top, bottom, right, width, height)) = document::eval(&script)
+                    .join::<(f64, f64, f64, f64, f64)>()
+                    .await
+                else {
+                    return;
+                };
+                room.set(Some(Room {
+                    top,
+                    bottom,
+                    right,
+                    width,
+                    height,
+                }));
+            });
+        }
+    };
+    let menu_style = room().map(|room| room.style()).unwrap_or_default();
+    rsx! {
+        div {
+            id,
+            class: "select",
+            onkeydown: {
+                let mut show = show.clone();
+                move |e: KeyboardEvent| {
+                    let count = values.len();
+                    if count == 0 {
+                        return;
+                    }
+                    match e.key() {
+                        Key::ArrowDown | Key::ArrowUp if !open() => show(),
+                        Key::ArrowDown | Key::ArrowUp => {
+                            let next = if e.key() == Key::ArrowUp {
+                                (active() + count - 1) % count
+                            } else {
+                                (active() + 1) % count
+                            };
+                            active.set(next);
+                            reveal(next);
+                        }
+                        Key::Enter if open() => {
+                            onchange.call(values[active()].clone());
+                            room.set(None);
+                        }
+                        // Kept from a modal around it, which Escape closes.
+                        Key::Escape if open() => room.set(None),
+                        _ => return,
+                    }
+                    e.prevent_default();
+                    e.stop_propagation();
+                }
+            },
+            button {
+                class: "select-button",
+                "aria-haspopup": "listbox",
+                "aria-expanded": open(),
+                // Tab to another control leaves the menu behind otherwise.
+                onblur: move |_| room.set(None),
+                onclick: {
+                    let mut show = show.clone();
+                    move |_| {
+                        if open() {
+                            room.set(None);
+                        } else {
+                            show();
+                        }
+                    }
+                },
+                span { "{label}" }
+                Icon { paths: icons::SELECTOR }
+            }
+            if open() {
+                div {
+                    class: "select-backdrop",
+                    onclick: move |_| room.set(None),
+                    // The page would scroll away under a menu placed on the window.
+                    onwheel: move |_| room.set(None),
+                }
+                div {
+                    class: "select-menu",
+                    role: "listbox",
+                    style: "{menu_style}",
+                    // Keeps the focus on the button, whose losing it closes the menu.
+                    onmousedown: move |e| e.prevent_default(),
+                    for (i , choice) in choices.into_iter().enumerate() {
+                        div {
+                            key: "{choice.value}",
+                            id: "{id}-{i}",
+                            class: if i == active() { "select-choice active" } else { "select-choice" },
+                            role: "option",
+                            "aria-selected": chosen == Some(i),
+                            onmouseenter: move |_| active.set(i),
+                            onclick: {
+                                let value = choice.value.clone();
+                                move |_| {
+                                    onchange.call(value.clone());
+                                    room.set(None);
+                                }
+                            },
+                            span { class: "select-check",
+                                if chosen == Some(i) {
+                                    Icon { paths: icons::CHECK }
+                                }
+                            }
+                            span { class: "select-choice-text",
+                                span { class: "label", "{choice.label}" }
+                                if let Some(description) = choice.description {
+                                    span { class: "description", "{description}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Where a [`Select`]'s button is in the window as its menu opens, in
+/// pixels: its top and bottom, the room right of it, its width, and the window's
+/// height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Room {
+    top: f64,
+    bottom: f64,
+    right: f64,
+    width: f64,
+    height: f64,
+}
+
+impl Room {
+    /// The menu placed on the window rather than in the scrolled page, so
+    /// only the window's edges bound it: right-aligned with the button,
+    /// below it unless that is short of a menu of a few choices and above
+    /// has more, and no taller than the side it opens to.
+    fn style(self) -> String {
+        const ENOUGH: f64 = 320.0;
+        const GAP: f64 = 4.0;
+        const MARGIN: f64 = 8.0;
+        let (above, below) = (self.top, self.height - self.bottom);
+        let upward = below < ENOUGH && above > below;
+        let side = if upward { above } else { below };
+        let max = (side - GAP - MARGIN).max(80.0);
+        let (right, width) = (self.right, self.width);
+        if upward {
+            let from_bottom = self.height - self.top + GAP;
+            format!(
+                "right: {right}px; min-width: {width}px; bottom: {from_bottom}px; max-height: {max}px;"
+            )
+        } else {
+            let top = self.bottom + GAP;
+            format!("right: {right}px; min-width: {width}px; top: {top}px; max-height: {max}px;")
         }
     }
 }
