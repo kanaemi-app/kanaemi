@@ -25,6 +25,7 @@ use windows::core::*;
 use crate::control::Tracker;
 use crate::focus::{self, Change};
 use crate::keys::{self, Keys, RawKey};
+use crate::listing::Page;
 use crate::per_thread::PerThread;
 use crate::pipe::{self, PipeSink};
 use crate::ui_element::{CandidateList, Listed};
@@ -172,7 +173,7 @@ struct Edit {
     commit: Option<String>,
     preedit: String,
     /// The page of candidates to list, with the selected one.
-    candidates: Option<(Vec<String>, usize)>,
+    candidates: Option<Page>,
     /// The mode to show near the caret, after it changed.
     indicator: Option<Mode>,
 }
@@ -338,12 +339,11 @@ impl Session {
         }
         let owner = self.owner();
         match edit.candidates {
-            Some((items, selected)) => {
+            Some(page) => {
                 let at = self.place(ec, owner);
                 {
                     let mut listed = self.state.listed.borrow_mut();
-                    listed.items = items;
-                    listed.selected = selected;
+                    listed.page = page;
                     listed.at = at;
                     listed.owner = owner;
                 }
@@ -557,10 +557,7 @@ impl State {
         let edit = Edit {
             commit: output.commit.clone(),
             preedit: output.preedit.clone(),
-            candidates: output.candidates.as_ref().map(|view| {
-                let items = view.items.iter().map(|c| c.surface.clone()).collect();
-                (items, view.selected)
-            }),
+            candidates: output.candidates.as_ref().map(Page::new),
             indicator: output.indicator,
         };
         self.edits.borrow_mut().push_back((context.clone(), edit));

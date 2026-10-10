@@ -14,6 +14,8 @@ pub const VK_ESCAPE: u16 = 0x1b;
 pub const VK_CONVERT: u16 = 0x1c;
 pub const VK_NONCONVERT: u16 = 0x1d;
 pub const VK_SPACE: u16 = 0x20;
+pub const VK_PRIOR: u16 = 0x21;
+pub const VK_NEXT: u16 = 0x22;
 pub const VK_END: u16 = 0x23;
 pub const VK_HOME: u16 = 0x24;
 pub const VK_LEFT: u16 = 0x25;
@@ -150,7 +152,7 @@ fn sided(raw: &RawKey) -> Option<Key> {
 }
 
 /// The keys the core knows by name rather than by what they type.
-const NAMED: [(u16, Key); 16] = [
+const NAMED: [(u16, Key); 18] = [
     (VK_BACK, Key::Backspace),
     (VK_TAB, Key::Tab),
     (VK_RETURN, Key::Enter),
@@ -163,6 +165,8 @@ const NAMED: [(u16, Key); 16] = [
     (VK_DOWN, Key::Down),
     (VK_HOME, Key::Home),
     (VK_END, Key::End),
+    (VK_PRIOR, Key::PageUp),
+    (VK_NEXT, Key::PageDown),
     (VK_CONVERT, Key::Henkan),
     (VK_NONCONVERT, Key::Muhenkan),
     (VK_DBE_ALPHANUMERIC, Key::Eisu),
@@ -195,6 +199,8 @@ pub fn is_extended(vk: u16) -> bool {
             | VK_DOWN
             | VK_HOME
             | VK_END
+            | VK_PRIOR
+            | VK_NEXT
             | VK_DELETE
     )
 }
@@ -308,6 +314,8 @@ mod tests {
         assert_eq!(translate(&raw(0x74, true)).unwrap().key, Key::F(5));
         assert_eq!(translate(&raw(VK_CONVERT, true)).unwrap().key, Key::Henkan);
         assert_eq!(translate(&raw(0x2d, true)).unwrap().key, Key::Other);
+        assert_eq!(translate(&raw(VK_PRIOR, true)).unwrap().key, Key::PageUp);
+        assert_eq!(translate(&raw(VK_NEXT, true)).unwrap().key, Key::PageDown);
     }
 
     #[test]

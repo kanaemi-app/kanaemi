@@ -20,6 +20,7 @@ mod input_scope;
 mod keys;
 #[cfg(windows)]
 pub mod link;
+mod listing;
 mod per_thread;
 #[cfg(windows)]
 pub mod pipe;
