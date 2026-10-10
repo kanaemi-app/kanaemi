@@ -128,8 +128,8 @@ pub fn Dictionaries() -> Element {
             },
             None => rsx! {},
         }
-        OtherDictionaries { folder: folder.clone(), custom: custom_path.clone() }
         OfficialDictionaries { chosen: chosen_for_official }
+        OtherDictionaries { folder: folder.clone(), custom: custom_path.clone() }
         HiddenWords { custom: custom_path }
         PickRecord { path: store_dir.join(SELECTIONS_FILE) }
     }
