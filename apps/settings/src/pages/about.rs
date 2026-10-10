@@ -28,12 +28,7 @@ fn LogView(path: PathBuf, on_close: EventHandler<()>) -> Element {
                         button { onclick: move |_| on_close.call(()), "閉じる" }
                     }
                 }
-                input {
-                    class: "filter",
-                    placeholder: "絞り込む…",
-                    value: "{filter}",
-                    oninput: move |e| filter.set(e.value()),
-                }
+                Filter { placeholder: "絞り込む…", oninput: move |text| filter.set(text) }
                 div { class: "modal-body",
                     if lines.is_empty() {
                         p { class: "description", "記録はありません" }

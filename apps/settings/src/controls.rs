@@ -7,6 +7,21 @@ use crate::Ctx;
 use crate::icons::{self, Icon};
 use crate::reorder::{drop_side, moved};
 
+/// A field to narrow a list by what is typed, starting empty.
+#[component]
+pub fn Filter(placeholder: String, oninput: EventHandler<String>) -> Element {
+    rsx! {
+        input {
+            class: "filter",
+            placeholder,
+            // Never given the value it holds: a render that lags behind the
+            // typing writes back an older value, and written while an IME is
+            // composing in it, that ends the composing.
+            oninput: move |e| oninput.call(e.value()),
+        }
+    }
+}
+
 /// Settings that belong together, in one rounded box under a heading.
 #[component]
 pub fn Group(
