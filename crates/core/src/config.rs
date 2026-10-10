@@ -171,6 +171,78 @@ pub struct Remap {
     pub to: Chord,
 }
 
+/// An OS whose keys Kanaemi knows, for remaps that differ between them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Os {
+    MacOs,
+    Windows,
+    Linux,
+}
+
+impl Os {
+    pub const ALL: [Os; 3] = [Os::MacOs, Os::Windows, Os::Linux];
+
+    /// The OS this is built for; `None` for one not in [`Os::ALL`].
+    pub const RUNNING: Option<Os> = if cfg!(target_os = "macos") {
+        Some(Os::MacOs)
+    } else if cfg!(target_os = "windows") {
+        Some(Os::Windows)
+    } else if cfg!(target_os = "linux") {
+        Some(Os::Linux)
+    } else {
+        None
+    };
+}
+
+/// The keys Kanaemi sends to the application as other keys on `os`: those
+/// of every OS, then that OS's own. `None`, an OS not in [`Os::ALL`], gets
+/// the Emacs keys as Windows and Linux do.
+pub fn default_remaps(os: Option<Os>) -> Vec<Remap> {
+    let plain = Modifiers::default();
+    let ctrl = Modifiers {
+        ctrl: true,
+        ..plain
+    };
+    let remap = |from, to| Remap {
+        from: Chord {
+            key: from,
+            mods: ctrl,
+        },
+        to,
+    };
+    let emacs = |c, to| {
+        remap(
+            Key::Char(c),
+            Chord {
+                key: to,
+                mods: plain,
+            },
+        )
+    };
+    let every = [emacs('m', Key::Enter)];
+    let own = match os {
+        // Cocoa text fields move and delete with the other Emacs keys
+        // themselves, where Home and End would scroll the document instead.
+        // Ctrl deletes a word on the other OSes, Option here.
+        Some(Os::MacOs) => {
+            let alt = Modifiers { alt: true, ..plain };
+            let word = |key| remap(key, Chord { key, mods: alt });
+            vec![word(Key::Backspace), word(Key::Delete)]
+        }
+        Some(Os::Windows | Os::Linux) | None => vec![
+            emacs('h', Key::Backspace),
+            emacs('d', Key::Delete),
+            emacs('b', Key::Left),
+            emacs('f', Key::Right),
+            emacs('a', Key::Home),
+            emacs('e', Key::End),
+            emacs('n', Key::Down),
+            emacs('p', Key::Up),
+        ],
+    };
+    [&every[..], &own].concat()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bindings {
     pub reading: Vec<Binding>,
@@ -315,16 +387,6 @@ impl Default for Bindings {
         let picking: Vec<Binding> = (0..PAGE_LEN as u8)
             .map(|n| key(Key::Char(char::from(b'1' + n)), plain, Pick(n)))
             .collect();
-        let remap = |c, to| Remap {
-            from: Chord {
-                key: Key::Char(c),
-                mods: ctrl,
-            },
-            to: Chord {
-                key: to,
-                mods: plain,
-            },
-        };
         Self {
             reading: [
                 &choosing[..],
@@ -392,17 +454,7 @@ impl Default for Bindings {
             ]
             .concat(),
             abc: [&to_kana[..], &[on]].concat(),
-            application: vec![
-                remap('h', Key::Backspace),
-                remap('d', Key::Delete),
-                remap('b', Key::Left),
-                remap('f', Key::Right),
-                remap('a', Key::Home),
-                remap('e', Key::End),
-                remap('n', Key::Down),
-                remap('p', Key::Up),
-                remap('m', Key::Enter),
-            ],
+            application: default_remaps(Os::RUNNING),
         }
     }
 }
