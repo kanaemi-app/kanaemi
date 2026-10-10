@@ -982,6 +982,25 @@ mod tests {
     }
 
     #[test]
+    fn an_skk_implementation_is_written_for_in_the_encoding_it_reads() {
+        let dir = temp_dir("skk-export-encoding");
+        let custom = dir.join("custom.tsv");
+        fs::write(&custom, "きしゃ\t記者\n").unwrap();
+        let ddskk = dir.join("ddskk");
+        export_dictionary(&custom, &ddskk, DictionaryFormat::Skk(SkkSource::Ddskk)).unwrap();
+        let bytes = fs::read(&ddskk).unwrap();
+        assert!(bytes.starts_with(b";; -*- coding: euc-jp -*-\n"));
+        assert!(String::from_utf8(bytes).is_err(), "EUC-JP, not UTF-8");
+        let macskk = dir.join("macskk");
+        export_dictionary(&custom, &macskk, DictionaryFormat::Skk(SkkSource::MacSkk)).unwrap();
+        assert!(
+            fs::read_to_string(&macskk)
+                .unwrap()
+                .contains("きしゃ /記者/\n")
+        );
+    }
+
+    #[test]
     fn an_skk_dictionary_is_imported_as_text_under_its_name() {
         let dir = temp_dir("skk");
         let source = dir.join("SKK-JISYO.test");
