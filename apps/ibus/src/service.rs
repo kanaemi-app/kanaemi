@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -280,16 +280,34 @@ async fn emit(
                 let body = (ibus::preedit(&text), cursor as u32, visible, 0u32);
                 send(connection, path, "UpdatePreeditText", &body).await
             }
-            Signal::Candidates(items, selected) => {
-                if indicator {
-                    // The candidates take the place by the caret.
-                    INDICATOR.fetch_add(1, Ordering::Relaxed);
-                    let _ = send(connection, path, "HideAuxiliaryText", &()).await;
+            Signal::Candidates(items, selected, aside) => {
+                // The candidates take the place by the caret.
+                INDICATOR.fetch_add(1, Ordering::Relaxed);
+                let shown = match aside {
+                    Some(aside) => {
+                        ASIDE.store(true, Ordering::Relaxed);
+                        let body = (ibus::text(&aside), true);
+                        send(connection, path, "UpdateAuxiliaryText", &body).await
+                    }
+                    None if indicator || ASIDE.swap(false, Ordering::Relaxed) => {
+                        send(connection, path, "HideAuxiliaryText", &()).await
+                    }
+                    None => Ok(()),
+                };
+                if let Err(error) = shown {
+                    tracing::warn!(%error, "IBus not told");
                 }
                 let body = (ibus::lookup_table(&items, selected), true);
                 send(connection, path, "UpdateLookupTable", &body).await
             }
-            Signal::HideCandidates => send(connection, path, "HideLookupTable", &()).await,
+            Signal::HideCandidates => {
+                // What the auxiliary text told of them goes with them; the
+                // mode shown there for a moment stays.
+                if ASIDE.swap(false, Ordering::Relaxed) {
+                    let _ = send(connection, path, "HideAuxiliaryText", &()).await;
+                }
+                send(connection, path, "HideLookupTable", &()).await
+            }
             Signal::Forward(keyval, state) => {
                 let press = (keyval, 0u32, state);
                 let release = (keyval, 0u32, state | RELEASE_MASK);
@@ -325,6 +343,8 @@ where
         .await
 }
 
+/// Whether the auxiliary text tells of the candidates shown.
+static ASIDE: AtomicBool = AtomicBool::new(false);
 /// Counts the times the mode was shown, so only the latest hides it.
 static INDICATOR: AtomicU64 = AtomicU64::new(0);
 /// How long the mode shows by the caret.
