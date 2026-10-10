@@ -21,6 +21,7 @@ const CONVERTING: &[&str] = &["reading", "candidates"];
 const EDITING: &[&str] = &["reading", "registration"];
 const COMPLETION: &str = "completion";
 const COMPLETING: &[&str] = &["reading", COMPLETION, "candidates"];
+const LISTING: &[&str] = &[COMPLETION, "candidates"];
 
 /// The intents, by the group they are shown in.
 pub const GROUPS: &[(&str, &[Intent])] = &[
@@ -40,22 +41,34 @@ pub const GROUPS: &[(&str, &[Intent])] = &[
                 scenes: CONVERTING,
             },
             Intent {
-                title: "前の候補",
+                title: "変換する・前の候補",
                 note: "読みの途中では、変換して最後の候補を選びます",
                 action: Action::Previous,
                 scenes: CONVERTING,
             },
             Intent {
-                title: "読みを補完する",
+                title: "補完する・次の読み",
                 note: "読みを、それで始まるより長い読みに置き換えます。続けて押すと次の読みにします。候補を選んでいるときは、読みに戻して補完を続けます",
                 action: Action::Complete,
                 scenes: COMPLETING,
             },
             Intent {
-                title: "読みを逆向きに補完する",
+                title: "補完する・前の読み",
                 note: "",
                 action: Action::CompletePrevious,
                 scenes: COMPLETING,
+            },
+            Intent {
+                title: "次のページ",
+                note: "候補や補完する読みの一覧が出ているとき、次のページの最初を選びます。最後のページの次は、候補では最初のページ、補完では打ったままの読みです",
+                action: Action::NextPage,
+                scenes: LISTING,
+            },
+            Intent {
+                title: "前のページ",
+                note: "",
+                action: Action::PreviousPage,
+                scenes: LISTING,
             },
             Intent {
                 title: "確定する",
@@ -442,6 +455,33 @@ mod tests {
             keys(Action::UndoCommit).map(|k| k.everywhere),
             Some(vec!["shift+backspace".to_owned()])
         );
+    }
+
+    #[test]
+    fn moving_through_the_list_is_shown_candidates_then_readings_then_pages_with_its_shipped_keys()
+    {
+        let shipped = Bindings::default();
+        let (_, group) = GROUPS
+            .iter()
+            .find(|(_, group)| group.iter().any(|i| i.action == Action::Next))
+            .unwrap();
+        let place = |action| group.iter().position(|i| i.action == action).unwrap();
+        let order = [
+            Action::Next,
+            Action::Previous,
+            Action::Complete,
+            Action::CompletePrevious,
+            Action::NextPage,
+            Action::PreviousPage,
+        ];
+        let places: Vec<usize> = order.iter().map(|&action| place(action)).collect();
+        let first = places[0];
+        assert_eq!(places, (first..first + order.len()).collect::<Vec<_>>());
+        let keys = |action| group[place(action)].keys(&shipped).everywhere;
+        assert_eq!(keys(Action::NextPage), ["ctrl+n"]);
+        assert_eq!(keys(Action::PreviousPage), ["ctrl+p"]);
+        assert!(!keys(Action::Next).contains(&"ctrl+n".to_owned()));
+        assert!(!keys(Action::Previous).contains(&"ctrl+p".to_owned()));
     }
 
     #[test]

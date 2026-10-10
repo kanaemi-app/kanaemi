@@ -113,6 +113,9 @@ impl Learned {
     }
 }
 
+/// The dictionary every candidate of [`Fake`] comes from.
+pub const SOURCE: &str = "テストの辞書";
+
 #[derive(Clone, Default)]
 pub struct Fake {
     pub table: HashMap<&'static str, Vec<&'static str>>,
@@ -130,6 +133,8 @@ impl Converter for Fake {
                 .filter(|s| !learned.deleted.iter().any(|(r, d)| r == reading && d == *s))
                 .map(|s| Candidate {
                     surface: s.to_string(),
+                    source: Some(SOURCE.to_owned()),
+                    preview: None,
                 })
                 .collect()
         })

@@ -1,9 +1,13 @@
 //! The candidate window: a popup beside the composition listing the page of
-//! candidates, numbered from 1, with the selected one highlighted. It never
-//! takes the focus from the application.
+//! candidates, numbered from 1, with the selected one highlighted. Beside
+//! each candidate, smaller and greyed, is the dictionary it came from or,
+//! for a reading to complete with, its first candidate; a highlighted
+//! reading's other candidates fill a pane right of the list. It never takes
+//! the focus from the application.
 
 use std::cell::RefCell;
 
+use crate::listing::{self, Layout, PADDING, Page, Widths};
 use crate::popup::{self, Popup};
 
 use windows::Win32::Foundation::*;
@@ -12,22 +16,15 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
 const CLASS: PCWSTR = w!("KanaemiCandidates");
-/// Space around the rows and between a number and its candidate, in pixels.
-const PADDING: i32 = 6;
 
 /// What a click on a candidate calls, with its position on the page.
 type Picked = Box<dyn Fn(usize)>;
 
-#[derive(Default)]
-struct Shown {
-    items: Vec<String>,
-    selected: usize,
-}
-
 thread_local! {
     static POPUP: Popup = const { Popup::new() };
-    static SHOWN: RefCell<Shown> = RefCell::new(Shown::default());
+    static SHOWN: RefCell<Page> = RefCell::new(Page::default());
     static FONT: RefCell<Option<HFONT>> = const { RefCell::new(None) };
+    static SMALL_FONT: RefCell<Option<HFONT>> = const { RefCell::new(None) };
     static PICKED: RefCell<Option<Picked>> = const { RefCell::new(None) };
 }
 
@@ -37,14 +34,16 @@ pub fn on_pick(picked: impl Fn(usize) + 'static) {
     PICKED.set(Some(Box::new(picked)));
 }
 
-/// Shows `items` below `at`, a screen rectangle of the composition, in a
+/// Shows `page` below `at`, a screen rectangle of the composition, in a
 /// window `owner` owns, the application's.
-pub fn show(items: Vec<String>, selected: usize, at: RECT, owner: Option<HWND>) {
+pub fn show(page: Page, at: RECT, owner: Option<HWND>) {
     let Some(window) = POPUP.with(|popup| popup.owned_by(owner, create)) else {
         return;
     };
-    SHOWN.set(Shown { items, selected });
-    let (width, height) = size(window);
+    SHOWN.set(page);
+    let laid = measure(window);
+    let border = 2;
+    let (width, height) = (laid.width + border, laid.height + border);
     let (left, top) = popup::position(at, (width, height), 0);
     unsafe {
         let _ = SetWindowPos(
@@ -98,138 +97,194 @@ fn create(owner: Option<HWND>) -> Result<HWND> {
 }
 
 /// The system's message font, which covers Japanese.
+fn message_font() -> Option<LOGFONTW> {
+    let mut metrics = NONCLIENTMETRICSW {
+        cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
+        ..Default::default()
+    };
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETNONCLIENTMETRICS,
+            metrics.cbSize,
+            Some((&mut metrics as *mut NONCLIENTMETRICSW).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    }
+    .ok()?;
+    Some(metrics.lfMessageFont)
+}
+
+/// The font candidates are drawn in.
 pub(crate) fn font() -> HFONT {
     FONT.with_borrow_mut(|font| {
-        *font.get_or_insert_with(|| {
-            let mut metrics = NONCLIENTMETRICSW {
-                cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
-                ..Default::default()
-            };
-            let found = unsafe {
-                SystemParametersInfoW(
-                    SPI_GETNONCLIENTMETRICS,
-                    metrics.cbSize,
-                    Some((&mut metrics as *mut NONCLIENTMETRICSW).cast()),
-                    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-                )
-            };
-            if found.is_err() {
-                return HFONT(unsafe { GetStockObject(DEFAULT_GUI_FONT) }.0);
-            }
-            unsafe { CreateFontIndirectW(&metrics.lfMessageFont) }
+        *font.get_or_insert_with(|| match message_font() {
+            Some(logfont) => unsafe { CreateFontIndirectW(&logfont) },
+            None => HFONT(unsafe { GetStockObject(DEFAULT_GUI_FONT) }.0),
         })
     })
 }
 
-fn rows() -> Vec<(String, String)> {
-    SHOWN.with_borrow(|shown| {
-        shown
-            .items
-            .iter()
-            .enumerate()
-            .map(|(i, item)| (format!("{}", i + 1), item.clone()))
-            .collect()
+/// The smaller font of what is beside a candidate.
+fn small_font() -> HFONT {
+    SMALL_FONT.with_borrow_mut(|font| {
+        *font.get_or_insert_with(|| match message_font() {
+            Some(mut logfont) => {
+                logfont.lfHeight = logfont.lfHeight * 5 / 6;
+                unsafe { CreateFontIndirectW(&logfont) }
+            }
+            None => HFONT(unsafe { GetStockObject(DEFAULT_GUI_FONT) }.0),
+        })
     })
 }
 
-/// The height of a row.
-fn line(dc: HDC) -> i32 {
-    extent(dc, "あ").cy + PADDING / 2
-}
-
-/// The row at `y` in the window, if a candidate is shown there.
-fn row_at(window: HWND, y: i32) -> Option<usize> {
-    let dc = unsafe { GetDC(Some(window)) };
-    let previous = unsafe { SelectObject(dc, font().into()) };
-    let line = line(dc);
-    unsafe {
-        SelectObject(dc, previous);
-        ReleaseDC(Some(window), dc);
-    }
-    let row = usize::try_from((y - PADDING / 2).div_euclid(line)).ok()?;
-    (row < SHOWN.with_borrow(|shown| shown.items.len())).then_some(row)
-}
-
-fn extent(dc: HDC, text: &str) -> SIZE {
+fn extent(dc: HDC, font: HFONT, text: &str) -> SIZE {
     let wide: Vec<u16> = text.encode_utf16().collect();
     let mut size = SIZE::default();
     unsafe {
+        let previous = SelectObject(dc, font.into());
         let _ = GetTextExtentPoint32W(dc, &wide, &mut size);
+        SelectObject(dc, previous);
     }
     size
 }
 
-/// The window's size for the rows shown, with the number column first.
-fn size(window: HWND) -> (i32, i32) {
+/// The height of a row.
+fn line(dc: HDC) -> i32 {
+    extent(dc, font(), "あ").cy + PADDING / 2
+}
+
+/// Lays out the page shown, measured in `window`.
+fn measure(window: HWND) -> Layout {
     let dc = unsafe { GetDC(Some(window)) };
-    let previous = unsafe { SelectObject(dc, font().into()) };
-    let rows = rows();
-    let number = rows
-        .iter()
-        .map(|(n, _)| extent(dc, n).cx)
-        .max()
-        .unwrap_or(0);
-    let text = rows
-        .iter()
-        .map(|(_, t)| extent(dc, t).cx)
-        .max()
-        .unwrap_or(0);
-    let line = line(dc);
+    let laid = SHOWN.with_borrow(|page| {
+        let widths: Vec<Widths> = page
+            .items
+            .iter()
+            .zip(&page.beside)
+            .enumerate()
+            .map(|(i, (item, beside))| Widths {
+                number: extent(dc, font(), &(i + 1).to_string()).cx,
+                surface: extent(dc, font(), item).cx,
+                beside: beside
+                    .as_deref()
+                    .map_or(0, |b| extent(dc, small_font(), b).cx),
+            })
+            .collect();
+        let pane = (!page.more.is_empty()).then(|| {
+            let widest = page
+                .more
+                .iter()
+                .map(|m| extent(dc, font(), m).cx)
+                .max()
+                .unwrap_or(0);
+            (page.more.len(), widest)
+        });
+        let footer = page
+            .footer
+            .as_deref()
+            .map(|footer| extent(dc, small_font(), footer).cx);
+        listing::layout(&widths, line(dc), pane, footer)
+    });
+    unsafe { ReleaseDC(Some(window), dc) };
+    laid
+}
+
+/// Draws `text` within `width` from `(x, top)`, its end cut with an ellipsis
+/// when it is wider.
+fn text_out(dc: HDC, text: &str, x: i32, top: i32, width: i32, height: i32) {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut area = RECT {
+        left: x,
+        top,
+        right: x + width,
+        bottom: top + height,
+    };
     unsafe {
-        SelectObject(dc, previous);
-        ReleaseDC(Some(window), dc);
+        DrawTextW(
+            dc,
+            &mut wide,
+            &mut area,
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
+        );
     }
-    let border = 2;
-    (
-        number + text + PADDING * 3 + border,
-        line * rows.len() as i32 + PADDING + border,
-    )
 }
 
 fn paint(window: HWND) {
+    let laid = measure(window);
     let mut ps = PAINTSTRUCT::default();
     let dc = unsafe { BeginPaint(window, &mut ps) };
-    let previous = unsafe { SelectObject(dc, font().into()) };
     let mut client = RECT::default();
     unsafe {
         let _ = GetClientRect(window, &mut client);
         FillRect(dc, &client, GetSysColorBrush(COLOR_WINDOW));
         SetBkMode(dc, TRANSPARENT);
     }
-    let rows = rows();
-    let selected = SHOWN.with_borrow(|shown| shown.selected);
-    let number_width = rows
-        .iter()
-        .map(|(n, _)| extent(dc, n).cx)
-        .max()
-        .unwrap_or(0);
     let line = line(dc);
-    for (i, (number, text)) in rows.iter().enumerate() {
-        let top = PADDING / 2 + line * i as i32;
-        let row = RECT {
-            left: 0,
-            top,
-            right: client.right,
-            bottom: top + line,
-        };
-        let (background, foreground) = if i == selected {
-            (COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT)
-        } else {
-            (COLOR_WINDOW, COLOR_WINDOWTEXT)
-        };
-        unsafe {
-            FillRect(dc, &row, GetSysColorBrush(background));
-            SetTextColor(dc, COLORREF(GetSysColor(foreground)));
-        }
-        for (x, text) in [(PADDING, number), (PADDING * 2 + number_width, text)] {
-            let wide: Vec<u16> = text.encode_utf16().collect();
+    SHOWN.with_borrow(|page| {
+        if let Some((x, width)) = laid.pane {
+            let pane = RECT {
+                left: x,
+                top: 0,
+                right: x + width,
+                bottom: client.bottom,
+            };
             unsafe {
-                let _ = TextOutW(dc, x, top + PADDING / 4, &wide);
+                FillRect(dc, &pane, GetSysColorBrush(COLOR_BTNFACE));
+                SetTextColor(dc, COLORREF(GetSysColor(COLOR_WINDOWTEXT)));
+                SelectObject(dc, font().into());
+            }
+            for (i, other) in page.more.iter().enumerate() {
+                let top = PADDING / 2 + line * i as i32;
+                text_out(dc, other, x + PADDING, top, width - PADDING * 2, line);
             }
         }
-    }
+        for (i, (item, beside)) in page.items.iter().zip(&page.beside).enumerate() {
+            let top = PADDING / 2 + line * i as i32;
+            let row = RECT {
+                left: 0,
+                top,
+                right: laid.list_width,
+                bottom: top + line,
+            };
+            let selected = i == page.selected;
+            let (background, foreground, muted) = if selected {
+                (COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HIGHLIGHTTEXT)
+            } else {
+                (COLOR_WINDOW, COLOR_WINDOWTEXT, COLOR_GRAYTEXT)
+            };
+            unsafe {
+                FillRect(dc, &row, GetSysColorBrush(background));
+                SetTextColor(dc, COLORREF(GetSysColor(foreground)));
+                SelectObject(dc, font().into());
+            }
+            let number = (i + 1).to_string();
+            text_out(
+                dc,
+                &number,
+                laid.number_x,
+                top,
+                laid.surface_x - laid.number_x,
+                line,
+            );
+            text_out(dc, item, laid.surface_x, top, laid.surface_width, line);
+            if let Some(beside) = beside {
+                unsafe {
+                    SetTextColor(dc, COLORREF(GetSysColor(muted)));
+                    SelectObject(dc, small_font().into());
+                }
+                text_out(dc, beside, laid.beside_x, top, laid.beside_width, line);
+            }
+        }
+        if let (Some((x, top)), Some(footer)) = (laid.footer, &page.footer) {
+            unsafe {
+                SetTextColor(dc, COLORREF(GetSysColor(COLOR_GRAYTEXT)));
+                SelectObject(dc, small_font().into());
+            }
+            text_out(dc, footer, x, top, laid.list_width - x, line);
+        }
+    });
     unsafe {
-        SelectObject(dc, previous);
+        SelectObject(dc, font().into());
         let _ = EndPaint(window, &ps);
     }
 }
@@ -247,9 +302,15 @@ extern "system" fn procedure(
             LRESULT(0)
         }
         WM_LBUTTONUP => {
+            let x = i32::from(lparam.0 as i16);
             let y = i32::from((lparam.0 >> 16) as i16);
             let _ = std::panic::catch_unwind(|| {
-                if let Some(row) = row_at(window, y) {
+                let laid = measure(window);
+                let dc = unsafe { GetDC(Some(window)) };
+                let line = line(dc);
+                unsafe { ReleaseDC(Some(window), dc) };
+                let rows = SHOWN.with_borrow(|page| page.items.len());
+                if let Some(row) = listing::row_at(x, y, rows, line, laid.list_width) {
                     PICKED.with_borrow(|picked| picked.as_ref().map(|picked| picked(row)));
                 }
             });

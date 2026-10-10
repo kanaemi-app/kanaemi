@@ -28,18 +28,16 @@ use objc2_core_graphics::{
     CGEvent, CGEventField, CGEventFlags, CGEventSource, CGEventSourceStateID, CGEventTapLocation,
 };
 use objc2_foundation::{
-    NSArray, NSAttributedString, NSBundle, NSDictionary, NSNotFound, NSNumber, NSProcessInfo,
-    NSRange, NSString, NSUInteger,
+    NSAttributedString, NSBundle, NSDictionary, NSNotFound, NSNumber, NSProcessInfo, NSRange,
+    NSString, NSUInteger,
 };
-use objc2_input_method_kit::{
-    IMKCandidates, IMKCandidatesSendServerKeyEventFirst, IMKInputController, IMKServer,
-    kIMKLocateCandidatesBelowHint, kIMKSingleColumnScrollingCandidatePanel,
-};
+use objc2_input_method_kit::{IMKInputController, IMKServer};
 
 use crate::keys::{Keys, POSTED_MARK, RawEvent, RawKind, key_to_send, utf16_offset};
 use crate::posted::{self, Posted, Purpose};
 use crate::{
-    accessibility, candidates, handled, indicator, input_monitoring, key_tap, secure_input,
+    accessibility, candidate_window, handled, indicator, input_monitoring, key_tap, meaning,
+    secure_input,
 };
 
 const CONNECTION_NAME: &str = "io.github.kanaemi-app.inputmethod.Kanaemi_Connection";
@@ -49,12 +47,9 @@ thread_local! {
     static PROFILE: RefCell<Option<Profile>> = const { RefCell::new(None) };
     /// The Shift keys are one keyboard's, whichever client has the focus.
     static KEYS: RefCell<Keys> = RefCell::new(Keys::default());
-    static CANDIDATES: RefCell<Option<Retained<IMKCandidates>>> = const { RefCell::new(None) };
     /// The controller of the field with the focus, for other programs to set
     /// the mode of.
     static ACTIVE: RefCell<Option<Retained<KanaemiController>>> = const { RefCell::new(None) };
-    /// The row the candidate panel highlights.
-    static PANEL_ROW: Cell<usize> = const { Cell::new(0) };
     /// Whether the keys down are to be looked at again soon.
     static WATCHING: Cell<bool> = const { Cell::new(false) };
     /// The keys posted to the application, whichever client has the focus.
@@ -267,7 +262,6 @@ fn new_field() -> Field {
 pub struct Ivars {
     field: RefCell<Field>,
     marked: Cell<bool>,
-    shown: RefCell<Vec<String>>,
 }
 
 define_class!(
@@ -288,7 +282,6 @@ define_class!(
             let this = this.set_ivars(Ivars {
                 field: RefCell::new(new_field()),
                 marked: Cell::new(false),
-                shown: RefCell::new(Vec::new()),
             });
             unsafe { msg_send![super(this), initWithServer: server, delegate: delegate, client: client] }
         }
@@ -417,19 +410,14 @@ define_class!(
             });
         }
 
-        #[unsafe(method_id(candidates:))]
-        fn candidates(&self, _sender: Option<&AnyObject>) -> Option<Retained<NSArray>> {
-            guarded(None, || {
-                let items: Vec<Retained<NSString>> =
-                    self.ivars().shown.borrow().iter().map(|s| NSString::from_str(s)).collect();
-                // SAFETY: an NSArray of NSString is an NSArray of objects.
-                Some(unsafe { Retained::cast_unchecked(NSArray::from_retained_slice(&items)) })
-            })
-        }
-
-        #[unsafe(method(candidateSelected:))]
-        fn candidate_selected(&self, candidate: Option<&NSAttributedString>) {
-            guarded((), || self.select(candidate));
+        #[unsafe(method(hidePalettes))]
+        fn hide_palettes(&self) {
+            guarded((), || {
+                // The candidate window is Kanaemi's own, unknown to Input
+                // Method Kit, which hides only the palettes it keeps.
+                candidate_window::hide();
+                let _: () = unsafe { msg_send![super(self), hidePalettes] };
+            });
         }
     }
 );
@@ -568,7 +556,7 @@ impl KanaemiController {
 
     fn deactivate(&self, sender: Option<&AnyObject>) {
         self.dispatch(Event::FocusOut, sender);
-        hide_candidates();
+        candidate_window::hide();
         // Another client may have been activated first.
         ACTIVE.with_borrow_mut(|active| {
             if active
@@ -579,16 +567,6 @@ impl KanaemiController {
                 key_tap::want(false);
             }
         });
-    }
-
-    fn select(&self, candidate: Option<&NSAttributedString>) {
-        let Some(candidate) = candidate else { return };
-        let picked = candidate.string().to_string();
-        let index = candidates::position(&self.ivars().shown.borrow(), &picked);
-        if let Some(index) = index {
-            let client: Option<Retained<AnyObject>> = unsafe { msg_send![self, client] };
-            self.dispatch(Event::Select(index), client.as_deref());
-        }
     }
 
     /// Feeds one event to the core and draws the result; returns whether the
@@ -661,8 +639,7 @@ impl KanaemiController {
                     set_marked_text(client, "", 0);
                 }
                 ivars.marked.set(false);
-                ivars.shown.borrow_mut().clear();
-                hide_candidates();
+                candidate_window::hide();
                 false
             }
         }
@@ -688,16 +665,8 @@ impl KanaemiController {
             ivars.marked.set(!output.preedit.is_empty());
         }
         match &output.candidates {
-            Some(view) => {
-                let shown = candidates::labels(&view.items);
-                let changed = *ivars.shown.borrow() != shown;
-                *ivars.shown.borrow_mut() = shown;
-                show_candidates(view.selected, changed);
-            }
-            None => {
-                ivars.shown.borrow_mut().clear();
-                hide_candidates();
-            }
+            Some(view) => candidate_window::show(view, client),
+            None => candidate_window::hide(),
         }
     }
 }
@@ -722,42 +691,6 @@ fn set_marked_text(client: &AnyObject, text: &str, cursor_utf16: usize) {
     let _: () = unsafe {
         msg_send![client, setMarkedText: &*text, selectionRange: selection, replacementRange: nowhere]
     };
-}
-
-fn show_candidates(selected: usize, changed: bool) {
-    CANDIDATES.with_borrow(|panel| {
-        let Some(panel) = panel else { return };
-        unsafe {
-            // Reloading moves the highlight back to the first row, so reload
-            // only when the list itself changed.
-            if changed || !panel.isVisible() {
-                panel.updateCandidates();
-                panel.show(kIMKLocateCandidatesBelowHint as NSUInteger);
-                PANEL_ROW.set(0);
-            }
-            // selectCandidateWithIdentifier: does not move the highlight, so
-            // step it the way the arrow keys would.
-            let row = PANEL_ROW.get();
-            let sender: Option<&AnyObject> = None;
-            for _ in row..selected {
-                let _: () = msg_send![&**panel, moveDown: sender];
-            }
-            for _ in selected..row {
-                let _: () = msg_send![&**panel, moveUp: sender];
-            }
-            PANEL_ROW.set(selected);
-        }
-    });
-}
-
-fn hide_candidates() {
-    CANDIDATES.with_borrow(|panel| {
-        if let Some(panel) = panel
-            && unsafe { panel.isVisible() }
-        {
-            unsafe { panel.hide() };
-        }
-    });
 }
 
 /// Whether `client` has no text selected, only a caret.
@@ -911,26 +844,10 @@ pub fn run() {
     }
     .expect("IMKServer could not be created");
 
-    let panel = unsafe {
-        IMKCandidates::initWithServer_panelType(
-            IMKCandidates::alloc(mtm),
-            Some(&server),
-            kIMKSingleColumnScrollingCandidatePanel as NSUInteger,
-        )
-    };
-    if let Some(panel) = &panel {
-        // Let the controller see Space and digits before the panel does.
-        let attributes = NSDictionary::from_retained_objects(
-            &[unsafe { IMKCandidatesSendServerKeyEventFirst }],
-            &[Retained::into_super(Retained::into_super(
-                NSNumber::new_bool(true),
-            ))],
-        );
-        // SAFETY: NSString keys and NSNumber values, as IMKCandidates expects.
-        let attributes: Retained<NSDictionary> = unsafe { Retained::cast_unchecked(attributes) };
-        unsafe { panel.setAttributes(Some(&attributes)) };
-    }
-    CANDIDATES.with_borrow_mut(|c| *c = panel);
+    candidate_window::on_pick(|index| guarded((), || tell_active(Event::Select(index))));
+    meaning::start(|surface, meaning| {
+        guarded((), || candidate_window::meaning_found(surface, meaning));
+    });
 
     tracing::info!(version = kanaemi_core::VERSION, "kanaemi started");
     NSApplication::sharedApplication(mtm).run();

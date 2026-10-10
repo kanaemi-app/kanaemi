@@ -23,5 +23,5 @@ objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSRang
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSEvent", "NSResponder", "NSPanel", "NSWindow", "NSView", "NSTextField", "NSControl", "NSColor", "NSFont", "NSText", "NSGraphics", "NSAttributedString", "NSBox", "NSImage", "NSImageView", "NSMenu", "NSMenuItem", "NSRunningApplication", "objc2-core-graphics", "block2"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFMachPort", "CFRunLoop"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation", "CGSession"] }
-objc2-input-method-kit = { version = "0.3", features = ["IMKServer", "IMKInputController", "IMKCandidates", "objc2-app-kit"] }
+objc2-input-method-kit = { version = "0.3", features = ["IMKServer", "IMKInputController", "objc2-app-kit"] }
 tracing = { version = "0.1", features = ["release_max_level_info"] }

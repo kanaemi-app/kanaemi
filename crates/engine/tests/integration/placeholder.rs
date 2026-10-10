@@ -101,6 +101,17 @@ fn a_commit_is_recorded_by_the_item_even_when_its_value_changes() {
 }
 
 #[test]
+fn a_preview_fills_placeholders_and_leaves_the_conversion_to_record_alone() {
+    let (mut e, _) = engine("かず\t{-:count}\nよみ\t「{-:echo !}」");
+    assert_eq!(e.preview("よみ", 1), ["「よみ!」"]);
+    assert_eq!(surfaces(&e, "かず"), ["1"]);
+    e.preview("よみ", 1);
+    e.commit("かず", "1");
+    let text = e.take_selections().unwrap().to_text();
+    assert!(text.contains("\nかず\t{-:count}\t"), "{text}");
+}
+
+#[test]
 fn deleting_a_plain_word_leaves_a_filled_item_that_would_now_give_it() {
     let (mut e, lines) = engine("かず\t{-:count}\t\t0\nかず\t2\t\t1");
     assert_eq!(surfaces(&e, "かず"), ["1", "2"]);

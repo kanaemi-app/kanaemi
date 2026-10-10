@@ -10,12 +10,12 @@ use windows::Win32::UI::TextServices::*;
 use windows::core::*;
 
 use crate::candidates;
+use crate::listing::Page;
 
 /// The page of candidates the element lists.
 #[derive(Default)]
 pub struct Listed {
-    pub items: Vec<String>,
-    pub selected: usize,
+    pub page: Page,
     /// Where the composition is on the screen, and whose window it is in.
     pub at: RECT,
     pub owner: Option<HWND>,
@@ -28,7 +28,7 @@ impl Listed {
     /// Shows or hides the text service's own window to match.
     pub fn draw(&self) {
         if self.shown {
-            candidates::show(self.items.clone(), self.selected, self.at, self.owner);
+            candidates::show(self.page.clone(), self.at, self.owner);
         } else {
             candidates::hide();
         }
@@ -90,16 +90,17 @@ impl ITfCandidateListUIElement_Impl for CandidateList_Impl {
     }
 
     fn GetCount(&self) -> Result<u32> {
-        Ok(self.listed.borrow().items.len() as u32)
+        Ok(self.listed.borrow().page.items.len() as u32)
     }
 
     fn GetSelection(&self) -> Result<u32> {
-        Ok(self.listed.borrow().selected as u32)
+        Ok(self.listed.borrow().page.selected as u32)
     }
 
     fn GetString(&self, index: u32) -> Result<BSTR> {
         self.listed
             .borrow()
+            .page
             .items
             .get(index as usize)
             .map(|item| BSTR::from(item.as_str()))

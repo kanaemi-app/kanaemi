@@ -6,9 +6,17 @@ use std::collections::HashMap;
 
 use zvariant::{StructureBuilder, Value};
 
+use crate::reply::Item;
+
 /// An underline attribute, and its value for none.
 const ATTR_UNDERLINE: u32 = 1;
 const UNDERLINE_NONE: u32 = 0;
+/// A foreground colour attribute, and the grey of what follows a candidate.
+const ATTR_FOREGROUND: u32 = 2;
+const MUTED: u32 = 0x80_80_80;
+/// The grey on the selected candidate: panels keep a text's own colour on the
+/// highlight, where the plain grey sinks into it.
+const MUTED_SELECTED: u32 = 0xd8_d8_d8;
 const PROP_TYPE_NORMAL: u32 = 0;
 const PROP_STATE_UNCHECKED: u32 = 0;
 
@@ -50,9 +58,30 @@ fn text_with(text: &str, attributes: Vec<Value<'static>>) -> Value<'static> {
     )
 }
 
+/// A candidate's text, what follows the candidate greyed. A panel that
+/// draws no attributes, as GNOME Shell's, shows it all alike.
+fn candidate(item: &Item, selected: bool) -> Value<'static> {
+    let Some(start) = item.muted_from else {
+        return text(&item.text);
+    };
+    let end = item.text.chars().count() as u32;
+    let muted = build(
+        serializable("IBusAttribute")
+            .add_field(ATTR_FOREGROUND)
+            .add_field(if selected { MUTED_SELECTED } else { MUTED })
+            .add_field(start)
+            .add_field(end),
+    );
+    text_with(&item.text, vec![muted])
+}
+
 /// A page of candidates, numbered from 1, with `selected` highlighted.
-pub fn lookup_table(items: &[String], selected: usize) -> Value<'static> {
-    let candidates: Vec<Value<'static>> = items.iter().map(|item| text(item)).collect();
+pub fn lookup_table(items: &[Item], selected: usize) -> Value<'static> {
+    let candidates: Vec<Value<'static>> = items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| candidate(item, i == selected))
+        .collect();
     let labels: Vec<Value<'static>> = (1..=items.len()).map(|n| text(&n.to_string())).collect();
     build(
         serializable("IBusLookupTable")
@@ -147,9 +176,87 @@ mod tests {
         );
     }
 
+    fn attributes_of(text: Value<'static>) -> Vec<Vec<Value<'static>>> {
+        let text = fields(text);
+        let Value::Value(list) = &text[3] else {
+            panic!("the attribute list is a variant");
+        };
+        let list = fields((**list).try_clone().unwrap());
+        let Value::Array(attributes) = &list[2] else {
+            panic!("the attributes are an array");
+        };
+        attributes
+            .inner()
+            .iter()
+            .map(|attribute| {
+                let Value::Value(attribute) = attribute else {
+                    panic!("an attribute is a variant");
+                };
+                fields((**attribute).try_clone().unwrap())
+            })
+            .collect()
+    }
+
+    fn item(text: &str, muted_from: Option<u32>) -> Item {
+        Item {
+            text: text.to_owned(),
+            muted_from,
+        }
+    }
+
+    #[test]
+    fn what_follows_a_candidate_is_greyed_to_its_end() {
+        let text = candidate(&item("漢字　ユーザー辞書", Some(2)), false);
+        assert_eq!(
+            fields(text.try_clone().unwrap())[2],
+            Value::from("漢字　ユーザー辞書")
+        );
+        let attributes = attributes_of(text);
+        assert_eq!(attributes.len(), 1);
+        assert_eq!(
+            attributes[0][2..],
+            [
+                Value::from(ATTR_FOREGROUND),
+                Value::from(MUTED),
+                Value::from(2u32),
+                Value::from(9u32),
+            ],
+            "counted in characters"
+        );
+    }
+
+    #[test]
+    fn a_candidate_alone_has_no_attributes() {
+        assert!(attributes_of(candidate(&item("漢字", None), false)).is_empty());
+    }
+
+    #[test]
+    fn what_follows_the_selected_candidate_is_greyed_light_against_the_highlight() {
+        let table = fields(lookup_table(
+            &[
+                item("漢字　ユーザー辞書", Some(2)),
+                item("感じ　ユーザー辞書", Some(2)),
+            ],
+            1,
+        ));
+        let Value::Array(candidates) = &table[7] else {
+            panic!("the candidates are an array");
+        };
+        let colour = |i: usize| {
+            let Value::Value(text) = &candidates.inner()[i] else {
+                panic!("a candidate is a variant");
+            };
+            attributes_of((**text).try_clone().unwrap())[0][3]
+                .try_clone()
+                .unwrap()
+        };
+        assert_eq!(colour(0), Value::from(MUTED));
+        assert_eq!(colour(1), Value::from(MUTED_SELECTED));
+    }
+
     #[test]
     fn a_lookup_table_has_its_page_and_labels() {
-        let table = lookup_table(&["漢字".to_owned(), "感じ".to_owned()], 1);
+        let table = lookup_table(&[item("漢字", None), item("感じ", None)], 1);
         assert_eq!(signature(&table), "(sa{sv}uubbiavav)");
         let table = fields(table);
         assert_eq!(table[2..4], [Value::from(2u32), Value::from(1u32)]);

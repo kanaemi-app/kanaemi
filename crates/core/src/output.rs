@@ -12,6 +12,13 @@ pub enum Mode {
 pub struct CandidateView {
     pub items: Vec<Candidate>,
     pub selected: usize,
+    /// The page shown, from 0.
+    pub page: usize,
+    /// How many pages the whole list takes; at least 1.
+    pub pages: usize,
+    /// For a reading to complete with, highlighted: the candidates
+    /// converting it gives after its first, in order, as many as fit a page.
+    pub more: Vec<String>,
 }
 
 /// What the host learns from an event, in the order it happened.

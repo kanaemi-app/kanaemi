@@ -3,14 +3,14 @@
 //! small, and the IME writes it itself, so a change reads only it again.
 
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use kanaemi_config::{
     BUILTIN_PREFIX, DictionarySource, MODEL_FILE, SELECTIONS_FILE, USER_CUSTOM_FILE,
-    builtin_dictionary, dictionary_sources,
+    builtin_dictionary, description, dictionary_sources,
 };
 use kanaemi_engine::{
     BinaryDictionary, Dictionary, DictionaryError, Engine, FileLock, FileSink, LineSink,
@@ -26,6 +26,13 @@ type SharedDictionary = dyn Dictionary + Send + Sync;
 static DICTIONARIES: SharedFiles<SharedDictionary> = SharedFiles::new();
 static MODELS: SharedFiles<RankingModel> = SharedFiles::new();
 
+/// What candidates from the user custom dictionary name as their source, as
+/// the settings app lists it.
+pub(crate) const USER_CUSTOM_NAME: &str = "ユーザー辞書";
+
+/// How much of a dictionary file is read for the comment it starts with.
+const HEAD_LEN: u64 = 1024;
+
 /// A dictionary that cannot be read is skipped; without any the IME still
 /// types kana and katakana. A sandboxed engine starts with an empty user
 /// custom dictionary and sends what it learns to its sink.
@@ -38,7 +45,9 @@ pub(crate) fn open_engine(
         .into_iter()
         .filter_map(|source| match source {
             DictionarySource::UserCustom => Some(Slot::UserCustom),
-            DictionarySource::File(path) => open(&path).map(Slot::Dictionary),
+            DictionarySource::File(path) => {
+                open(&path).map(|dictionary| Slot::Named(name(&path), dictionary))
+            }
             DictionarySource::Converted { binary, text } => open_converted(&binary, &text),
             DictionarySource::Builtin(name) => open_builtin(&name),
         })
@@ -51,6 +60,7 @@ pub(crate) fn open_engine(
         Access::Sandboxed(sink) => (TextDictionary::parse_user_custom("").0, sink()),
     };
     let mut engine = Engine::new(slots, user, sink);
+    engine.set_user_custom_name(Some(USER_CUSTOM_NAME.to_owned()));
     engine.set_model(read_model(support_dir));
     engine
 }
@@ -66,7 +76,8 @@ fn open_builtin(name: &str) -> Option<Slot> {
     if !invalid.is_empty() {
         tracing::warn!(name, ?invalid, "invalid built-in dictionary lines skipped");
     }
-    Some(Slot::Dictionary(Box::new(dictionary)))
+    let name = description(builtin.text).unwrap_or_else(|| name.to_owned());
+    Some(Slot::Named(name, Box::new(dictionary)))
 }
 
 /// The dictionary in `path`, or `None` after a warning when it cannot be read.
@@ -91,7 +102,32 @@ fn open_converted(binary: &Path, text: &Path) -> Option<Slot> {
             |error| tracing::warn!(path = %text.display(), %error, "dictionary unreadable"),
         )
         .ok()
-        .map(|dictionary| Slot::Dictionary(Box::new(dictionary)))
+        .map(|dictionary| Slot::Named(name(text), Box::new(dictionary)))
+}
+
+/// What candidates from the dictionary in `path` name as their source: the
+/// comment the file starts with, as the settings app describes it, or that of
+/// the text dictionary of the same name beside a binary one, or else the
+/// file's name.
+fn name(path: &Path) -> String {
+    let described = |path: &Path| {
+        let mut head = Vec::new();
+        fs::File::open(path)
+            .and_then(|file| file.take(HEAD_LEN).read_to_end(&mut head))
+            .ok()
+            .and_then(|_| description(String::from_utf8_lossy(&head)))
+    };
+    let beside = || {
+        (path.extension() == Some("kdic".as_ref()))
+            .then(|| path.with_extension("tsv"))
+            .and_then(|text| described(&text))
+    };
+    described(path).or_else(beside).unwrap_or_else(|| {
+        path.file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy()
+            .into_owned()
+    })
 }
 
 /// The dictionary in `path`, shared with every engine of this process that
@@ -504,6 +540,75 @@ mod tests {
             stamp(&dir, Some(&sources)),
             unlisted,
             "an unlisted file does not count"
+        );
+    }
+
+    fn sources(engine: &Engine, reading: &str) -> Vec<Option<String>> {
+        engine
+            .convert(reading, None)
+            .into_iter()
+            .map(|c| c.source)
+            .collect()
+    }
+
+    #[test]
+    fn a_candidate_names_its_dictionary_by_the_comment_it_starts_with_or_else_its_file() {
+        let dir = temp_dir("names");
+        let folder = dir.join(DICTIONARY_DIR);
+        fs::write(dir.join(USER_CUSTOM_FILE), "きしゃ\t貴社\n").unwrap();
+        fs::write(folder.join("a.tsv"), "# 新聞の語\nきしゃ\t記者\n").unwrap();
+        fs::write(folder.join("b.tsv"), "きしゃ\t汽車\n").unwrap();
+        let (binary, _) = convert_text("きしゃ\t帰社\n");
+        fs::write(folder.join("c.kdic"), &binary).unwrap();
+        assert_eq!(
+            sources(&open_engine(&dir, None, Access::Full), "きしゃ"),
+            [
+                Some(USER_CUSTOM_NAME.to_owned()),
+                Some("新聞の語".to_owned()),
+                Some("b.tsv".to_owned()),
+                Some("c.kdic".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_converted_dictionary_is_named_as_the_text_one_it_was_converted_from() {
+        let dir = temp_dir("converted-names");
+        let folder = dir.join(DICTIONARY_DIR);
+        let text = "# 汽車の辞書\nきしゃ\t汽車\n";
+        fs::write(folder.join("a.tsv"), text).unwrap();
+        fs::write(folder.join("a.kdic"), convert_text(text).0).unwrap();
+        assert_eq!(
+            sources(&open_engine(&dir, None, Access::Full), "きしゃ"),
+            [Some("汽車の辞書".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_binary_dictionary_listed_by_its_own_file_is_named_as_the_text_one_beside_it() {
+        let dir = temp_dir("listed-binary-names");
+        let folder = dir.join(DICTIONARY_DIR).join("official");
+        fs::create_dir_all(&folder).unwrap();
+        let text = "# 公式の辞書\nきしゃ\t汽車\n";
+        fs::write(folder.join("base.tsv"), text).unwrap();
+        fs::write(folder.join("base.kdic"), convert_text(text).0).unwrap();
+        let listed = [DictionarySource::File(folder.join("base.kdic"))];
+        assert_eq!(
+            sources(&open_engine(&dir, Some(&listed), Access::Full), "きしゃ"),
+            [Some("公式の辞書".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_built_in_dictionary_is_named_by_its_description() {
+        let dir = temp_dir("builtin-names");
+        let date = builtin_dictionary("date").unwrap();
+        let sources_listed = [DictionarySource::Builtin("date".to_owned())];
+        let mut engine = open_engine(&dir, Some(&sources_listed), Access::Full);
+        engine.set_functions(Some(crate::functions::open(&dir, &[])));
+        assert_eq!(
+            sources(&engine, "きょう")[0],
+            kanaemi_config::description(date.text)
         );
     }
 }

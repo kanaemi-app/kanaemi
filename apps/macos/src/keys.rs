@@ -462,6 +462,8 @@ fn key(raw: RawEvent) -> Key {
         126 => Key::Up,
         115 => Key::Home,
         119 => Key::End,
+        116 => Key::PageUp,
+        121 => Key::PageDown,
         122 => Key::F(1),
         120 => Key::F(2),
         99 => Key::F(3),
@@ -1076,6 +1078,8 @@ mod tests {
         assert_eq!(key_of(down(126, 0, "\u{f700}")), Some(Key::Up));
         assert_eq!(key_of(down(115, 0, "\u{f729}")), Some(Key::Home));
         assert_eq!(key_of(down(119, 0, "\u{f72b}")), Some(Key::End));
+        assert_eq!(key_of(down(116, 0, "\u{f72c}")), Some(Key::PageUp));
+        assert_eq!(key_of(down(121, 0, "\u{f72d}")), Some(Key::PageDown));
     }
 
     #[test]

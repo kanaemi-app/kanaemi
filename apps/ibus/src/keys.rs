@@ -26,7 +26,7 @@ const SIDED: [(u32, Key); 8] = [
 ];
 
 /// The keys the core knows by name rather than by what they type.
-const NAMED: [(u32, Key); 16] = [
+const NAMED: [(u32, Key); 18] = [
     (0xff08, Key::Backspace),
     (0xff09, Key::Tab),
     (0xff0d, Key::Enter),
@@ -39,6 +39,8 @@ const NAMED: [(u32, Key); 16] = [
     (0xff54, Key::Down),
     (0xff50, Key::Home),
     (0xff57, Key::End),
+    (0xff55, Key::PageUp),
+    (0xff56, Key::PageDown),
     (0xff23, Key::Henkan),
     (0xff22, Key::Muhenkan),
     (0xff30, Key::Eisu),
@@ -48,7 +50,7 @@ const NAMED: [(u32, Key); 16] = [
 /// The keypad's keys that the main keys have too, and Tab as X names it
 /// with Shift (ISO_Left_Tab). The keys the core sends are always the main
 /// ones.
-const KEYPAD: [(u32, Key); 11] = [
+const KEYPAD: [(u32, Key); 13] = [
     (0xff80, Key::Space),
     (0xff89, Key::Tab),
     (0xfe20, Key::Tab),
@@ -59,6 +61,8 @@ const KEYPAD: [(u32, Key); 11] = [
     (0xff98, Key::Right),
     (0xff99, Key::Down),
     (0xff9c, Key::End),
+    (0xff9a, Key::PageUp),
+    (0xff9b, Key::PageDown),
     (0xff9f, Key::Delete),
 ];
 
@@ -237,6 +241,14 @@ mod tests {
         let back_tab = translate(0xfe20, SHIFT_MASK, 0).unwrap();
         assert_eq!((back_tab.key, back_tab.mods.shift), (Key::Tab, true));
         assert_eq!(translate(0xff63, 0, 0).unwrap().key, Key::Other, "Insert");
+        assert_eq!(translate(0xff55, 0, 0).unwrap().key, Key::PageUp);
+        assert_eq!(translate(0xff56, 0, 0).unwrap().key, Key::PageDown);
+        assert_eq!(translate(0xff9a, 0, 0).unwrap().key, Key::PageUp, "keypad");
+        assert_eq!(
+            translate(0xff9b, 0, 0).unwrap().key,
+            Key::PageDown,
+            "keypad"
+        );
     }
 
     #[test]

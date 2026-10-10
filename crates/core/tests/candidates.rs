@@ -574,6 +574,89 @@ fn candidates_are_shown_nine_to_a_page() {
 }
 
 #[test]
+fn the_list_tells_which_page_it_shows_of_how_many() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kou");
+    let view = t.key(Key::Space).candidates.unwrap();
+    assert_eq!((view.page, view.pages), (0, 2));
+    let view = t.ctrl('n').candidates.unwrap();
+    assert_eq!((view.page, view.pages), (1, 2));
+}
+
+#[test]
+fn ctrl_n_goes_to_the_first_candidate_of_the_next_page() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kou");
+    t.key(Key::Space);
+    t.key(Key::Space);
+    let out = t.ctrl('n');
+    assert_eq!(out.preedit, "»工");
+    let view = out.candidates.unwrap();
+    assert_eq!((view.items[0].surface.as_str(), view.selected), ("工", 0));
+}
+
+#[test]
+fn ctrl_p_goes_to_the_first_candidate_of_the_previous_page() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kou");
+    for _ in 0..11 {
+        t.key(Key::Space);
+    }
+    let out = t.ctrl('p');
+    assert_eq!(out.preedit, "»高");
+    assert_eq!(out.candidates.unwrap().page, 0);
+}
+
+#[test]
+fn the_next_page_after_the_last_is_the_first_and_the_previous_before_the_first_is_the_last() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kou");
+    t.key(Key::Space);
+    t.ctrl('n');
+    assert_eq!(t.ctrl('n').preedit, "»高", "past the last page");
+    assert_eq!(t.ctrl('p').preedit, "»工", "before the first page");
+}
+
+#[test]
+fn the_next_page_of_a_single_page_never_starts_registering() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    t.key(Key::Space);
+    t.key(Key::Space);
+    let out = t.ctrl('n');
+    assert_eq!(out.preedit, "»漢字");
+    assert_eq!(out.candidates.unwrap().pages, 1);
+}
+
+#[test]
+fn page_down_and_page_up_turn_pages_once_bound() {
+    let mut config = config();
+    config.bindings.candidates.extend([
+        Binding {
+            from: plain(Key::PageDown),
+            gesture: Gesture::Press,
+            to: Action::NextPage,
+        },
+        Binding {
+            from: plain(Key::PageUp),
+            gesture: Gesture::Press,
+            to: Action::PreviousPage,
+        },
+    ]);
+    let mut t = T::with_config(config);
+    t.kana();
+    t.typ(";kou");
+    t.key(Key::Space);
+    assert_eq!(t.key(Key::PageDown).preedit, "»工");
+    assert_eq!(t.key(Key::PageUp).preedit, "»高");
+}
+
+#[test]
 fn a_number_picks_from_the_page_it_shows() {
     let mut t = T::new();
     t.kana();
@@ -612,6 +695,28 @@ fn the_mouse_picks_from_the_page_it_shows() {
         t.key(Key::Space);
     }
     assert_eq!(t.handle(Event::Select(2)).commit.as_deref(), Some("孝"));
+}
+
+#[test]
+fn each_candidate_shows_the_dictionary_it_came_from_and_a_form_of_the_reading_none() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    let view = t.key(Key::Space).candidates.unwrap();
+    let sources: Vec<(&str, Option<&str>)> = view
+        .items
+        .iter()
+        .map(|c| (c.surface.as_str(), c.source.as_deref()))
+        .collect();
+    assert_eq!(
+        sources[..4],
+        [
+            ("漢字", Some(SOURCE)),
+            ("感じ", Some(SOURCE)),
+            ("幹事", Some(SOURCE)),
+            ("カンジ", None),
+        ]
+    );
 }
 
 #[test]

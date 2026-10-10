@@ -30,6 +30,17 @@ const COMPLETIONS_LOOKED_AT: usize = 5000;
 pub enum Slot {
     UserCustom,
     Dictionary(Box<dyn Dictionary>),
+    /// A dictionary whose candidates carry its name as their source.
+    Named(String, Box<dyn Dictionary>),
+}
+
+impl Slot {
+    fn dictionary<'a>(&'a self, user: &'a TextDictionary) -> &'a dyn Dictionary {
+        match self {
+            Slot::UserCustom => user,
+            Slot::Dictionary(d) | Slot::Named(_, d) => d.as_ref(),
+        }
+    }
 }
 
 /// What the engine knows of the field with the focus. It ends when the focus
@@ -99,6 +110,8 @@ impl FieldSession {
 pub struct Engine {
     slots: Vec<Slot>,
     user: UserCustom,
+    /// What candidates from the user custom dictionary carry as their source.
+    user_name: Option<String>,
     field: FieldSession,
     model: Option<Arc<RankingModel>>,
     selections: Selections,
@@ -139,6 +152,7 @@ impl Engine {
         Self {
             slots,
             user: UserCustom::new(user, Box::new(sink)),
+            user_name: None,
             field: FieldSession::default(),
             model: None,
             selections: Selections::default(),
@@ -241,6 +255,11 @@ impl Engine {
     /// read it back from where its lines went.
     pub fn user_dictionary(&self) -> &TextDictionary {
         self.user.dictionary()
+    }
+
+    /// Names the user custom dictionary as the source of its candidates.
+    pub fn set_user_custom_name(&mut self, name: Option<String>) {
+        self.user_name = name;
     }
 
     /// Puts the user custom dictionary read again in place, with the lines not
@@ -428,10 +447,7 @@ impl Engine {
         };
         let functions = self.user_functions();
         for (priority, slot) in self.slots.iter().enumerate() {
-            let dictionary: &dyn Dictionary = match slot {
-                Slot::UserCustom => user,
-                Slot::Dictionary(d) => d.as_ref(),
-            };
+            let dictionary = slot.dictionary(user);
             let hidden = |reading: &str, surface: &str| user.is_hidden(reading, surface);
             for mut f in found_in(
                 dictionary,
@@ -485,6 +501,15 @@ impl Engine {
 }
 
 impl Engine {
+    /// The name of the dictionary at `priority` in the list.
+    fn source(&self, priority: usize) -> Option<String> {
+        match self.slots.get(priority)? {
+            Slot::UserCustom => self.user_name.clone(),
+            Slot::Dictionary(_) => None,
+            Slot::Named(name, _) => Some(name.clone()),
+        }
+    }
+
     /// Brings candidates split at the okurigana mark to the front: the mark
     /// says how the reading splits, which a word of the whole reading (立ちゃ
     /// for たち*ゃ) may not. Once the reading has a commit in
@@ -561,10 +586,7 @@ impl Engine {
             if readings.len() >= MAX_COMPLETIONS {
                 break;
             }
-            let dictionary: &dyn Dictionary = match slot {
-                Slot::UserCustom => user,
-                Slot::Dictionary(d) => d.as_ref(),
-            };
+            let dictionary = slot.dictionary(user);
             let mut found: Vec<(u32, usize, String)> = dictionary
                 .readings_from(prefix, COMPLETIONS_LOOKED_AT)
                 .into_iter()
@@ -618,8 +640,26 @@ impl Converter for Engine {
         self.favor(reading, ranked)
             .into_iter()
             .map(|f| Candidate {
+                source: self.source(f.facts.dictionary),
+                preview: None,
                 surface: f.facts.surface,
             })
+            .collect()
+    }
+
+    /// Converted as a key that is only tried is: the user's functions, which
+    /// may count their calls, do not run, and the conversion a commit is
+    /// recorded by stays the one the user made.
+    fn preview(&self, reading: &str, limit: usize) -> Vec<String> {
+        // Shown as converting would give them, functions and all, while the
+        // conversion a commit is recorded by stays the one converted last.
+        let last = self.last.take();
+        let candidates = self.convert(reading, None);
+        self.last.replace(last);
+        candidates
+            .into_iter()
+            .take(limit)
+            .map(|candidate| candidate.surface)
             .collect()
     }
 

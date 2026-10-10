@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Event, Key, Modifiers};
+use kanaemi_core::{Core, Event, Key, Modifiers};
 
 /// In kana mode, with `input` typed after a `;` that begins the reading.
 fn reading(input: &str) -> T {
@@ -54,19 +54,183 @@ fn completing_lists_the_readings_with_the_one_shown_selected() {
 }
 
 #[test]
-fn ctrl_n_and_down_go_to_the_next_reading_while_the_list_is_shown() {
+fn a_reading_listed_to_complete_with_shows_no_dictionary() {
     let mut t = reading("ka");
-    t.key(Key::Tab);
-    assert_eq!(t.ctrl('n').preedit, "›かな");
-    assert_eq!(t.key(Key::Down).preedit, "›かんじ");
+    let view = t.key(Key::Tab).candidates.unwrap();
+    assert!(view.items.iter().all(|c| c.source.is_none()));
 }
 
 #[test]
-fn ctrl_p_and_up_go_to_the_previous_reading_while_the_list_is_shown() {
+fn a_reading_listed_to_complete_with_shows_the_candidate_it_converts_to_first() {
+    let mut t = reading("ka");
+    let view = t.key(Key::Tab).candidates.unwrap();
+    let previews: Vec<(&str, Option<&str>)> = view
+        .items
+        .iter()
+        .map(|c| (c.surface.as_str(), c.preview.as_deref()))
+        .collect();
+    assert_eq!(
+        previews,
+        [
+            ("かく", Some("角")),
+            ("かな", Some("カナ")),
+            ("かんじ", Some("漢字")),
+        ]
+    );
+}
+
+#[test]
+fn a_reading_listed_to_complete_with_that_converts_to_nothing_shows_none() {
+    let mut fake = Fake::default();
+    fake.table.insert("かお", vec![]);
+    fake.table.insert("かく", vec!["角"]);
+    let learned = fake.learned.clone();
+    let mut t = T {
+        core: Core::new(fake, config()),
+        learned,
+        now: 1_000,
+    };
+    t.handle(Event::FocusIn { password: false });
+    t.kana();
+    t.ch(';');
+    t.typ("ka");
+    let view = t.key(Key::Tab).candidates.unwrap();
+    let previews: Vec<(&str, Option<&str>)> = view
+        .items
+        .iter()
+        .map(|c| (c.surface.as_str(), c.preview.as_deref()))
+        .collect();
+    assert_eq!(previews, [("かお", None), ("かく", Some("角"))]);
+    assert_eq!(view.more, Vec::<String>::new());
+}
+
+#[test]
+fn the_highlighted_reading_to_complete_with_shows_its_other_candidates_in_order() {
+    let mut t = reading("ka");
+    let view = t.key(Key::Tab).candidates.unwrap();
+    assert_eq!(view.more, ["書く", "核"], "かく after 角");
+    let view = t.key(Key::Tab).candidates.unwrap();
+    assert_eq!(view.more, ["仮名"], "かな after カナ");
+}
+
+#[test]
+fn the_other_candidates_of_a_reading_are_cut_short_past_a_page() {
+    let mut t = reading("ko");
+    let view = t.key(Key::Tab).candidates.unwrap();
+    assert_eq!(
+        view.more,
+        ["校", "行", "考", "効", "項", "構", "講", "公"],
+        "こう after 高"
+    );
+}
+
+#[test]
+fn a_candidate_forgotten_while_converting_a_completed_reading_is_gone_from_the_list() {
+    let mut t = reading("ka");
+    t.key(Key::Tab);
+    t.key(Key::Space);
+    t.forget();
+    let view = t.key(Key::Esc).candidates.unwrap();
+    assert_eq!(
+        view.items[0].preview.as_deref(),
+        Some("書く"),
+        "角 forgotten"
+    );
+    assert_eq!(view.more, ["核"]);
+}
+
+#[test]
+fn candidates_being_chosen_show_no_others() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";kanji");
+    let view = t.key(Key::Space).candidates.unwrap();
+    assert_eq!(view.more, Vec::<String>::new());
+}
+
+#[test]
+fn down_goes_to_the_next_reading_while_the_list_is_shown() {
+    let mut t = reading("ka");
+    t.key(Key::Tab);
+    assert_eq!(t.key(Key::Down).preedit, "›かな");
+}
+
+#[test]
+fn up_goes_to_the_previous_reading_while_the_list_is_shown() {
     let mut t = reading("ka");
     back_tab(&mut t);
-    assert_eq!(t.ctrl('p').preedit, "›かな");
-    assert_eq!(t.key(Key::Up).preedit, "›かく");
+    assert_eq!(t.key(Key::Up).preedit, "›かな");
+}
+
+/// In kana mode with `あ` typed after `;`, which completes to twelve
+/// readings, `あか` to `あち` in that order: a page and three more.
+fn reading_of_two_pages() -> T {
+    let mut fake = Fake::default();
+    for kana in "かきくけこさしすせそたち".chars() {
+        let reading: &'static str = Box::leak(format!("あ{kana}").into_boxed_str());
+        fake.table.insert(reading, vec![]);
+    }
+    let learned = fake.learned.clone();
+    let mut t = T {
+        core: Core::new(fake, config()),
+        learned,
+        now: 1_000,
+    };
+    t.handle(Event::FocusIn { password: false });
+    t.kana();
+    t.ch(';');
+    t.ch('a');
+    t
+}
+
+#[test]
+fn the_list_tells_which_page_of_readings_it_shows_of_how_many() {
+    let mut t = reading_of_two_pages();
+    let view = t.key(Key::Tab).candidates.unwrap();
+    assert_eq!((view.page, view.pages), (0, 2));
+    let view = t.ctrl('n').candidates.unwrap();
+    assert_eq!((view.page, view.pages), (1, 2));
+}
+
+#[test]
+fn ctrl_n_goes_to_the_first_reading_of_the_next_page() {
+    let mut t = reading_of_two_pages();
+    t.key(Key::Tab);
+    t.key(Key::Tab);
+    let out = t.ctrl('n');
+    assert_eq!(out.preedit, "›あそ");
+    assert_eq!(out.candidates.unwrap().selected, 0);
+}
+
+#[test]
+fn ctrl_p_goes_to_the_first_reading_of_the_previous_page() {
+    let mut t = reading_of_two_pages();
+    back_tab(&mut t);
+    assert_eq!(t.ctrl('p').preedit, "›あか");
+}
+
+#[test]
+fn past_either_end_page_by_page_is_the_reading_as_typed_as_complete_goes() {
+    let mut t = reading_of_two_pages();
+    t.key(Key::Tab);
+    t.ctrl('n');
+    let out = t.ctrl('n');
+    assert_eq!(out.preedit, "›あ", "past the last page");
+    assert_eq!(out.candidates, None);
+
+    let mut t = reading_of_two_pages();
+    t.key(Key::Tab);
+    let out = t.ctrl('p');
+    assert_eq!(out.preedit, "›あ", "before the first page");
+    assert_eq!(out.candidates, None);
+}
+
+#[test]
+fn turning_a_page_while_choosing_turns_the_candidates_page() {
+    let mut t = reading("ko");
+    t.key(Key::Tab);
+    t.key(Key::Space);
+    assert_eq!(t.ctrl('n').preedit, "»工");
 }
 
 #[test]
@@ -138,9 +302,11 @@ fn space_converts_the_reading_the_list_shows() {
 }
 
 #[test]
-fn ctrl_n_converts_when_no_list_is_shown() {
+fn ctrl_n_turns_no_page_when_no_list_is_shown() {
     let mut t = reading("kanji");
-    assert_eq!(t.ctrl('n').preedit, "»漢字");
+    let out = t.ctrl('n');
+    assert_eq!(out.preedit, "›かんじ");
+    assert_eq!(out.candidates, None);
 }
 
 #[test]

@@ -11,6 +11,8 @@
 mod accessibility;
 #[cfg(target_os = "macos")]
 mod app;
+#[cfg(target_os = "macos")]
+mod candidate_window;
 mod candidates;
 mod handled;
 #[cfg(target_os = "macos")]
@@ -20,6 +22,8 @@ mod input_monitoring;
 #[cfg(target_os = "macos")]
 mod key_tap;
 mod keys;
+#[cfg(target_os = "macos")]
+mod meaning;
 mod posted;
 #[cfg(target_os = "macos")]
 mod secure_input;

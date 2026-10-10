@@ -106,8 +106,35 @@ struct Completion {
     typed: Word,
     /// Never empty; each longer than the typed reading and starting with it.
     readings: Vec<String>,
+    /// The candidates of each reading, beside `readings`: `None` until a page
+    /// it is on is shown, then those the converter gave, and how many were
+    /// asked for.
+    previews: Vec<Option<(Vec<String>, usize)>>,
     /// The reading shown; `None` for the word as typed.
     index: Option<usize>,
+}
+
+/// How many candidates of the highlighted reading to complete with are
+/// shown: its first, and after it as many as a page's others.
+const PREVIEW_LEN: usize = PAGE_LEN;
+
+impl Completion {
+    /// Asks `converter` for the first candidate of each reading on the page
+    /// `index` is on, and for more of the reading at `index`; each once.
+    fn preview(&mut self, converter: &impl Converter, index: usize) {
+        let start = page_start(index);
+        let end = (start + PAGE_LEN).min(self.readings.len());
+        for at in start..end {
+            let wanted = if at == index { PREVIEW_LEN } else { 1 };
+            if self.previews[at]
+                .as_ref()
+                .is_none_or(|(_, asked)| *asked < wanted)
+            {
+                let candidates = converter.preview(&self.readings[at], wanted);
+                self.previews[at] = Some((candidates, wanted));
+            }
+        }
+    }
 }
 
 /// What the host is asked to erase before the core goes on.
@@ -917,7 +944,11 @@ impl<C: Converter> Core<C> {
                 continue;
             };
             if !selection.candidates.iter().any(|c| c.surface == surface) {
-                selection.candidates.push(Candidate { surface });
+                selection.candidates.push(Candidate {
+                    surface,
+                    source: None,
+                    preview: None,
+                });
             }
         }
     }
@@ -950,7 +981,11 @@ impl<C: Converter> Core<C> {
         {
             Some(index) => index,
             None => {
-                selection.candidates.push(Candidate { surface });
+                selection.candidates.push(Candidate {
+                    surface,
+                    source: None,
+                    preview: None,
+                });
                 selection.candidates.len() - 1
             }
         };
@@ -1052,7 +1087,11 @@ impl<C: Converter> Core<C> {
         // candidates, to go on with from there.
         let converting = matches!(self.state, State::Reading(_))
             && matches!(action, Action::Next | Action::Previous | Action::Form(_));
-        if !converting && !matches!(action, Action::Complete | Action::CompletePrevious) {
+        let completing = matches!(
+            action,
+            Action::Complete | Action::CompletePrevious | Action::NextPage | Action::PreviousPage
+        );
+        if !converting && !completing {
             self.completion = None;
         }
         match action {
@@ -1203,6 +1242,10 @@ impl<C: Converter> Core<C> {
                 let word = self.complete(word, action == Action::Complete);
                 self.state = State::Reading(word);
             }
+            Action::NextPage | Action::PreviousPage => {
+                let word = self.turn_completion_page(word, action == Action::NextPage);
+                self.state = State::Reading(word);
+            }
             Action::Form(form) => {
                 word.flush(&self.config.romaji);
                 // Letters that made no kana (`pdf`) still have a form in letters.
@@ -1304,6 +1347,7 @@ impl<C: Converter> Core<C> {
                 }
                 Completion {
                     typed,
+                    previews: vec![None; readings.len()],
                     readings,
                     index: None,
                 }
@@ -1316,13 +1360,45 @@ impl<C: Converter> Core<C> {
             (Some(i), true) => (i < last).then_some(i + 1),
             (Some(i), false) => i.checked_sub(1),
         };
+        self.show_completion(completion, index)
+    }
+
+    /// The word completed to the first reading of the next page of the list
+    /// shown, or of the previous page unless `forward`; past either end is
+    /// the word as typed, as [`Core::complete`] goes. With no list shown,
+    /// the word as it is.
+    fn turn_completion_page(&mut self, word: Word, forward: bool) -> Word {
+        let Some(completion) = self.completion.take() else {
+            return word;
+        };
+        let Some(shown) = completion.index else {
+            self.completion = Some(completion);
+            return word;
+        };
+        let start = page_start(shown);
+        let index = if forward {
+            Some(start + PAGE_LEN).filter(|&i| i < completion.readings.len())
+        } else {
+            start.checked_sub(PAGE_LEN)
+        };
+        self.show_completion(completion, index)
+    }
+
+    /// Keeps `completion` with the reading at `index` shown, or the word as
+    /// typed for `None`, and gives the word that shows it.
+    fn show_completion(&mut self, completion: Completion, index: Option<usize>) -> Word {
+        let table = &self.config.romaji;
         let shown = index
             .and_then(|i| completion.typed.completed(&completion.readings[i], table))
             .unwrap_or_else(|| completion.typed.clone());
-        self.completion = Some(Completion {
+        let mut completion = Completion {
             index,
             ..completion
-        });
+        };
+        if let Some(index) = index {
+            completion.preview(&self.converter, index);
+        }
+        self.completion = Some(completion);
         shown
     }
 
@@ -1347,6 +1423,19 @@ impl<C: Converter> Core<C> {
             }
             Action::Previous => {
                 selection.index = selection.index.checked_sub(1).unwrap_or(len - 1);
+                self.state = State::Candidates(selection);
+            }
+            // Round the pages: unlike the next candidate, past the last page
+            // never starts registering.
+            Action::NextPage | Action::PreviousPage => {
+                let pages = len.div_ceil(PAGE_LEN);
+                let page = selection.index / PAGE_LEN;
+                let page = if action == Action::NextPage {
+                    (page + 1) % pages
+                } else {
+                    (page + pages - 1) % pages
+                };
+                selection.index = page * PAGE_LEN;
                 self.state = State::Candidates(selection);
             }
             Action::Commit => {
@@ -1381,7 +1470,16 @@ impl<C: Converter> Core<C> {
             // A step back: to the list of the completion converted from, as
             // it was, or else to the reading.
             Action::Cancel | Action::Backspace => {
-                self.completion = selection.completion.take().map(|completion| *completion);
+                self.completion = selection.completion.take().map(|completion| {
+                    let mut completion = *completion;
+                    // The reading was converted: a candidate may have been
+                    // forgotten since its candidates were asked for.
+                    if let Some(index) = completion.index {
+                        completion.previews[index] = None;
+                        completion.preview(&self.converter, index);
+                    }
+                    completion
+                });
                 self.state = State::Reading(selection.into_reading());
             }
             Action::Forget => {
@@ -1609,6 +1707,7 @@ impl<C: Converter> Core<C> {
             return false;
         };
         completion.index = Some(index);
+        completion.preview(&self.converter, index);
         self.state = State::Reading(word);
         true
     }
@@ -1811,6 +1910,7 @@ impl<C: Converter> Core<C> {
                 }
                 if let Some(Completion {
                     readings,
+                    previews,
                     index: Some(index),
                     ..
                 }) = &self.completion
@@ -1820,11 +1920,22 @@ impl<C: Converter> Core<C> {
                     candidates = Some(CandidateView {
                         items: readings[start..end]
                             .iter()
-                            .map(|reading| Candidate {
+                            .zip(&previews[start..end])
+                            .map(|(reading, preview)| Candidate {
                                 surface: reading.clone(),
+                                source: None,
+                                preview: preview
+                                    .as_ref()
+                                    .and_then(|(candidates, _)| candidates.first().cloned()),
                             })
                             .collect(),
                         selected: index - start,
+                        page: start / PAGE_LEN,
+                        pages: readings.len().div_ceil(PAGE_LEN),
+                        more: previews[*index]
+                            .as_ref()
+                            .map(|(candidates, _)| candidates.iter().skip(1).cloned().collect())
+                            .unwrap_or_default(),
                     });
                 }
             }
@@ -1845,6 +1956,9 @@ impl<C: Converter> Core<C> {
                     candidates = Some(CandidateView {
                         items: selection.candidates[start..end].to_vec(),
                         selected: selection.index - start,
+                        page: start / PAGE_LEN,
+                        pages: selection.candidates.len().div_ceil(PAGE_LEN),
+                        more: Vec::new(),
                     });
                 }
             }
@@ -1981,6 +2095,8 @@ fn named(key: Key) -> bool {
             | Key::Down
             | Key::Home
             | Key::End
+            | Key::PageUp
+            | Key::PageDown
             | Key::F(6..=10)
             | Key::Eisu
             | Key::Kana

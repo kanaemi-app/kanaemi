@@ -5,7 +5,7 @@
 #
 # キーの書き方：修飾キー（ctrl・cmd・alt・shift）を + でつなぐ（"ctrl+h"、"shift+space"）。
 # キーは 1 文字（"a"・"0"・";"）か、space・enter・esc・backspace・delete・left・right・up・
-# down・home・end・f1〜f12・eisu（英数）・kana（かな）・henkan（変換）・muhenkan（無変換）か、
+# down・home・end・page-up・page-down・f1〜f12・eisu（英数）・kana（かな）・henkan（変換）・muhenkan（無変換）か、
 # 修飾キーの Shift・Ctrl・Cmd（Win）・Option（Alt）の左右（left-shift・right-shift・left-ctrl・right-ctrl・
 # left-cmd・right-cmd・left-alt・right-alt）。
 # 修飾キーは押したときに働き、キー自体もアプリに渡る。後ろに #tap を付けると（"left-shift#tap"）、ほかの修飾キーを
@@ -73,6 +73,7 @@
 # @register（登録を始める）・@forget（その候補を以後出さない）・@abc（確定して ABC モードへ）・@kana（かなモードへ）・
 # @begin（読みを始める。読みの中では送り仮名を始め、候補を選んでいるときは確定して次の読みを始める）・
 # @complete・@complete-previous（読みを、それで始まるより長い読みに置き換える。続けて押すと次・前の読み。候補を選んでいるときは、読みに戻して補完を続ける）・
+# @next-page・@previous-page（次・前のページの最初の候補。最後のページの次は最初のページ。補完の一覧では次・前のページの最初の読みで、端の先は打ったままの読み）・
 # @undo-commit（直前に確定した候補を、選び直せるように戻す）・
 # @reread-kana（読みを始めずに打ったかなを、読みに戻す。戻した読みでもう一度押すと、最初のかなを確定する）。
 # 割り当てたキーは、ローマ字の表より先に機能として働く。場面に合わない機能は書けない。
@@ -80,9 +81,7 @@
 # 読みを打っているとき
 #[keys.reading]
 #"space" = "@next"
-#"ctrl+n" = "@next"
 #"shift+space" = "@previous"
-#"ctrl+p" = "@previous"
 #"enter" = "@commit"
 #"ctrl+j" = "@commit"
 #"ctrl+m" = "@commit"
@@ -118,10 +117,10 @@
 #[keys.completion]
 #"tab" = "@complete"
 #"shift+tab" = "@complete-previous"
-#"ctrl+n" = "@complete"
-#"ctrl+p" = "@complete-previous"
 #"down" = "@complete"
 #"up" = "@complete-previous"
+#"ctrl+n" = "@next-page"
+#"ctrl+p" = "@previous-page"
 #"1" = "@select-1"
 #"2" = "@select-2"
 #"3" = "@select-3"
@@ -135,11 +134,11 @@
 # 候補を選んでいるとき
 #[keys.candidates]
 #"space" = "@next"
-#"ctrl+n" = "@next"
 #"shift+space" = "@previous"
-#"ctrl+p" = "@previous"
 #"down" = "@next"
 #"up" = "@previous"
+#"ctrl+n" = "@next-page"
+#"ctrl+p" = "@previous-page"
 #"enter" = "@commit"
 #"ctrl+j" = "@commit"
 #"ctrl+m" = "@commit"
