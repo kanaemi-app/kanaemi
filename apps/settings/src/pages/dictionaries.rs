@@ -29,34 +29,7 @@ pub fn Dictionaries() -> Element {
         warning: invalid_lines(&custom, true),
         chip: None,
     }];
-    items.extend(files.iter().map(|name| {
-        let path = folder.join(name);
-        let convertible = !is_binary(&path) && binary_name(name) != *name;
-        let status = convertible.then(|| conversion(&folder, name));
-        let (meta, convert) = match status {
-            None => (file_size(&path), None),
-            Some(Conversion::None) => (file_size(&path), Some("バイナリに変換")),
-            Some(Conversion::Stale) => (
-                file_size(&path).map(|size| format!("要再変換・{size}")),
-                Some("バイナリに再変換"),
-            ),
-            Some(Conversion::Current) => (
-                file_size(&path).map(|size| format!("変換済み・{size}")),
-                None,
-            ),
-        };
-        ListItem {
-            name: name.clone(),
-            label: name.clone(),
-            description: file_description(&path),
-            meta,
-            convert: convert.map(str::to_owned),
-            warning: (!is_binary(&path))
-                .then(|| invalid_lines(&path, false))
-                .flatten(),
-            chip: None,
-        }
-    }));
+    items.extend(file_items(&folder, &files, &chosen));
     items.extend(BUILTIN_DICTIONARIES.iter().map(|builtin| ListItem {
         name: format!("{BUILTIN_PREFIX}{}", builtin.name),
         label: description(builtin.text).unwrap_or_else(|| builtin.name.to_owned()),
@@ -97,13 +70,23 @@ pub fn Dictionaries() -> Element {
                 PathBuf::from(&name),
                 Lookup::Builtin(builtin.text),
             ),
-            None => (name.clone(), folder.join(&name), Lookup::File),
+            None => (
+                items
+                    .iter()
+                    .find(|i| i.name == name)
+                    .map_or_else(|| name.clone(), |i| i.label.clone()),
+                folder.join(&name),
+                Lookup::File,
+            ),
         }
     });
     let on_convert = {
         let folder = folder.clone();
         let listed = written.is_some().then(|| chosen.clone());
-        move |name: String| convert_and_use(ctx, &folder, listed.as_deref(), &name)
+        move |name: String| {
+            let source = conversion_source(&folder, &name);
+            convert_and_use(ctx, &folder, listed.as_deref(), &source)
+        }
     };
     rsx! {
         Group {
@@ -149,6 +132,76 @@ pub fn Dictionaries() -> Element {
         OfficialDictionaries { chosen: chosen_for_official }
         HiddenWords { custom: custom_path }
         PickRecord { path: store_dir.join(SELECTIONS_FILE) }
+    }
+}
+
+/// A row for each dictionary file in `folder`, named by what its text says it
+/// is. A binary dictionary stands for the text one it was made from, which is
+/// listed apart only while `chosen` names it.
+fn file_items(folder: &Path, files: &[String], chosen: &[String]) -> Vec<ListItem> {
+    let text_of = |name: &str| {
+        let text = Path::new(name)
+            .with_extension(TEXT_EXTENSION)
+            .to_string_lossy()
+            .into_owned();
+        (text != name && files.contains(&text) && is_binary(&folder.join(name))).then_some(text)
+    };
+    files
+        .iter()
+        .filter(|name| {
+            chosen.contains(name) || text_of(&binary_name(name.as_str())).as_ref() != Some(name)
+        })
+        .map(|name| {
+            let path = folder.join(name);
+            let binary = is_binary(&path);
+            let text = text_of(name);
+            let status = match &text {
+                Some(text) => Some(conversion(folder, text)),
+                None if !binary && binary_name(name) != *name => Some(conversion(folder, name)),
+                None => None,
+            };
+            let (meta, convert) = match status {
+                Some(Conversion::None) => (file_size(&path), Some("バイナリに変換")),
+                Some(Conversion::Stale) => (
+                    file_size(&path).map(|size| format!("要再変換・{size}")),
+                    Some("バイナリに再変換"),
+                ),
+                Some(Conversion::Current) if !binary => (
+                    file_size(&path).map(|size| format!("変換済み・{size}")),
+                    None,
+                ),
+                Some(Conversion::Current) | None => (file_size(&path), None),
+            };
+            let said = text_description(&folder.join(text.as_deref().unwrap_or(name)));
+            let (label, description) = match said {
+                Some(said) => (said, Some(name.clone())),
+                None if binary => (name.clone(), Some("バイナリの辞書".to_owned())),
+                None => (name.clone(), None),
+            };
+            ListItem {
+                name: name.clone(),
+                label,
+                description,
+                meta,
+                convert: convert.map(str::to_owned),
+                warning: (!binary).then(|| invalid_lines(&path, false)).flatten(),
+                chip: None,
+            }
+        })
+        .collect()
+}
+
+/// The text dictionary a conversion of the dictionary `name` reads: the one
+/// a binary dictionary was made from, or `name` itself.
+fn conversion_source(folder: &Path, name: &str) -> String {
+    let text = Path::new(name)
+        .with_extension(TEXT_EXTENSION)
+        .to_string_lossy()
+        .into_owned();
+    if text != name && is_binary(&folder.join(name)) && folder.join(&text).is_file() {
+        text
+    } else {
+        name.to_owned()
     }
 }
 
@@ -953,6 +1006,100 @@ mod tests {
             .iter()
             .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
             .collect()
+    }
+
+    fn folder_with(name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let folder = std::env::temp_dir().join(format!(
+            "kanaemi-settings-dictionaries-{}-{name}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        for (file, text) in files {
+            fs::write(folder.join(file), text).unwrap();
+        }
+        folder
+    }
+
+    fn items_in(folder: &Path, chosen: &[&str]) -> Vec<ListItem> {
+        let chosen: Vec<String> = chosen.iter().map(|n| (*n).to_owned()).collect();
+        file_items(folder, &dictionary_files(folder), &chosen)
+    }
+
+    #[test]
+    fn a_text_dictionary_is_named_by_its_first_line_with_its_file_beside() {
+        let folder = folder_with("text", &[("a.tsv", "# 地名の辞書\nあ\t亜\n")]);
+
+        let items = items_in(&folder, &[]);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "a.tsv");
+        assert_eq!(items[0].label, "地名の辞書");
+        assert_eq!(items[0].description.as_deref(), Some("a.tsv"));
+        assert_eq!(items[0].convert.as_deref(), Some("バイナリに変換"));
+    }
+
+    #[test]
+    fn a_dictionary_saying_nothing_of_itself_is_named_by_its_file_alone() {
+        let folder = folder_with("bare", &[("a.tsv", "あ\t亜\n")]);
+
+        let items = items_in(&folder, &[]);
+
+        assert_eq!(items[0].label, "a.tsv");
+        assert_eq!(items[0].description, None);
+    }
+
+    #[test]
+    fn a_binary_dictionary_is_named_by_the_text_it_was_made_from_and_stands_for_it() {
+        let folder = folder_with("binary", &[("a.tsv", "# 地名の辞書\nあ\t亜\n")]);
+        convert(&folder, "a.tsv").unwrap();
+
+        let items = items_in(&folder, &[]);
+
+        assert_eq!(items.len(), 1, "the text one is not listed apart");
+        assert_eq!(items[0].name, "a.kdic");
+        assert_eq!(items[0].label, "地名の辞書");
+        assert_eq!(items[0].description.as_deref(), Some("a.kdic"));
+        assert_eq!(items[0].convert, None);
+    }
+
+    #[test]
+    fn a_text_dictionary_chosen_by_name_stays_beside_its_binary_one() {
+        let folder = folder_with("chosen", &[("a.tsv", "# 地名の辞書\nあ\t亜\n")]);
+        convert(&folder, "a.tsv").unwrap();
+
+        let names: Vec<String> = items_in(&folder, &["a.tsv"])
+            .into_iter()
+            .map(|i| i.name)
+            .collect();
+
+        assert_eq!(names, ["a.kdic", "a.tsv"]);
+    }
+
+    #[test]
+    fn a_binary_dictionary_older_than_its_text_offers_to_be_made_again() {
+        let folder = folder_with("stale", &[("a.tsv", "# 地名の辞書\nあ\t亜\n")]);
+        convert(&folder, "a.tsv").unwrap();
+        fs::write(folder.join("a.tsv"), "# 地名の辞書\nい\t伊\n").unwrap();
+
+        let items = items_in(&folder, &[]);
+
+        assert_eq!(items[0].name, "a.kdic");
+        assert_eq!(items[0].convert.as_deref(), Some("バイナリに再変換"));
+        assert!(items[0].meta.as_deref().unwrap().starts_with("要再変換"));
+        assert_eq!(conversion_source(&folder, "a.kdic"), "a.tsv");
+    }
+
+    #[test]
+    fn a_binary_dictionary_without_its_text_says_it_is_binary() {
+        let folder = folder_with("lone", &[("a.tsv", "# 地名の辞書\nあ\t亜\n")]);
+        convert(&folder, "a.tsv").unwrap();
+        fs::remove_file(folder.join("a.tsv")).unwrap();
+
+        let items = items_in(&folder, &[]);
+
+        assert_eq!(items[0].label, "a.kdic");
+        assert_eq!(items[0].description.as_deref(), Some("バイナリの辞書"));
     }
 
     #[test]
