@@ -94,6 +94,7 @@ fn character() -> impl Strategy<Value = char> {
 fn named_key() -> impl Strategy<Value = Key> {
     proptest::sample::select(vec![
         Key::Space,
+        Key::Tab,
         Key::Enter,
         Key::Esc,
         Key::Backspace,
@@ -349,10 +350,11 @@ impl Host {
                 "a page shows 9 at most"
             );
             prop_assert!(view.selected < view.items.len());
-            let selected = format!("»{}", view.items[view.selected].surface);
+            let selected = &view.items[view.selected].surface;
             prop_assert!(
-                out.preedit.contains(&selected),
-                "the selected candidate is the one shown in the preedit"
+                out.preedit.contains(&format!("»{selected}"))
+                    || out.preedit.contains(&format!("›{selected}")),
+                "the selected candidate, or the reading completed to, is the one shown in the preedit"
             );
         }
         let expected_indicator = match event {

@@ -31,6 +31,7 @@ pub fn recorded(held: Held, key: &str, code: &str) -> Option<String> {
     let name = match key {
         "Shift" | "Control" | "Alt" | "Meta" | "CapsLock" => return None,
         "Enter" => "enter".to_owned(),
+        "Tab" => "tab".to_owned(),
         "Escape" => "esc".to_owned(),
         "Backspace" => "backspace".to_owned(),
         "Delete" => "delete".to_owned(),
@@ -176,6 +177,18 @@ const SELECT_LABELS: [&str; 9] = [
     "9 番目の候補を確定",
 ];
 
+const COMPLETION_SELECT_LABELS: [&str; 9] = [
+    "1 番目の補完の読みにする",
+    "2 番目の補完の読みにする",
+    "3 番目の補完の読みにする",
+    "4 番目の補完の読みにする",
+    "5 番目の補完の読みにする",
+    "6 番目の補完の読みにする",
+    "7 番目の補完の読みにする",
+    "8 番目の補完の読みにする",
+    "9 番目の補完の読みにする",
+];
+
 /// The character a digit or symbol key types with Shift, on a US layout.
 fn shifted(code: &str) -> Option<char> {
     const DIGITS: &str = ")!@#$%^&*(";
@@ -230,13 +243,21 @@ fn action_label(mode: &str, action: Action) -> &'static str {
         ("reading", Action::Commit) => "かなのまま確定",
         ("reading", Action::Cancel) => "読みを取り消す",
         ("reading", Action::Register) => "この読みの語を登録する",
-        ("candidates", Action::Cancel) => "読みに戻る",
-        ("candidates", Action::Backspace) => "読みに戻って 1 文字消す",
+        ("candidates", Action::Cancel) => "読みか補完の一覧に戻る",
+        ("candidates", Action::Backspace) => "読みか補完の一覧に戻る",
         ("candidates", Action::Register) => "この読みの語を登録する",
         ("registration", Action::Commit) => "登録して確定",
         ("registration", Action::Cancel) => "登録をやめる",
         ("reading", Action::Begin) => "送り仮名を始める",
         ("candidates", Action::Begin) => "確定して次の読みを始める",
+        ("completion", Action::Complete) => "次の補完の読みにする",
+        ("completion", Action::CompletePrevious) => "前の補完の読みにする",
+        ("completion", Action::Pick(place)) => COMPLETION_SELECT_LABELS
+            .get(usize::from(place))
+            .copied()
+            .unwrap_or("補完の読みにする"),
+        ("completion", Action::Commit) => "一覧を閉じて読みに戻る",
+        ("completion", Action::Cancel) => "一覧を閉じて打った読みに戻る",
         (_, Action::Next) => "次の候補",
         (_, Action::Previous) => "前の候補",
         (_, Action::Commit) => "確定",
@@ -263,6 +284,8 @@ fn action_label(mode: &str, action: Action) -> &'static str {
         (_, Action::Kana) => "かなモードへ",
         (_, Action::Begin) => "読みを始める",
         (_, Action::UndoCommit) => "直前の確定を取り消す",
+        (_, Action::Complete) => "読みを補完する",
+        (_, Action::CompletePrevious) => "読みを逆向きに補完する",
         (_, Action::Pick(place)) => SELECT_LABELS
             .get(usize::from(place))
             .copied()
@@ -384,6 +407,11 @@ pub fn Keys() -> Element {
             "reading",
             "読みを打っているとき",
             "かなで読みを打って、まだ変換していないとき（例：›かんじ）",
+        ),
+        (
+            "completion",
+            "補完の一覧が出ているとき",
+            "読みを補完して、補完の読みの一覧が出ているとき。ここにないキーは、読みを打っているときと同じに働きます",
         ),
         (
             "candidates",
@@ -817,6 +845,7 @@ fn scene_label(scene: &str) -> &'static str {
         "kana" => "かなで何も打っていないとき",
         "abc" => "ABC で何も打っていないとき",
         "reading" => "読みを打っているとき",
+        "completion" => "補完の一覧が出ているとき",
         "candidates" => "候補を選んでいるとき",
         "registration" => "語を登録しているとき",
         _ => "",
@@ -1030,7 +1059,7 @@ fn IntentRow(intent: Intent, current: Bindings) -> Element {
                                     };
                                     let shipped = Bindings::default();
                                     let changes = match &what {
-                                        Editing::Adding => intent.adding(&written, &shipped),
+                                        Editing::Adding => intent.adding(&written, &current, &shipped),
                                         Editing::Changing(old) => {
                                             intent.replacing(old, &written, &current, &shipped)
                                         }
@@ -1202,6 +1231,10 @@ mod tests {
         assert_eq!(recorded(none, "F12", "F12").as_deref(), Some("f12"));
         assert_eq!(recorded(none, "0", "Digit0").as_deref(), Some("0"));
         assert_eq!(recorded(none, "Escape", "Escape").as_deref(), Some("esc"));
+        assert_eq!(
+            recorded(held(false, false, false, true), "Tab", "Tab").as_deref(),
+            Some("shift+tab")
+        );
     }
 
     #[test]

@@ -23,4 +23,11 @@ pub trait Converter {
         let _ = (reading, okurigana);
         surface.to_owned()
     }
+
+    /// Readings longer than `reading` that start with it, best first, to
+    /// complete it with when the user asks. None by default.
+    fn complete(&self, reading: &str) -> Vec<String> {
+        let _ = reading;
+        Vec::new()
+    }
 }

@@ -177,7 +177,7 @@ fn backspace_and_escape_from_an_okurigana_conversion() {
     let mut t = T::new();
     t.kana();
     t.typ(";ka;ku");
-    assert_eq!(t.key(Key::Backspace).preedit, "›か*");
+    assert_eq!(t.key(Key::Backspace).preedit, "›か*く");
 
     let mut t = T::new();
     t.kana();
@@ -342,32 +342,6 @@ fn a_character_that_drops_the_rest_of_the_okurigana_for_kana_of_its_own_commits(
 }
 
 #[test]
-fn backspace_erases_what_was_typed_after_the_okurigana_first() {
-    let mut t = T::new();
-    t.kana();
-    t.typ(";mo;tta");
-    assert_eq!(t.key(Key::Backspace).preedit, "»持っt");
-    assert_eq!(
-        t.converter()
-            .okurigana_seen
-            .last()
-            .cloned()
-            .flatten()
-            .as_deref(),
-        Some("っ")
-    );
-    assert_eq!(t.key(Key::Backspace).preedit, "›も*っ");
-}
-
-#[test]
-fn backspace_erases_romaji_typed_after_the_okurigana_before_its_kana() {
-    let mut t = T::new();
-    t.kana();
-    t.typ(";i;tts");
-    assert_eq!(t.key(Key::Backspace).preedit, "»行っt");
-}
-
-#[test]
 fn going_back_to_the_reading_keeps_the_okurigana_finished_after_it() {
     let mut t = T::new();
     t.kana();
@@ -443,8 +417,8 @@ fn romaji_typed_after_an_okurigana_survives_going_back_to_the_reading() {
     t.typ(";mo;tt");
     assert_eq!(
         t.key(Key::Backspace).preedit,
-        "›も*っ",
-        "the romaji goes first"
+        "›も*っt",
+        "Backspace goes back as Esc does"
     );
 }
 

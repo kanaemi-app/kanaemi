@@ -69,9 +69,10 @@
 # @backspace・@delete（1 文字消す）・@left・@right・@home・@end（カーソルを動かす）・
 # @hiragana・@katakana・@half-katakana・@full-alphanumeric・@alphanumeric（読みをその形にして選ぶ。確定はしない）・
 # @commit-hiragana・@commit-katakana・@commit-half-katakana・@commit-full-alphanumeric・@commit-alphanumeric（読みをその形にして確定する）・
-# @select-1〜@select-9（その番号の候補を確定）・
+# @select-1〜@select-9（その番号の候補を確定。補完の一覧が出ているときは、その番号の読みにする）・
 # @register（登録を始める）・@forget（その候補を以後出さない）・@abc（確定して ABC モードへ）・@kana（かなモードへ）・
 # @begin（読みを始める。読みの中では送り仮名を始め、候補を選んでいるときは確定して次の読みを始める）・
+# @complete・@complete-previous（読みを、それで始まるより長い読みに置き換える。続けて押すと次・前の読み。候補を選んでいるときは、読みに戻して補完を続ける）・
 # @undo-commit（直前に確定した候補を、選び直せるように戻す）。
 # 割り当てたキーは、ローマ字の表より先に機能として働く。場面に合わない機能は書けない。
 
@@ -107,7 +108,27 @@
 #"eisu" = "@abc"
 #"henkan" = "@next"
 #"muhenkan" = "@katakana"
+#"tab" = "@complete"
+#"shift+tab" = "@complete-previous"
 #";" = "@begin"
+
+# 読みの補完の一覧が出ているとき。ここにないキーは、読みを打っているときと同じに働く。
+#[keys.completion]
+#"tab" = "@complete"
+#"shift+tab" = "@complete-previous"
+#"ctrl+n" = "@complete"
+#"ctrl+p" = "@complete-previous"
+#"down" = "@complete"
+#"up" = "@complete-previous"
+#"1" = "@select-1"
+#"2" = "@select-2"
+#"3" = "@select-3"
+#"4" = "@select-4"
+#"5" = "@select-5"
+#"6" = "@select-6"
+#"7" = "@select-7"
+#"8" = "@select-8"
+#"9" = "@select-9"
 
 # 候補を選んでいるとき
 #[keys.candidates]
@@ -144,6 +165,8 @@
 #"eisu" = "@abc"
 #"henkan" = "@next"
 #"muhenkan" = "@katakana"
+#"tab" = "@complete"
+#"shift+tab" = "@complete-previous"
 #";" = "@begin"
 
 # 語を登録しているとき（登録する文字列を打っているとき）

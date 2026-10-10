@@ -17,6 +17,8 @@ pub struct Intent {
 const COMPOSING: &[&str] = &["reading", "candidates", "registration"];
 const CONVERTING: &[&str] = &["reading", "candidates"];
 const EDITING: &[&str] = &["reading", "registration"];
+const COMPLETION: &str = "completion";
+const COMPLETING: &[&str] = &["reading", COMPLETION, "candidates"];
 
 /// The intents, by the group they are shown in.
 pub const GROUPS: &[(&str, &[Intent])] = &[
@@ -40,6 +42,18 @@ pub const GROUPS: &[(&str, &[Intent])] = &[
                 note: "読みの途中では、変換して最後の候補を選びます",
                 action: Action::Previous,
                 scenes: CONVERTING,
+            },
+            Intent {
+                title: "読みを補完する",
+                note: "読みを、それで始まるより長い読みに置き換えます。続けて押すと次の読みにします。候補を選んでいるときは、読みに戻して補完を続けます",
+                action: Action::Complete,
+                scenes: COMPLETING,
+            },
+            Intent {
+                title: "読みを逆向きに補完する",
+                note: "",
+                action: Action::CompletePrevious,
+                scenes: COMPLETING,
             },
             Intent {
                 title: "確定する",
@@ -222,28 +236,51 @@ impl Intent {
     }
 
     /// Binds `key` to it in every one of its scenes.
-    pub fn adding(&self, key: &str, shipped: &Bindings) -> Vec<Change> {
+    pub fn adding(&self, key: &str, current: &Bindings, shipped: &Bindings) -> Vec<Change> {
         let value = self.value();
-        self.scenes
+        let mut changes: Vec<Change> = self
+            .scenes
             .iter()
             .map(|scene| {
                 let written = (bound(shipped, scene, key).as_deref() != Some(value.as_str()))
                     .then(|| value.clone());
                 (*scene, key.to_owned(), written)
             })
-            .collect()
+            .collect();
+        // A key the completion list binds to something else would hide the
+        // reading's binding while the list is shown.
+        if self.reads_through_completion()
+            && bound(current, COMPLETION, key).is_some_and(|there| there != value)
+        {
+            let written = (bound(shipped, COMPLETION, key).as_deref() != Some(value.as_str()))
+                .then_some(value);
+            changes.push((COMPLETION, key.to_owned(), written));
+        }
+        changes
+    }
+
+    /// Whether it works in a reading but has no binding of its own while a
+    /// completion is listed, where a key bound nowhere does what it does in
+    /// the reading.
+    fn reads_through_completion(&self) -> bool {
+        self.scenes.contains(&"reading") && !self.scenes.contains(&COMPLETION)
+    }
+
+    /// Its scenes, and the completion list where adding it may write it too.
+    fn written_scenes(&self) -> impl Iterator<Item = &'static str> {
+        let through = self.reads_through_completion().then_some(COMPLETION);
+        self.scenes.iter().copied().chain(through)
     }
 
     /// Takes `key` off it wherever it is bound to it.
     pub fn removing(&self, key: &str, current: &Bindings, shipped: &Bindings) -> Vec<Change> {
         let value = self.value();
-        self.scenes
-            .iter()
+        self.written_scenes()
             .filter(|scene| bound(current, scene, key).as_deref() == Some(value.as_str()))
             .map(|scene| {
                 let written = (bound(shipped, scene, key).as_deref() == Some(value.as_str()))
                     .then(|| UNBOUND.to_owned());
-                (*scene, key.to_owned(), written)
+                (scene, key.to_owned(), written)
             })
             .collect()
     }
@@ -260,9 +297,12 @@ impl Intent {
             return Vec::new();
         }
         let mut changes = self.removing(old, current, shipped);
-        let scenes: Vec<&'static str> = changes.iter().map(|(scene, _, _)| *scene).collect();
+        let mut scenes: Vec<&'static str> = changes.iter().map(|(scene, _, _)| *scene).collect();
+        if scenes.contains(&"reading") && self.reads_through_completion() {
+            scenes.push(COMPLETION);
+        }
         changes.extend(
-            self.adding(new, shipped)
+            self.adding(new, current, shipped)
                 .into_iter()
                 .filter(|(scene, _, _)| scenes.contains(scene)),
         );
@@ -273,7 +313,7 @@ impl Intent {
     pub fn resetting(&self, current: &Bindings, shipped: &Bindings) -> Vec<Change> {
         let value = self.value();
         let mut changes = Vec::new();
-        for scene in self.scenes {
+        for scene in self.written_scenes() {
             let (now, then) = (
                 bindings_table(current, scene),
                 bindings_table(shipped, scene),
@@ -286,7 +326,7 @@ impl Intent {
             }
             for key in keys {
                 if bound(current, scene, key) != bound(shipped, scene, key) {
-                    changes.push((*scene, key.clone(), None));
+                    changes.push((scene, key.clone(), None));
                 }
             }
         }
@@ -358,6 +398,7 @@ mod tests {
             "kana",
             "abc",
             "reading",
+            "completion",
             "candidates",
             "registration",
             "application",
@@ -397,11 +438,75 @@ mod tests {
             next.keys(&shipped).somewhere,
             [("down".to_owned(), vec!["candidates"])]
         );
-        let mut changes = begin().adding("space#hold", &shipped);
+        let mut changes = begin().adding("space#hold", &shipped, &shipped);
         changes.retain(|(scene, _, _)| *scene == "reading");
         let keys = begin().keys(&written(&changes));
         assert_eq!(keys.everywhere, [";"]);
         assert_eq!(keys.somewhere, [("space#hold".to_owned(), vec!["reading"])]);
+    }
+
+    #[test]
+    fn a_key_added_in_the_reading_works_while_a_completion_is_listed_too() {
+        let shipped = Bindings::default();
+        let commit = *intents().find(|i| i.action == Action::Commit).unwrap();
+        let changes = commit.adding("1", &shipped, &shipped);
+        assert!(
+            changes.contains(&("completion", "1".to_owned(), Some("@commit".to_owned()))),
+            "1 picks a listed reading by default: {changes:?}"
+        );
+        let changes = commit.adding("ctrl+o", &shipped, &shipped);
+        assert!(
+            changes.iter().all(|(scene, _, _)| *scene != "completion"),
+            "bound nowhere there, the reading's binding does: {changes:?}"
+        );
+        let bindings = written(&commit.adding("1", &shipped, &shipped));
+        let changes = commit.removing("1", &bindings, &shipped);
+        assert!(
+            changes.contains(&("completion", "1".to_owned(), None)),
+            "taken off there too, back to picking: {changes:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_moved_to_the_reading_from_the_completion_list_works_there_too() {
+        let shipped = Bindings::default();
+        let complete = *intents().find(|i| i.action == Action::Complete).unwrap();
+        let commit = *intents().find(|i| i.action == Action::Commit).unwrap();
+        let bindings = written(&complete.adding("ctrl+o", &shipped, &shipped));
+        let changes = commit.adding("ctrl+o", &bindings, &shipped);
+        assert!(
+            changes.contains(&(
+                "completion",
+                "ctrl+o".to_owned(),
+                Some("@commit".to_owned())
+            )),
+            "{changes:?}"
+        );
+    }
+
+    #[test]
+    fn a_key_put_in_place_in_the_reading_works_while_a_completion_is_listed_too() {
+        let shipped = Bindings::default();
+        let commit = *intents().find(|i| i.action == Action::Commit).unwrap();
+        let changes = commit.replacing("enter", "1", &shipped, &shipped);
+        assert!(
+            changes.contains(&("completion", "1".to_owned(), Some("@commit".to_owned()))),
+            "{changes:?}"
+        );
+    }
+
+    #[test]
+    fn resetting_takes_back_what_adding_wrote_for_a_completion_listed() {
+        let shipped = Bindings::default();
+        let commit = *intents().find(|i| i.action == Action::Commit).unwrap();
+        let only_there = written(&[("completion", "1".to_owned(), Some("@commit".to_owned()))]);
+        assert!(commit.changed(&only_there, &shipped));
+        let bindings = written(&commit.adding("1", &shipped, &shipped));
+        let changes = commit.resetting(&bindings, &shipped);
+        assert!(
+            changes.contains(&("completion", "1".to_owned(), None)),
+            "{changes:?}"
+        );
     }
 
     #[test]
@@ -419,7 +524,7 @@ mod tests {
     fn semicolon_is_swapped_for_space_held_in_every_scene_at_once() {
         let shipped = Bindings::default();
         let mut changes = begin().removing(";", &shipped, &shipped);
-        changes.extend(begin().adding("space#hold", &shipped));
+        changes.extend(begin().adding("space#hold", &shipped, &shipped));
         let bindings = written(&changes);
         assert_eq!(begin().keys(&bindings).everywhere, ["space#hold"]);
         let held = |scene: &[kanaemi_core::Binding]| {
@@ -442,7 +547,7 @@ mod tests {
                 .iter()
                 .all(|(_, _, value)| value.as_deref() == Some(UNBOUND))
         );
-        let added = written(&begin().adding("q", &shipped));
+        let added = written(&begin().adding("q", &shipped, &shipped));
         assert!(
             begin()
                 .removing("q", &added, &shipped)
@@ -475,7 +580,7 @@ mod tests {
         let shipped = Bindings::default();
         assert!(
             begin()
-                .adding(";", &shipped)
+                .adding(";", &shipped, &shipped)
                 .iter()
                 .all(|(_, _, value)| value.is_none())
         );
@@ -485,7 +590,7 @@ mod tests {
     fn resetting_puts_kanaemis_own_keys_back() {
         let shipped = Bindings::default();
         let mut changes = begin().removing(";", &shipped, &shipped);
-        changes.extend(begin().adding("space#hold", &shipped));
+        changes.extend(begin().adding("space#hold", &shipped, &shipped));
         let bindings = written(&changes);
         assert!(begin().changed(&bindings, &shipped));
         let reset = begin().resetting(&bindings, &shipped);

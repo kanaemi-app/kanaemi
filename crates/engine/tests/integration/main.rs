@@ -4,6 +4,7 @@
 mod accuracy;
 mod binary_dictionary;
 mod common;
+mod completion;
 mod conversion;
 mod numeric;
 mod placeholder;

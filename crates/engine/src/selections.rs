@@ -89,6 +89,22 @@ impl Selections {
         self.weight_of(self.pairs.get(&(reading.to_owned(), surface.to_owned())))
     }
 
+    /// The readings that start with `prefix` of pairs that come first,
+    /// heaviest first by their heaviest pair; equal weights by reading.
+    pub(crate) fn favorite_readings(&self, prefix: &str) -> Vec<&str> {
+        let mut heaviest: HashMap<&str, f64> = HashMap::new();
+        for ((reading, _), pair) in &self.pairs {
+            let weight = self.weight_of(Some(pair));
+            if weight >= Self::FAVORITE && reading.starts_with(prefix) {
+                let w = heaviest.entry(reading).or_insert(weight);
+                *w = w.max(weight);
+            }
+        }
+        let mut readings: Vec<(&str, f64)> = heaviest.into_iter().collect();
+        readings.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        readings.into_iter().map(|(reading, _)| reading).collect()
+    }
+
     fn weight_of(&self, pair: Option<&(f64, u64)>) -> f64 {
         pair.map_or(0.0, |&(weight, at)| {
             weight * 0.5f64.powf((self.tick - at) as f64 / HALF_LIFE)

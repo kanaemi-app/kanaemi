@@ -114,6 +114,10 @@ pub enum Action {
     Pick(u8),
     /// Take the candidate last committed back to choosing it again.
     UndoCommit,
+    /// Replace the reading with a longer one it starts, the next each time.
+    Complete,
+    /// Go round the readings [`Action::Complete`] gives the other way.
+    CompletePrevious,
 }
 
 /// Where a key is pressed, which decides the list of bindings it is looked up in.
@@ -121,6 +125,8 @@ pub enum Action {
 pub(crate) enum Scene {
     /// A reading being typed, or only unfinished romaji.
     Reading,
+    /// A reading while the readings it is completed with are listed.
+    Completion,
     Candidates,
     /// The text to register being typed.
     Registration,
@@ -165,6 +171,9 @@ pub struct Remap {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bindings {
     pub reading: Vec<Binding>,
+    /// While the readings a reading is completed with are listed. A key
+    /// bound nowhere here does what it does in a reading.
+    pub completion: Vec<Binding>,
     pub candidates: Vec<Binding>,
     /// While typing the text to register.
     pub registration: Vec<Binding>,
@@ -184,6 +193,7 @@ impl Bindings {
     pub(crate) fn get(&self, scene: Scene) -> &[Binding] {
         match scene {
             Scene::Reading => &self.reading,
+            Scene::Completion => &self.completion,
             Scene::Candidates => &self.candidates,
             Scene::Registration => &self.registration,
             Scene::Kana => &self.kana,
@@ -196,6 +206,7 @@ impl Bindings {
     pub fn hold_a_key(&self) -> bool {
         [
             &self.reading,
+            &self.completion,
             &self.candidates,
             &self.registration,
             &self.kana,
@@ -284,6 +295,14 @@ impl Default for Bindings {
             key(Key::Henkan, plain, Next),
             key(Key::Muhenkan, plain, Form(crate::Form::Katakana)),
         ];
+        // SKK's completion keys.
+        let completing = [
+            key(Key::Tab, plain, Complete),
+            key(Key::Tab, shift, CompletePrevious),
+        ];
+        let picking: Vec<Binding> = (0..PAGE_LEN as u8)
+            .map(|n| key(Key::Char(char::from(b'1' + n)), plain, Pick(n)))
+            .collect();
         let remap = |c, to| Remap {
             from: Chord {
                 key: Key::Char(c),
@@ -302,7 +321,21 @@ impl Default for Bindings {
                 &editing,
                 &to_abc,
                 &converting,
+                &completing,
                 &[begin],
+            ]
+            .concat(),
+            // The listed readings are gone through as candidates are, and
+            // Space still converts the reading shown.
+            completion: [
+                &completing[..],
+                &[
+                    key(Key::Char('n'), ctrl, Complete),
+                    key(Key::Char('p'), ctrl, CompletePrevious),
+                    key(Key::Down, plain, Complete),
+                    key(Key::Up, plain, CompletePrevious),
+                ],
+                &picking,
             ]
             .concat(),
             candidates: [
@@ -310,9 +343,7 @@ impl Default for Bindings {
                 &[key(Key::Down, plain, Next), key(Key::Up, plain, Previous)],
                 &deciding,
                 &forms,
-                &(0..PAGE_LEN as u8)
-                    .map(|n| key(Key::Char(char::from(b'1' + n)), plain, Pick(n)))
-                    .collect::<Vec<_>>(),
+                &picking,
                 // 1 to 9 pick a candidate, so 0 is next to them for "none of these".
                 &[
                     key(Key::Char('0'), plain, Register),
@@ -320,6 +351,7 @@ impl Default for Bindings {
                 ],
                 &to_abc,
                 &converting,
+                &completing,
                 &[begin],
             ]
             .concat(),

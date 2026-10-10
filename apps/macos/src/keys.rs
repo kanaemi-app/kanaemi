@@ -451,6 +451,7 @@ fn key(raw: RawEvent) -> Key {
         102 => Key::Eisu,
         104 => Key::Kana,
         49 => Key::Space,
+        48 => Key::Tab,
         36 | 76 => Key::Enter,
         53 => Key::Esc,
         51 => Key::Backspace,
@@ -1086,8 +1087,9 @@ mod tests {
     }
 
     #[test]
-    fn keys_the_core_does_not_handle_are_other() {
-        assert_eq!(key_of(down(48, 0, "\t")), Some(Key::Other));
+    fn tab_is_tab_and_keys_the_core_does_not_handle_are_other() {
+        assert_eq!(key_of(down(48, 0, "\t")), Some(Key::Tab));
+        assert_eq!(key_of(down(114, 0, "\u{f746}")), Some(Key::Other), "Help");
     }
 
     #[test]

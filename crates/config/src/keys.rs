@@ -16,6 +16,7 @@ const PICKABLE: u8 = 9;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Scene {
     Reading,
+    Completion,
     Candidates,
     Registration,
     Kana,
@@ -23,8 +24,9 @@ pub(crate) enum Scene {
 }
 
 impl Scene {
-    const ALL: [Scene; 5] = [
+    const ALL: [Scene; 6] = [
         Self::Reading,
+        Self::Completion,
         Self::Candidates,
         Self::Registration,
         Self::Kana,
@@ -35,6 +37,7 @@ impl Scene {
     const fn name(self) -> &'static str {
         match self {
             Self::Reading => "reading",
+            Self::Completion => "completion",
             Self::Candidates => "candidates",
             Self::Registration => "registration",
             Self::Kana => "kana",
@@ -51,6 +54,7 @@ impl Scene {
         use Action::*;
         match self {
             Self::Reading => !matches!(action, Forget | Pick(_) | UndoCommit),
+            Self::Completion => !matches!(action, Forget | UndoCommit),
             Self::Candidates => !matches!(action, Delete | Left | Right | Home | End | UndoCommit),
             Self::Registration => matches!(
                 action,
@@ -74,6 +78,7 @@ impl Scene {
     pub(crate) fn bindings(self, bindings: &Bindings) -> &Vec<Binding> {
         match self {
             Self::Reading => &bindings.reading,
+            Self::Completion => &bindings.completion,
             Self::Candidates => &bindings.candidates,
             Self::Registration => &bindings.registration,
             Self::Kana => &bindings.kana,
@@ -84,6 +89,7 @@ impl Scene {
     pub(crate) fn bindings_mut(self, bindings: &mut Bindings) -> &mut Vec<Binding> {
         match self {
             Self::Reading => &mut bindings.reading,
+            Self::Completion => &mut bindings.completion,
             Self::Candidates => &mut bindings.candidates,
             Self::Registration => &mut bindings.registration,
             Self::Kana => &mut bindings.kana,
@@ -158,6 +164,8 @@ fn every_action() -> Vec<Action> {
         Action::Right,
         Action::Home,
         Action::End,
+        Action::Complete,
+        Action::CompletePrevious,
         Action::Register,
         Action::Forget,
         Action::Abc,
@@ -198,6 +206,8 @@ pub fn format_action(action: Action) -> String {
         Action::Begin => "begin".to_owned(),
         Action::Pick(n) => format!("select-{}", u16::from(n) + 1),
         Action::UndoCommit => "undo-commit".to_owned(),
+        Action::Complete => "complete".to_owned(),
+        Action::CompletePrevious => "complete-previous".to_owned(),
     };
     format!("@{name}")
 }
@@ -321,6 +331,7 @@ pub fn sendable_keys() -> Vec<&'static str> {
 
 const NAMED_KEYS: &[(&str, Key)] = &[
     ("space", Key::Space),
+    ("tab", Key::Tab),
     ("enter", Key::Enter),
     ("esc", Key::Esc),
     ("backspace", Key::Backspace),
