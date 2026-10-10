@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Assemble Kanaemi.app into target from the built input method and settings
-# app, with the signature Apple silicon needs to run it: ad-hoc, or by the
-# identity KANAEMI_SIGN_IDENTITY names.
+# Assemble Kanaemi.app into target/bundle.noindex from the built input method
+# and settings app, with the signature Apple silicon needs to run it: ad-hoc,
+# or by the identity KANAEMI_SIGN_IDENTITY names.
 #
 #   bundle.sh [folder of the built binaries, target/release by default]
 set -euo pipefail
@@ -11,7 +11,10 @@ release="${1:-$root/target/release}"
 assets="$root/apps/macos/assets"
 bundle="$assets/bundle"
 logo="$assets/logo"
-app="$root/target/Kanaemi.app"
+# Out of Spotlight's reach: an app it indexes is registered with Launch
+# Services, which may then start this copy of the input method in place of the
+# installed one, as both have the same bundle identifier.
+app="$root/target/bundle.noindex/Kanaemi.app"
 
 # The version kanaemi_core::VERSION reports, as the settings app prints it.
 version="$("$release/kanaemi-settings" --version)"
@@ -20,6 +23,8 @@ plist() {
 }
 
 rm -rf "$app"
+# A copy assembled where Spotlight looks keeps being found until it is gone.
+rm -rf "$root/target/Kanaemi.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 plist "$bundle/Info.plist" "$app/Contents/Info.plist"
 cp "$bundle/InfoPlist.strings" "$app/Contents/Resources/"
