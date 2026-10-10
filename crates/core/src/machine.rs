@@ -199,8 +199,11 @@ impl<C: Converter> Core<C> {
         self.erase = None;
         self.send = None;
         self.effects.clear();
-        // Only the keys that complete go on with a completion.
-        if !matches!(event, Event::Key(_)) {
+        // Only the keys that complete, and a reading picked from its list,
+        // go on with a completion. A caret that may have moved leaves it, as
+        // it leaves what is being typed: a host may tell of the click on the
+        // list before the reading picked by it.
+        if !matches!(event, Event::Key(_) | Event::Select(_) | Event::CaretMoved) {
             self.completion = None;
         }
         let consumed = match event {
@@ -603,18 +606,31 @@ impl<C: Converter> Core<C> {
         match &self.state {
             State::Candidates(_) => Scene::Candidates,
             State::Idle { .. } if !self.registrations.is_empty() => Scene::Registration,
+            State::Reading(_) if self.listing_completion() => Scene::Completion,
             _ => Scene::Reading,
         }
     }
 
-    /// What a key, pressed so, is bound to where it is pressed.
+    /// Whether the readings of a completion are listed: one of them is shown.
+    fn listing_completion(&self) -> bool {
+        self.completion.as_ref().is_some_and(|c| c.index.is_some())
+    }
+
+    /// What a key, pressed so, is bound to where it is pressed. A key bound
+    /// nowhere while a completion is listed does what it does in a reading.
     fn bound(&self, chord: Chord, gesture: Gesture) -> Option<Action> {
-        self.config
-            .bindings
-            .get(self.scene())
-            .iter()
-            .find(|b| b.from == chord && b.gesture == gesture)
-            .map(|b| b.to)
+        let find = |scene| {
+            self.config
+                .bindings
+                .get(scene)
+                .iter()
+                .find(|b: &&crate::Binding| b.from == chord && b.gesture == gesture)
+                .map(|b| b.to)
+        };
+        match self.scene() {
+            Scene::Completion => find(Scene::Completion).or_else(|| find(Scene::Reading)),
+            scene => find(scene),
+        }
     }
 
     /// Whether anything is being typed: a word, unfinished romaji or a
@@ -922,6 +938,29 @@ impl<C: Converter> Core<C> {
 
     /// What a bound key does, by where it is pressed.
     fn act(&mut self, action: Action, pressed: Chord) -> bool {
+        // A number the list has no reading for does nothing, the list kept.
+        if let Action::Pick(n) = action
+            && self.listing_completion()
+        {
+            self.pick_completion(usize::from(n));
+            return true;
+        }
+        // Committing a listed reading takes it as the reading, the list gone:
+        // converting it is Space's, and committing it as kana is the next
+        // commit's.
+        if action == Action::Commit && self.listing_completion() {
+            self.completion = None;
+            return true;
+        }
+        // Cancelling the list goes a step back, to the reading as typed:
+        // cancelling that is the next cancel's.
+        if action == Action::Cancel
+            && self.listing_completion()
+            && let Some(completion) = self.completion.take()
+        {
+            self.state = State::Reading(completion.typed);
+            return true;
+        }
         // Converting a completed reading carries the completion into the
         // candidates, to go on with from there.
         let converting = matches!(self.state, State::Reading(_))
@@ -1213,23 +1252,21 @@ impl<C: Converter> Core<C> {
                 self.state = State::Candidates(selection);
                 self.choose_form(form);
             }
-            Action::Cancel if forgetting => self.state = State::Candidates(selection),
+            // Backspace goes back to the reading and erases nothing: what it
+            // would erase is the reading, hidden behind the candidate shown.
+            // Unlike cancel, it goes back to the reading of a commit chosen
+            // again too, to edit it.
+            Action::Cancel | Action::Backspace if forgetting => {
+                self.state = State::Candidates(selection)
+            }
             Action::Cancel if self.redoing.is_some() && self.registrations.is_empty() => {
                 self.restore();
             }
-            Action::Cancel => self.state = State::Reading(selection.into_reading()),
-            Action::Backspace if selection.typed.pop().is_some() => {
-                self.state = State::Candidates(selection);
-            }
-            Action::Backspace if selection.word.okurigana_grown() => {
-                let mut word = selection.into_reading();
-                word.backspace();
-                self.convert(word);
-            }
-            Action::Backspace => {
-                let mut word = selection.into_reading();
-                word.backspace();
-                self.state = State::Reading(word);
+            // A step back: to the list of the completion converted from, as
+            // it was, or else to the reading.
+            Action::Cancel | Action::Backspace => {
+                self.completion = selection.completion.take().map(|completion| *completion);
+                self.state = State::Reading(selection.into_reading());
             }
             Action::Forget => {
                 if forgetting {
@@ -1364,6 +1401,9 @@ impl<C: Converter> Core<C> {
     }
 
     fn select(&mut self, index: usize) {
+        if self.pick_completion(index) {
+            return;
+        }
         match mem::replace(&mut self.state, State::idle()) {
             State::Candidates(selection)
                 if index < PAGE_LEN
@@ -1374,6 +1414,36 @@ impl<C: Converter> Core<C> {
             }
             state => self.state = state,
         }
+    }
+
+    /// Completes the reading to the `n`th of the page its list shows, going
+    /// on from there; whether the list shows one.
+    fn pick_completion(&mut self, n: usize) -> bool {
+        if !matches!(self.state, State::Reading(_)) {
+            return false;
+        }
+        let Some(completion) = self.completion.as_mut() else {
+            return false;
+        };
+        let Some(shown) = completion.index else {
+            return false;
+        };
+        if n >= PAGE_LEN {
+            return false;
+        }
+        let index = page_start(shown) + n;
+        if index >= completion.readings.len() {
+            return false;
+        }
+        let Some(word) = completion
+            .typed
+            .completed(&completion.readings[index], &self.config.romaji)
+        else {
+            return false;
+        };
+        completion.index = Some(index);
+        self.state = State::Reading(word);
+        true
     }
 
     fn enter_kana(&mut self) {
@@ -1570,6 +1640,24 @@ impl<C: Converter> Core<C> {
                         &word.pending,
                         &marks.cursor,
                     ),
+                }
+                if let Some(Completion {
+                    readings,
+                    index: Some(index),
+                    ..
+                }) = &self.completion
+                {
+                    let start = page_start(*index);
+                    let end = (start + PAGE_LEN).min(readings.len());
+                    candidates = Some(CandidateView {
+                        items: readings[start..end]
+                            .iter()
+                            .map(|reading| Candidate {
+                                surface: reading.clone(),
+                            })
+                            .collect(),
+                        selected: index - start,
+                    });
                 }
             }
             State::Candidates(selection) => {

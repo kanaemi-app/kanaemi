@@ -106,7 +106,29 @@ fn cancel_in_the_reading_commits_what_was_there_again() {
     let mut t = committed();
     undo(&mut t);
     t.handle(Event::Erased(true));
-    assert_eq!(t.key(Key::Backspace).preedit, "›きし");
+    assert_eq!(
+        t.key(Key::Backspace).preedit,
+        "›きしゃ",
+        "back to the reading, unlike cancel"
+    );
+    let out = t.key(Key::Esc);
+    assert_eq!(
+        (out.commit.as_deref(), out.preedit.as_str()),
+        (Some("記者"), "")
+    );
+}
+
+#[test]
+fn cancel_steps_back_from_a_completion_listed_before_committing_what_was_there() {
+    let mut t = committed();
+    undo(&mut t);
+    t.handle(Event::Erased(true));
+    // Back to the reading, then off to き.
+    (0..3).for_each(|_| {
+        t.key(Key::Backspace);
+    });
+    assert_eq!(t.key(Key::Tab).preedit, "›きしゃ");
+    assert_eq!(t.key(Key::Esc).preedit, "›き");
     let out = t.key(Key::Esc);
     assert_eq!(
         (out.commit.as_deref(), out.preedit.as_str()),
@@ -304,8 +326,10 @@ fn erasing_the_whole_reading_leaves_the_text_after_it() {
     t.typ("suru");
     undo(&mut t);
     t.handle(Event::Erased(true));
-    t.key(Key::Backspace);
-    t.key(Key::Backspace);
+    // Back to the reading, then each of きしゃ.
+    (0..3).for_each(|_| {
+        t.key(Key::Backspace);
+    });
     assert_eq!(t.key(Key::Backspace).preedit, "›する");
     let out = t.key(Key::Backspace);
     assert_eq!(

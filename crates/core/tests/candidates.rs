@@ -13,6 +13,34 @@ fn no_matching_candidate_shows_katakana_then_registration() {
 }
 
 #[test]
+fn backspace_while_choosing_cancels_as_escape_does() {
+    // Converted by Space, by the okurigana, and with keys typed while choosing.
+    let choosing = |keys: &str| {
+        let mut t = T::new();
+        t.kana();
+        let out = t.typ(keys).1;
+        if !out.preedit.starts_with('»') {
+            t.key(Key::Space);
+        }
+        t
+    };
+    for keys in [";kanji", ";mo;tta", ";i;tts"] {
+        let escaped = choosing(keys).key(Key::Esc);
+        let erased = choosing(keys).key(Key::Backspace);
+        assert!(
+            escaped.preedit.starts_with('›'),
+            "{keys}: {}",
+            escaped.preedit
+        );
+        assert_eq!(
+            (erased.preedit, erased.candidates, erased.commit),
+            (escaped.preedit, escaped.candidates, escaped.commit),
+            "{keys}"
+        );
+    }
+}
+
+#[test]
 fn space_cycles_forward_and_shift_space_backward() {
     let mut t = T::new();
     t.kana();
@@ -83,7 +111,7 @@ fn escape_and_backspace_return_to_the_reading() {
     t.key(Key::Space);
     assert_eq!(t.key(Key::Esc).preedit, "›かんじ");
     t.key(Key::Space);
-    assert_eq!(t.key(Key::Backspace).preedit, "›かん");
+    assert_eq!(t.key(Key::Backspace).preedit, "›かんじ");
 }
 
 #[test]

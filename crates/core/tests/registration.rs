@@ -160,11 +160,13 @@ fn registering_an_okurigana_reading_completes_the_okurigana() {
 }
 
 /// Registers `x` for what `typing` leaves, after `then` is pressed.
-fn register_x_after(typing: &str, then: Key) -> (Option<String>, T) {
+fn register_x_after(typing: &str, then: &[Key]) -> (Option<String>, T) {
     let mut t = T::new();
     t.kana();
     t.typ(typing);
-    t.key(then);
+    for key in then {
+        t.key(*key);
+    }
     t.typ("tta");
     t.go_past_the_candidates();
     t.tap(Key::ShiftLeft);
@@ -193,11 +195,11 @@ fn an_okurigana_grown_past_its_first_chunk_is_registered_with_that_chunk() {
 
 #[test]
 fn the_first_chunk_of_an_okurigana_is_what_is_left_of_it() {
-    let (commit, t) = register_x_after(";ka;kya", Key::Esc);
+    let (commit, t) = register_x_after(";ka;kya", &[Key::Esc]);
     assert_eq!(commit.as_deref(), Some("xきゃった"));
     assert_eq!(t.converter().registered_heads, [Some("きゃ".to_owned())]);
 
-    let (commit, t) = register_x_after(";ka;kya", Key::Backspace);
+    let (commit, t) = register_x_after(";ka;kya", &[Key::Esc, Key::Backspace]);
     assert_eq!(commit.as_deref(), Some("xきった"));
     assert_eq!(t.converter().registered_heads, [Some("き".to_owned())]);
 }

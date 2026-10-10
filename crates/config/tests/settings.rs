@@ -871,6 +871,7 @@ const PLACES: &[(&str, &[&str])] = &[
     ),
     ("keys.kana", BINDING_KEYS),
     ("keys.reading", BINDING_KEYS),
+    ("keys.completion", BINDING_KEYS),
     ("keys.candidates", BINDING_KEYS),
     ("keys.registration", BINDING_KEYS),
     ("keys.abc", BINDING_KEYS),
@@ -954,6 +955,21 @@ fn tab_completes_the_reading_and_goes_back_to_it_while_choosing() {
     for table in ["registration", "kana", "abc"] {
         assert!(!actions(table).contains(&Action::Complete), "{table}");
     }
+    let completion = &settings.config.bindings.completion;
+    assert_eq!(target(completion, ctrl('n')), Some(Action::Complete));
+    assert_eq!(target(completion, plain(Key::Down)), Some(Action::Complete));
+    assert_eq!(
+        target(completion, plain(Key::Char('1'))),
+        Some(Action::Pick(0))
+    );
+    let (settings, problems) =
+        load("[keys.completion]\n\"ctrl+n\" = \"@none\"\n\"ctrl+j\" = \"@select-2\"");
+    assert_eq!(problems, Vec::<String>::new());
+    let completion = &settings.config.bindings.completion;
+    assert_eq!(target(completion, ctrl('n')), None);
+    assert_eq!(target(completion, ctrl('j')), Some(Action::Pick(1)));
+    let (_, problems) = load("[keys.completion]\n\"x\" = \"@forget\"");
+    assert_eq!(problems, ["keys.completion.x"]);
     let (_, problems) = load("[keys.registration]\n\"tab\" = \"@complete\"");
     assert_eq!(problems, ["keys.registration.tab"]);
 }
