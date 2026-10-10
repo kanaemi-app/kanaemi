@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Action, Binding, Event, Form, Gesture, Key, Modifiers};
+use kanaemi_core::{Action, Binding, Event, Form, Gesture, Key, Mode, Modifiers};
 
 #[test]
 fn no_matching_candidate_shows_katakana_then_registration() {
@@ -815,4 +815,36 @@ fn moving_the_cursor_keeps_keys_typed_after_a_shortened_kana() {
             "moved: {moved}"
         );
     }
+}
+
+#[test]
+fn hiragana_is_added_last_only_once_it_is_chosen() {
+    let mut t = selecting_forms();
+    t.kana();
+    t.typ(";kanji");
+    let shown = surfaces(&t.key(Key::Space));
+    assert!(!shown.iter().any(|s| s == "かんじ"), "{shown:?}");
+    let out = t.key(Key::F(6));
+    assert_eq!(out.preedit, "»かんじ");
+    assert_eq!(surfaces(&out), [shown, vec!["かんじ".to_owned()]].concat());
+}
+
+#[test]
+fn leaving_kana_mode_while_choosing_commits_the_candidate_chosen() {
+    let mut t = reading_kanji();
+    t.key(Key::Space);
+    t.key(Key::Space);
+    let out = t.tap(Key::ShiftLeft);
+    assert_eq!((out.commit.as_deref(), out.mode), (Some("感じ"), Mode::Abc));
+}
+
+/// 〜 is off the romaji table and has no forms other than itself.
+#[test]
+fn a_single_candidate_is_shown_without_a_list() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";〜");
+    let out = t.key(Key::Space);
+    assert_eq!(out.preedit, "»〜");
+    assert_eq!(out.candidates, None);
 }

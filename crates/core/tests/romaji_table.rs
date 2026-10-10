@@ -194,6 +194,13 @@ fn the_ways_around_the_rules_work_whichever_rules_the_table_has() {
 }
 
 #[test]
+fn a_doubled_vowel_or_n_is_not_a_small_tsu() {
+    let only_ka = || table(&["ka\tか"]);
+    assert_eq!(typed_with(only_ka(), "aaka"), "か");
+    assert_eq!(typed_with(only_ka(), "nnka"), "んんか");
+}
+
+#[test]
 fn an_n_left_at_a_commit_is_n_whichever_rules_the_table_has() {
     let mut t = T::with_config(Config {
         romaji: table(&["ka\tか"]),

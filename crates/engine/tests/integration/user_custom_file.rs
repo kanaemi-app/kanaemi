@@ -328,6 +328,23 @@ fn a_lock_held_elsewhere_is_not_waited_for_beyond_the_time_given() {
 }
 
 #[test]
+fn the_lock_is_a_file_beside_the_one_it_guards_named_with_lock_after_it() {
+    let path = temp_path("beside.tsv");
+    let mut beside = path.clone().into_os_string();
+    beside.push(".lock");
+    let other = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&beside)
+        .unwrap();
+    other.lock().unwrap();
+    assert!(FileLock::try_hold(&path, Duration::ZERO).unwrap().is_none());
+    other.unlock().unwrap();
+    assert!(FileLock::try_hold(&path, Duration::ZERO).unwrap().is_some());
+}
+
+#[test]
 fn appending_while_the_lock_is_held_elsewhere_fails_instead_of_waiting() {
     let path = temp_path("held-append.tsv");
     fs::write(&path, "かく\t書く\n").unwrap();

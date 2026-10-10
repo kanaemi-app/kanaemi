@@ -255,6 +255,75 @@ pub(crate) fn stays_inside(name: impl AsRef<Path>) -> bool {
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
+// Read from the environment the test runs in, never set by it, so they do
+// not race the tests running beside them.
+#[cfg(test)]
+mod locations {
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    fn home() -> PathBuf {
+        PathBuf::from(std::env::var_os("HOME").expect("HOME is set"))
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_settings_folder_is_kanaemi_in_application_support() {
+        assert_eq!(
+            dir(),
+            Some(home().join("Library/Application Support/kanaemi"))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_log_is_kanaemi_log_in_the_logs_folder() {
+        assert_eq!(log_file(), Some(home().join("Library/Logs/kanaemi.log")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_settings_folder_is_kanaemi_in_the_roaming_app_data() {
+        let app_data = PathBuf::from(std::env::var_os("APPDATA").expect("APPDATA is set"));
+        assert_eq!(dir(), Some(app_data.join("kanaemi")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_log_is_kanaemi_log_in_a_kanaemi_folder_of_the_local_app_data() {
+        let local = PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA is set"));
+        assert_eq!(log_file(), Some(local.join("kanaemi").join("kanaemi.log")));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn xdg(variable: &str, fallback: &str) -> PathBuf {
+        std::env::var_os(variable)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| {
+                PathBuf::from(std::env::var_os("HOME").expect("HOME is set")).join(fallback)
+            })
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn the_settings_folder_is_kanaemi_in_the_xdg_config_folder() {
+        assert_eq!(
+            dir(),
+            Some(xdg("XDG_CONFIG_HOME", ".config").join("kanaemi"))
+        );
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn the_log_is_kanaemi_log_in_a_kanaemi_folder_of_the_xdg_state_folder() {
+        assert_eq!(
+            log_file(),
+            Some(xdg("XDG_STATE_HOME", ".local/state").join("kanaemi/kanaemi.log"))
+        );
+    }
+}
+
 // The paths are Unix paths, which Windows does not count as absolute.
 #[cfg(all(test, unix))]
 mod tests {

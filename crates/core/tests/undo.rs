@@ -346,3 +346,15 @@ fn a_character_typed_while_choosing_again_goes_after_the_text_after_it() {
     t.handle(Event::Erased(true));
     assert_eq!(t.ch('a').commit.as_deref(), Some("記者するあ"));
 }
+
+#[test]
+fn a_word_registered_and_committed_cannot_be_undone() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";nunu");
+    t.go_past_the_candidates();
+    t.typ("nu");
+    assert_eq!(t.key(Key::Enter).commit.as_deref(), Some("ぬ"));
+    let out = undo(&mut t);
+    assert_eq!((out.consumed, out.erase), (false, None));
+}

@@ -820,23 +820,25 @@ fn convert_and_use(mut ctx: Ctx, folder: &Path, listed: Option<&[String]>, name:
         }
     };
     ctx.errors.write().remove("dictionaries");
-    if let Some(chosen) = listed.filter(|chosen| chosen.iter().any(|n| n == name)) {
-        let names: Vec<String> = chosen
-            .iter()
-            .filter(|n| **n != converted)
-            .map(|n| {
-                if n == name {
-                    converted.clone()
-                } else {
-                    n.clone()
-                }
-            })
-            .collect();
+    if let Some(names) = listed.and_then(|chosen| with_converted(chosen, name, &converted)) {
         ctx.change(&["dictionaries"], Some(names.into_iter().collect()));
     } else {
         // The list stays, but the folder now holds a new file.
         ctx.store.write();
     }
+}
+
+/// The written list `chosen` with the binary dictionary `converted` in the
+/// place of the text one `name` it was made from, and nowhere else; `None`
+/// when the list does not use `name`.
+fn with_converted(chosen: &[String], name: &str, converted: &str) -> Option<Vec<String>> {
+    chosen.iter().any(|n| n == name).then(|| {
+        chosen
+            .iter()
+            .filter(|n| *n != converted)
+            .map(|n| if n == name { converted } else { n }.to_owned())
+            .collect()
+    })
 }
 
 /// A dictionary file opened to look words up in: the user custom dictionary
@@ -1143,5 +1145,30 @@ mod tests {
     fn a_word_with_okurigana_is_found_by_its_stem_and_okurigana() {
         assert_eq!(found("か*く\t書く", "か*く"), pairs(&[("か*く", "書く")]));
         assert_eq!(found("か*く\t書く", "か*"), []);
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|&n| n.to_owned()).collect()
+    }
+
+    #[test]
+    fn a_converted_dictionary_takes_the_place_of_its_text_in_the_written_list() {
+        assert_eq!(
+            with_converted(&names(&["custom", "a.tsv", "b.tsv"]), "a.tsv", "a.kdic"),
+            Some(names(&["custom", "a.kdic", "b.tsv"]))
+        );
+        assert_eq!(
+            with_converted(&names(&["a.kdic", "custom", "a.tsv"]), "a.tsv", "a.kdic"),
+            Some(names(&["custom", "a.kdic"])),
+            "listed once, where the text one was"
+        );
+    }
+
+    #[test]
+    fn a_converted_dictionary_the_written_list_does_not_use_leaves_it_alone() {
+        assert_eq!(
+            with_converted(&names(&["custom", "b.tsv"]), "a.tsv", "a.kdic"),
+            None
+        );
     }
 }

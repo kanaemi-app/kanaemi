@@ -143,3 +143,14 @@ pub fn show(mode: Mode, client: &AnyObject) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_mode_is_shown_as_kana_or_abc() {
+        assert_eq!(label(Mode::Kana), "かな");
+        assert_eq!(label(Mode::Abc), "ABC");
+    }
+}

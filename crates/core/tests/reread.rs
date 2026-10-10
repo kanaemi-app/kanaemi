@@ -334,3 +334,26 @@ fn leaving_while_the_host_erases_commits_only_what_is_visible() {
         assert_eq!(t.handle(event).commit, None, "{event:?}");
     }
 }
+
+#[test]
+fn unfinished_romaji_with_no_kana_to_read_again_is_committed_and_the_key_passes_on() {
+    let mut t = T::new();
+    t.kana();
+    t.typ("k");
+    let out = reread(&mut t);
+    assert_eq!(
+        (out.consumed, out.commit.as_deref(), out.erase),
+        (false, Some("k"), None)
+    );
+}
+
+#[test]
+fn a_word_registered_and_committed_ends_the_run() {
+    let mut t = typed("ha");
+    t.typ(";nunu");
+    t.go_past_the_candidates();
+    t.typ("nu");
+    assert_eq!(t.key(Key::Enter).commit.as_deref(), Some("ぬ"));
+    let out = reread(&mut t);
+    assert_eq!((out.consumed, out.erase), (false, None));
+}
