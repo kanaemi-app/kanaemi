@@ -19,6 +19,7 @@ Windows の入力方式を作るときに知っておく、Text Services Framewo
 - 入力欄ごとの `ITfDocumentMgr` は context のスタックを持ち、入力を受けるのは一番上の context。スタックに積めるのは 2 つまで（[ITfDocumentMgr::Push](https://learn.microsoft.com/en-us/windows/win32/api/msctf/nf-msctf-itfdocumentmgr-push)）。
 - 文書マネージャーの間のフォーカスの移りは `ITfThreadMgrEventSink::OnSetFocus` で、スタックへの積み下ろしは `OnPushContext`／`OnPopContext` で知らされる。アプリがフォーカスのある文書マネージャーに context を積むと、`OnSetFocus` が来ないまま一番上の context が変わる。
 - `OnPopContext` が来たとき、その context がまだスタックに残っているかは確かめていない。
+- テキストサービスは入力先のアプリのプロセスに読み込まれるので、そのアプリの実行ファイルは自分のプロセスの実行ファイル（`std::env::current_exe`）。
 
 ## アクティブ化と片付け
 
