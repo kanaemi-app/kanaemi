@@ -952,3 +952,39 @@ fn henkan_and_muhenkan_switch_modes_and_convert() {
     t.key(Key::Enter);
     assert_eq!(t.key(Key::Muhenkan).mode, Mode::Abc);
 }
+
+#[test]
+fn with_only_unfinished_romaji_backspace_takes_a_letter_and_cancel_drops_it() {
+    let mut t = T::new();
+    t.kana();
+    t.typ("ky");
+    let out = t.key(Key::Backspace);
+    assert_eq!((out.preedit.as_str(), out.consumed), ("k", true));
+    let out = t.key(Key::Esc);
+    assert_eq!(
+        (out.preedit.as_str(), out.commit, out.mode),
+        ("", None, Mode::Kana)
+    );
+}
+
+#[test]
+fn with_only_unfinished_romaji_abc_commits_it_and_kana_does_nothing() {
+    let mut t = T::new();
+    t.kana();
+    t.typ("kon");
+    let out = t.tap(Key::ShiftRight);
+    assert_eq!((out.preedit.as_str(), out.mode), ("n", Mode::Kana));
+    let out = t.tap(Key::ShiftLeft);
+    assert_eq!((out.commit.as_deref(), out.mode), (Some("ん"), Mode::Abc));
+}
+
+#[test]
+fn in_the_text_to_register_backspace_and_cancel_work_on_unfinished_romaji_first() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";nunu");
+    t.go_past_the_candidates();
+    t.typ("aky");
+    assert_eq!(t.key(Key::Backspace).preedit, "»ぬぬ « あk");
+    assert_eq!(t.key(Key::Esc).preedit, "»ぬぬ « あ", "still registering");
+}

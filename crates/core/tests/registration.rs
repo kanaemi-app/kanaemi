@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Action, Binding, Chord, Event, Gesture, Key, Modifiers};
+use kanaemi_core::{Action, Binding, Chord, Event, Gesture, Key, Mode, Modifiers};
 
 #[test]
 fn registration_collects_what_is_typed_and_registers_on_enter() {
@@ -400,4 +400,33 @@ fn a_reading_without_kana_does_not_start_a_registration() {
     t.typ("a");
     t.key(Key::Enter);
     assert!(t.converter().registered.is_empty());
+}
+
+#[test]
+fn going_back_to_the_reading_from_a_registration_in_abc_mode_returns_to_kana_mode() {
+    for key in [Key::Esc, Key::Enter] {
+        let mut t = T::new();
+        t.kana();
+        t.typ(";nunu");
+        t.go_past_the_candidates();
+        t.tap(Key::ShiftLeft);
+        let out = t.key(key);
+        assert_eq!(
+            (out.preedit.as_str(), out.mode),
+            ("›ぬぬ", Mode::Kana),
+            "{key:?}"
+        );
+    }
+}
+
+#[test]
+fn a_word_registered_in_abc_mode_is_committed_staying_in_abc_mode() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";nunu");
+    t.go_past_the_candidates();
+    t.tap(Key::ShiftLeft);
+    t.typ("vim");
+    let out = t.key(Key::Enter);
+    assert_eq!((out.commit.as_deref(), out.mode), (Some("vim"), Mode::Abc));
 }

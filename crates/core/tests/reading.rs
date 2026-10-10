@@ -548,3 +548,17 @@ fn moving_and_deleting_do_nothing_once_the_okurigana_is_marked() {
         );
     }
 }
+
+#[test]
+fn backspace_on_an_empty_reading_leaves_it_for_kana_mode() {
+    let mut t = T::new();
+    t.kana();
+    t.typ(";k");
+    assert_eq!(t.key(Key::Backspace).preedit, "›", "still a reading");
+    let out = t.key(Key::Backspace);
+    assert_eq!(
+        (out.preedit.as_str(), out.commit, out.mode),
+        ("", None, Mode::Kana)
+    );
+    assert_eq!(t.typ("ka").0, "か", "kana typed straight in");
+}
