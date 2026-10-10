@@ -33,6 +33,7 @@ mod logs;
 mod messages;
 mod official;
 mod pages;
+mod remaps;
 mod reorder;
 mod send_except;
 mod store;

@@ -108,15 +108,17 @@ fn is_within(problem: &str, item: &str) -> bool {
 }
 
 /// Writes `value` at `path`, or with `None` removes what is written there.
-fn edit(editor: &mut Editor, path: &[&str], value: Option<Value>) {
+pub(crate) fn edit(editor: &mut Editor, path: &[&str], value: Option<Value>) {
     // A key bound under another spelling (`shift+ctrl+h` for
     // `ctrl+shift+h`) is the same key: it goes, so only one line binds it.
-    if let ["keys", mode, key] = path
+    if let ["keys", table @ .., key] = path
+        && !table.is_empty()
         && let Some(chord) = parse_binding_key(key)
     {
-        for written in editor.keys(&["keys", mode]) {
-            if written != *key && parse_binding_key(&written) == Some(chord) {
-                editor.reset(&["keys", mode, &written]);
+        let (key, table) = (*key, [&["keys"][..], table].concat());
+        for written in editor.keys(&table) {
+            if written != key && parse_binding_key(&written) == Some(chord) {
+                editor.reset(&[&table[..], &[written.as_str()]].concat());
             }
         }
     }
@@ -373,6 +375,27 @@ mod tests {
             written.contains("\"ctrl+shift+h\" = \"@commit\""),
             "{written}"
         );
+    }
+
+    #[test]
+    fn a_key_written_another_way_in_an_os_table_is_replaced_not_doubled() {
+        let dir = temp_dir("alias-os");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(FILE_NAME),
+            "[keys.application.linux]\n\"shift+ctrl+h\" = \"end\"\n",
+        )
+        .unwrap();
+        let mut store = Store::open(dir.clone());
+        store
+            .change(
+                &["keys", "application", "linux", "ctrl+shift+h"],
+                Some("home".into()),
+            )
+            .unwrap();
+        let written = written(&dir);
+        assert!(!written.contains("shift+ctrl+h"), "{written}");
+        assert!(written.contains("\"ctrl+shift+h\" = \"home\""), "{written}");
     }
 
     #[test]

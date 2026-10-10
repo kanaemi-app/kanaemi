@@ -422,6 +422,17 @@ table.bindings tr + tr td { border-top: 1px solid var(--separator); }
   white-space: nowrap;
 }
 .target { padding-left: 14px !important; }
+/* The keys sent as other keys: a column per OS, each cell its own button,
+   the running OS's column standing out. */
+.remap-row td { padding: 9px 8px; }
+.remaps th.running { color: var(--text); font-weight: 600; }
+.remaps td.sent { cursor: pointer; white-space: nowrap; }
+.remaps td.sent:hover, .remaps td.sent.editing { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.remaps td.sent.running { font-weight: 600; }
+.remaps td.sent.none { color: var(--muted); font-weight: normal; }
+.binding-form .form-os { color: var(--muted); font-size: 13px; }
+.binding-form .os-choice { margin-top: 10px; gap: 16px; }
+.binding-form .os-choice label { display: inline-flex; align-items: center; gap: 6px; }
 .status { text-align: right; white-space: nowrap; }
 .problems .item { color: var(--muted); font-size: 13px; }
 

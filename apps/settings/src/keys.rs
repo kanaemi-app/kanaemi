@@ -4,16 +4,17 @@
 
 use dioxus::prelude::*;
 use kanaemi_config::{
-    APPLICATION_TABLE, UNBOUND, Value, actions, bindings_table, format_action, parse_action,
-    parse_binding_key, parse_chord, sendable_keys,
+    ApplicationTables, UNBOUND, Value, actions, bindings_table, format_action, format_chord,
+    parse_action, parse_binding_key, parse_chord, sendable_keys,
 };
-use kanaemi_core::{Action, Bindings, Config, Form};
+use kanaemi_core::{Action, Bindings, Chord, Config, Form, Os};
 
 use crate::Ctx;
 use crate::complete::KeyInput;
 use crate::controls::Filter;
 use crate::icons::{self, Icon};
 use crate::intents::{self, Change, GROUPS, Intent};
+use crate::remaps::{self, Edit, Row};
 use crate::send_except::SendExcept;
 
 /// The modifiers held with a recorded key.
@@ -302,14 +303,26 @@ fn target_label(mode: &str, value: &str) -> String {
     }
 }
 
-/// What a key can be set to in a mode, as (value in the file, label).
+/// What a key can be sent to the application as, as (value in the file,
+/// label).
+fn sendable_targets() -> Vec<(String, String)> {
+    // Deleting a word takes Option on macOS and Ctrl elsewhere, so both are
+    // offered beside the plain keys.
+    let words = [
+        "alt+backspace",
+        "alt+delete",
+        "ctrl+backspace",
+        "ctrl+delete",
+    ];
+    sendable_keys()
+        .into_iter()
+        .chain(words)
+        .map(|key| (key.to_owned(), shown(key)))
+        .collect()
+}
+
+/// What a key can be set to in a scene, as (value in the file, label).
 fn targets(mode: &str) -> Vec<(String, String)> {
-    if mode == APPLICATION_TABLE {
-        return sendable_keys()
-            .into_iter()
-            .map(|key| (key.to_owned(), shown(key)))
-            .collect();
-    }
     actions(mode)
         .into_iter()
         .map(|a| (format_action(a), action_label(mode, a).to_owned()))
@@ -337,12 +350,15 @@ fn accessibility_missing() -> bool {
 #[component]
 pub fn Keys() -> Element {
     let ctx = use_context::<Ctx>();
-    let config = ctx
+    let (config, tables) = ctx
         .store
         .read()
         .state
         .as_ref()
-        .map(|loaded| loaded.settings.config.clone())
+        .map(|loaded| {
+            let settings = &loaded.settings;
+            (settings.config.clone(), settings.application_tables.clone())
+        })
         .unwrap_or_default();
     let shipped = Config::default();
     let current = config.bindings.clone();
@@ -400,7 +416,7 @@ pub fn Keys() -> Element {
             p { class: "lead",
                 "やりたいことごとに、使うキーを決めます。キーは、そのことが働くどの場面でも同じように使えます。場面ごとに分けて決めたいときは「アドバンスド」で。キーをクリックすると変えられ、× で外せます。点線のキーは、一部の場面にだけ割り当ててあるもので、その場面を添えて示します。"
             }
-            SimpleKeys { current }
+            SimpleKeys { current, tables }
             SendExcept { apps: config.send_except }
         };
     }
@@ -435,11 +451,6 @@ pub fn Keys() -> Element {
             "ABC モードで何も打っていないとき",
             "ここでかなモードに切り替えるキーを決められます",
         ),
-        (
-            APPLICATION_TABLE,
-            "ふだん",
-            "変換中の文字がないとき。押したキーを別のキーとしてアプリに送ります（Ctrl+H で 1 文字消す、など）",
-        ),
     ];
     rsx! {
         {switcher}
@@ -458,6 +469,7 @@ pub fn Keys() -> Element {
                 filter: filter(),
             }
         }
+        RemapSection { tables, filter: filter() }
         SendExcept { apps: config.send_except }
     }
 }
@@ -524,43 +536,12 @@ fn BindingSection(
         section { class: "group",
             h2 { "{title}" }
             p { class: "note", "{note}" }
-            if mode == APPLICATION_TABLE {
-                div { class: "section-actions",
-                    button {
-                        // Every binding of the scene, not only the ones the
-                        // filter leaves in view.
-                        disabled: all.iter().all(|l| l.to.is_none()),
-                        onclick: {
-                            let lines = all.clone();
-                            move |_| {
-                                for line in lines.iter().filter(|l| l.to.is_some()) {
-                                    let value = line.default.is_some().then(|| UNBOUND.into());
-                                    ctx.change(&["keys", mode, &line.from], value);
-                                }
-                            }
-                        },
-                        "すべて外す"
-                    }
-                    button {
-                        disabled: all.iter().all(|l| l.to == l.default),
-                        onclick: {
-                            let lines = all.clone();
-                            move |_| {
-                                for line in lines.iter().filter(|l| l.to != l.default) {
-                                    ctx.change(&["keys", mode, &line.from], None);
-                                }
-                            }
-                        },
-                        "すべて既定に戻す"
-                    }
-                }
-            }
             div { class: "box",
                 table { class: "bindings",
                     thead {
                         tr {
                             th { "押すキー" }
-                            th { if mode == APPLICATION_TABLE { "送るキー" } else { "機能" } }
+                            th { "機能" }
                             th {}
                         }
                     }
@@ -637,9 +618,15 @@ fn BindingSection(
 
 /// The key and how it is pressed: written with completion, or entered by
 /// pressing it. Recording takes the key wherever the focus is in the field,
-/// the button just pressed included.
+/// the button just pressed included. Without `pressing`, the key is only
+/// ever pressed down: no choice is offered, and a way of pressing written
+/// out stays in the key for the form to refuse.
 #[component]
-fn KeyField(chord: Signal<String>, press: Signal<Press>) -> Element {
+fn KeyField(
+    chord: Signal<String>,
+    press: Signal<Press>,
+    #[props(default = true)] pressing: bool,
+) -> Element {
     let mut key = chord;
     let mut recording = use_signal(|| false);
     // A modifier down with nothing else while recording, a tap if it is let
@@ -683,7 +670,9 @@ fn KeyField(chord: Signal<String>, press: Signal<Press>) -> Element {
                 {
                     e.prevent_default();
                     key.set(modifier.to_owned());
-                    press.set(Press::Tap);
+                    if pressing {
+                        press.set(Press::Tap);
+                    }
                     alone.set(None);
                     recording.set(false);
                 }
@@ -696,6 +685,10 @@ fn KeyField(chord: Signal<String>, press: Signal<Press>) -> Element {
                 // A way of pressing written out in the field is taken to the
                 // choice beside it.
                 oninput: move |v: String| {
+                    if !pressing {
+                        key.set(v);
+                        return;
+                    }
                     let (typed, typed_press) = split_press(&v);
                     if typed_press != Press::Down {
                         press.set(typed_press);
@@ -704,16 +697,18 @@ fn KeyField(chord: Signal<String>, press: Signal<Press>) -> Element {
                 },
                 onkeydown: move |_| {},
             }
-            select {
-                class: "press",
-                disabled: presses(key().trim()).len() < 2,
-                onchange: move |e| {
-                    if let Some(p) = Press::ALL.into_iter().find(|p| p.suffix() == e.value()) {
-                        press.set(p);
+            if pressing {
+                select {
+                    class: "press",
+                    disabled: presses(key().trim()).len() < 2,
+                    onchange: move |e| {
+                        if let Some(p) = Press::ALL.into_iter().find(|p| p.suffix() == e.value()) {
+                            press.set(p);
+                        }
+                    },
+                    for p in presses(key().trim()) {
+                        option { value: "{p.suffix()}", selected: press() == p, "{p.label()}" }
                     }
-                },
-                for p in presses(key().trim()) {
-                    option { value: "{p.suffix()}", selected: press() == p, "{p.label()}" }
                 }
             }
             button {
@@ -836,6 +831,381 @@ fn BindingForm(mode: &'static str, line: Option<Line>, on_close: EventHandler<()
     }
 }
 
+/// An OS by the name it goes by.
+fn os_label(os: Os) -> &'static str {
+    match os {
+        Os::MacOs => "macOS",
+        Os::Windows => "Windows",
+        Os::Linux => "Linux",
+    }
+}
+
+/// A key as keyboards label it, from the key itself.
+fn chord_label(chord: Chord) -> String {
+    format_chord(chord)
+        .map(|text| shown(&text))
+        .unwrap_or_default()
+}
+
+/// What an OS sends for a key, in words.
+fn sent_label(to: Option<Chord>) -> String {
+    match to {
+        Some(to) => chord_label(to),
+        None => "（なし）".to_owned(),
+    }
+}
+
+/// The rows to show, those whose key, or a key sent for it, matches
+/// `query`.
+fn shown_rows(all: &[Row], query: &str) -> Vec<Row> {
+    all.iter()
+        .filter(|row| {
+            query.is_empty()
+                || [Some(row.key)]
+                    .into_iter()
+                    .chain(row.sent.iter().map(|(_, to)| *to))
+                    .flatten()
+                    .filter_map(format_chord)
+                    .any(|text| text.contains(query))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Writes every edit, or none when one is refused.
+fn apply_edits(ctx: Ctx, edits: &[Edit]) -> Result<(), String> {
+    let edits: Vec<(Vec<&str>, Option<Value>)> = edits
+        .iter()
+        .map(|(path, value)| {
+            (
+                path.iter().map(String::as_str).collect(),
+                value.clone().map(Value::from),
+            )
+        })
+        .collect();
+    ctx.try_change_many(&edits)
+}
+
+/// The keys sent as other keys while nothing is typed, every OS's side by
+/// side so that one OS's can be set from another: a row per pressed key, a
+/// column per OS with what it sends, the running OS's marked. A cell opens a
+/// form for that OS under its row.
+#[component]
+fn RemapSection(tables: ApplicationTables, filter: String) -> Element {
+    let ctx = use_context::<Ctx>();
+    let mut editing = use_signal(|| None::<(Chord, Os)>);
+    let mut adding = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let query = filter.to_lowercase();
+    let rows = shown_rows(&remaps::rows(&tables), &query);
+    if rows.is_empty() && !query.is_empty() {
+        return rsx! {};
+    }
+    // Every key, not only the ones the filter leaves in view.
+    let off = remaps::all_off(&tables);
+    let back = remaps::all_default(&tables);
+    let columns = Os::ALL.len() + 2;
+    let cell_class = move |key: Chord, os: Os, to: Option<Chord>| {
+        let mut class = "sent".to_owned();
+        if Some(os) == Os::RUNNING {
+            class.push_str(" running");
+        }
+        if to.is_none() {
+            class.push_str(" none");
+        }
+        if editing() == Some((key, os)) {
+            class.push_str(" editing");
+        }
+        class
+    };
+    rsx! {
+        section { class: "group",
+            h2 { "ふだん" }
+            p { class: "note",
+                "変換中の文字がないとき。押したキーを別のキーとしてアプリに送ります（Ctrl+H で 1 文字消す、など）。OS ごとに決められ、送るキーをクリックすると変えられます"
+            }
+            div { class: "section-actions",
+                button {
+                    disabled: off.is_empty(),
+                    onclick: move |_| error.set(apply_edits(ctx, &off).err()),
+                    "すべて外す"
+                }
+                button {
+                    disabled: back.is_empty(),
+                    onclick: move |_| error.set(apply_edits(ctx, &back).err()),
+                    "すべて既定に戻す"
+                }
+            }
+            if let Some(message) = error() {
+                p { class: "error", "変えられませんでした：{message}" }
+            }
+            div { class: "box",
+                table { class: "bindings remaps",
+                    thead {
+                        tr {
+                            th { "押すキー" }
+                            for os in Os::ALL {
+                                th {
+                                    key: "{os:?}",
+                                    class: if Some(os) == Os::RUNNING { "running" },
+                                    title: if Some(os) == Os::RUNNING { "いま動いている OS" },
+                                    "{os_label(os)}"
+                                }
+                            }
+                            th {}
+                        }
+                    }
+                    tbody {
+                        for row in rows {
+                            tr { key: "{row.key:?}", class: "remap-row",
+                                td { class: "key-cell",
+                                    span { class: "key-badge", "{chord_label(row.key)}" }
+                                }
+                                for (os , to) in row.sent.clone() {
+                                    td {
+                                        key: "{os:?}",
+                                        class: cell_class(row.key, os, to),
+                                        title: "{os_label(os)} で送るキー",
+                                        onclick: move |_| {
+                                            adding.set(false);
+                                            editing.set(Some((row.key, os)));
+                                        },
+                                        "{sent_label(to)}"
+                                    }
+                                }
+                                td { class: "status",
+                                    if !row.is_default() {
+                                        button {
+                                            class: "reset",
+                                            onclick: {
+                                                let edits = remaps::writing(
+                                                    &tables,
+                                                    row.key,
+                                                    |os| remaps::default_sent(os, row.key),
+                                                );
+                                                move |_| error.set(apply_edits(ctx, &edits).err())
+                                            },
+                                            "既定に戻す"
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some((key, os)) = editing().filter(|(key, _)| *key == row.key) {
+                                // Keyed by the OS too, so another cell of the
+                                // row opens a fresh form, not this one's choice.
+                                tr { key: "edit-{row.key:?}-{os:?}",
+                                    td { colspan: "{columns}",
+                                        RemapForm {
+                                            tables: tables.clone(),
+                                            pressed: key,
+                                            os,
+                                            on_close: move |_| editing.set(None),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if adding() {
+                    RemapAddForm { tables: tables.clone(), on_close: move |_| adding.set(false) }
+                } else {
+                    button {
+                        class: "add",
+                        onclick: move |_| {
+                            editing.set(None);
+                            adding.set(true);
+                        },
+                        Icon { paths: icons::PLUS }
+                        "足す"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Changes what `os` sends for `key`, or what every OS sends alike.
+#[component]
+fn RemapForm(
+    tables: ApplicationTables,
+    pressed: Chord,
+    os: Os,
+    on_close: EventHandler<()>,
+) -> Element {
+    let ctx = use_context::<Ctx>();
+    let now = remaps::sent(&tables, os, pressed).and_then(format_chord);
+    let mut targets = sendable_targets();
+    // A key sent with modifiers, written by hand, is kept to choose again.
+    if let Some(now) = &now
+        && !targets.iter().any(|(value, _)| value == now)
+    {
+        targets.push((now.clone(), shown(now)));
+    }
+    // Empty for none: the key goes on as itself.
+    let mut target = use_signal(|| now.unwrap_or_default());
+    let mut error = use_signal(|| None::<String>);
+    let write = move |every: bool| {
+        let chosen = parse_chord(target());
+        let edits = remaps::writing(&tables, pressed, |o| {
+            if every || o == os {
+                chosen
+            } else {
+                remaps::sent(&tables, o, pressed)
+            }
+        });
+        match apply_edits(ctx, &edits) {
+            Ok(()) => on_close.call(()),
+            Err(message) => error.set(Some(message)),
+        }
+    };
+    rsx! {
+        div {
+            class: "binding-form",
+            onkeydown: move |e: KeyboardEvent| {
+                if e.key() == Key::Escape {
+                    on_close.call(());
+                }
+            },
+            div { class: "binding-form-row",
+                span { class: "form-os", "{os_label(os)} で" }
+                span { class: "key-badge", "{chord_label(pressed)}" }
+                span { class: "arrow", Icon { paths: icons::ARROW_RIGHT } }
+                select {
+                    "aria-label": "{os_label(os)} で送るキー",
+                    value: "{target}",
+                    onchange: move |e| target.set(e.value()),
+                    option { value: "", selected: target().is_empty(), "（なし）" }
+                    for (value , label) in targets {
+                        option { value: "{value}", selected: target() == value, "{label}" }
+                    }
+                }
+            }
+            if let Some(message) = error() {
+                p { class: "error", "この置き換えは使えません：{message}" }
+            }
+            div { class: "binding-form-buttons",
+                button {
+                    class: "primary",
+                    onclick: {
+                        let mut write = write.clone();
+                        move |_| write(false)
+                    },
+                    "保存"
+                }
+                button {
+                    onclick: {
+                        let mut write = write.clone();
+                        move |_| write(true)
+                    },
+                    "すべての OS に保存"
+                }
+                button { onclick: move |_| on_close.call(()), "キャンセル" }
+            }
+        }
+    }
+}
+
+/// The key `text` names to send as another: pressed down, as the settings
+/// file reads a remapped key, never tapped or held.
+fn remap_key(text: &str) -> Result<Chord, String> {
+    let text = text.trim();
+    if let (_, press) = split_press(text)
+        && press != Press::Down
+    {
+        return Err(format!(
+            "「{}」は付けられません。置き換えは押したときに働きます",
+            press.suffix()
+        ));
+    }
+    parse_chord(text).ok_or_else(|| format!("キー「{text}」が読めません"))
+}
+
+/// Adds a key to send as another, on the OSes ticked; the others go on
+/// sending what they did.
+#[component]
+fn RemapAddForm(tables: ApplicationTables, on_close: EventHandler<()>) -> Element {
+    let ctx = use_context::<Ctx>();
+    let key = use_signal(String::new);
+    let press = use_signal(|| Press::Down);
+    let targets = sendable_targets();
+    let mut target = use_signal(|| targets[0].0.clone());
+    let mut oses = use_signal(|| Os::ALL.to_vec());
+    let mut error = use_signal(|| None::<String>);
+    let save = move |_| {
+        let from = match remap_key(&key()) {
+            Ok(from) => from,
+            Err(message) => {
+                error.set(Some(message));
+                return;
+            }
+        };
+        let to = parse_chord(target());
+        let edits = remaps::writing(&tables, from, |os| {
+            if oses.read().contains(&os) {
+                to
+            } else {
+                remaps::sent(&tables, os, from)
+            }
+        });
+        match apply_edits(ctx, &edits) {
+            Ok(()) => on_close.call(()),
+            Err(message) => error.set(Some(message)),
+        }
+    };
+    rsx! {
+        div {
+            class: "binding-form",
+            onkeydown: move |e: KeyboardEvent| {
+                if e.key() == Key::Escape {
+                    on_close.call(());
+                }
+            },
+            div { class: "binding-form-row",
+                KeyField { chord: key, press, pressing: false }
+                span { class: "arrow", Icon { paths: icons::ARROW_RIGHT } }
+                select {
+                    value: "{target}",
+                    onchange: move |e| target.set(e.value()),
+                    for (value , label) in targets {
+                        option { value: "{value}", selected: target() == value, "{label}" }
+                    }
+                }
+            }
+            div { class: "binding-form-row os-choice",
+                for os in Os::ALL {
+                    label { key: "{os:?}",
+                        input {
+                            r#type: "checkbox",
+                            checked: oses.read().contains(&os),
+                            onchange: move |e: FormEvent| {
+                                let mut list = oses.write();
+                                list.retain(|o| *o != os);
+                                if e.checked() {
+                                    list.push(os);
+                                }
+                            },
+                        }
+                        "{os_label(os)}"
+                    }
+                }
+            }
+            if let Some(message) = error() {
+                p { class: "error", "この置き換えは使えません：{message}" }
+            }
+            div { class: "binding-form-buttons",
+                button {
+                    class: "primary",
+                    disabled: key().trim().is_empty() || oses.read().is_empty(),
+                    onclick: save,
+                    "足す"
+                }
+                button { onclick: move |_| on_close.call(()), "キャンセル" }
+            }
+        }
+    }
+}
+
 /// Where a scene is, in a few words for a key bound there only.
 fn scene_label(scene: &str) -> &'static str {
     match scene {
@@ -865,7 +1235,7 @@ fn apply(ctx: Ctx, changes: &[Change]) -> Result<(), String> {
 
 /// The keys by what they do, each set once for every scene it works in.
 #[component]
-fn SimpleKeys(current: Bindings) -> Element {
+fn SimpleKeys(current: Bindings, tables: ApplicationTables) -> Element {
     let ctx = use_context::<Ctx>();
     let sending = intents::sending(&current);
     let mut error = use_signal(|| None::<String>);
@@ -888,7 +1258,7 @@ fn SimpleKeys(current: Bindings) -> Element {
                         div { class: "row-text",
                             span { class: "label", "Emacs 風のキーを使う" }
                             span { class: "description",
-                                "変換中の文字がないときも、Ctrl+H で 1 文字消す、Ctrl+A で行の先頭へ、などのキーをどのアプリでも使えるようにします。"
+                                "変換中の文字がないときも、Ctrl+H で 1 文字消す、Ctrl+A で行の先頭へ、などのキーをどのアプリでも使えるようにします。OS がもともと扱うキーは、その OS では置き換えません。"
                             }
                         }
                         div { class: "control",
@@ -897,12 +1267,9 @@ fn SimpleKeys(current: Bindings) -> Element {
                                 r#type: "checkbox",
                                 role: "switch",
                                 checked: sending,
-                                onchange: {
-                                    let current = current.clone();
-                                    move |e: FormEvent| {
-                                        let changes = intents::send(e.checked(), &current, &Bindings::default());
-                                        error.set(apply(ctx, &changes).err());
-                                    }
+                                onchange: move |e: FormEvent| {
+                                    let edits = intents::send(e.checked(), &tables);
+                                    error.set(apply_edits(ctx, &edits).err());
                                 },
                             }
                         }
@@ -1311,6 +1678,65 @@ mod tests {
             to: to.map(str::to_owned),
             default: default.map(str::to_owned),
         }
+    }
+
+    #[test]
+    fn deleting_a_word_can_be_sent() {
+        let targets = sendable_targets();
+        for word in [
+            "alt+backspace",
+            "alt+delete",
+            "ctrl+backspace",
+            "ctrl+delete",
+        ] {
+            assert!(targets.iter().any(|(value, _)| value == word), "{word}");
+        }
+    }
+
+    fn remap_row(key: &str, sent: [Option<&str>; 3]) -> Row {
+        let chord = |text: &str| parse_chord(text).unwrap();
+        Row {
+            key: chord(key),
+            sent: Os::ALL
+                .into_iter()
+                .zip(sent)
+                .map(|(os, to)| (os, to.map(chord)))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_filter_matches_the_key_or_what_any_os_sends() {
+        let all = [
+            remap_row("ctrl+a", [Some("home"); 3]),
+            remap_row("ctrl+backspace", [Some("alt+backspace"), None, None]),
+        ];
+
+        assert_eq!(shown_rows(&all, ""), all);
+        assert_eq!(shown_rows(&all, "ctrl+a"), [all[0].clone()]);
+        assert_eq!(shown_rows(&all, "alt+"), [all[1].clone()]);
+        assert_eq!(shown_rows(&all, "end"), []);
+    }
+
+    #[test]
+    fn a_key_to_replace_is_one_pressed_down_never_tapped_or_held() {
+        assert_eq!(remap_key(" ctrl+k "), Ok(parse_chord("ctrl+k").unwrap()));
+        for text in ["space#hold", "left-shift#tap", ";#hold"] {
+            let refused = remap_key(text).unwrap_err();
+
+            assert!(refused.contains('#'), "{text}: {refused}");
+        }
+        assert!(remap_key("nowhere").is_err());
+        assert!(remap_key("").is_err());
+    }
+
+    #[test]
+    fn a_key_sent_as_itself_reads_as_none() {
+        assert_eq!(sent_label(None), "（なし）");
+        assert_eq!(
+            sent_label(parse_chord("alt+backspace")),
+            shown("alt+backspace")
+        );
     }
 
     #[test]

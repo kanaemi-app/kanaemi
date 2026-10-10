@@ -2,8 +2,10 @@
 //! bindings of each scene, read and written together, so that a key is
 //! chosen once rather than once per scene.
 
-use kanaemi_config::{APPLICATION_TABLE, UNBOUND, bindings_table, format_action};
+use kanaemi_config::{ApplicationTables, UNBOUND, bindings_table, format_action};
 use kanaemi_core::{Action, Bindings, Form};
+
+use crate::remaps::{self, Edit};
 
 /// One thing a key can do, and the scenes it is bound in to do it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -357,33 +359,14 @@ pub fn sending(current: &Bindings) -> bool {
     !current.application.is_empty()
 }
 
-/// Turns sending keys as other keys on, as Kanaemi does it, or off.
-pub fn send(on: bool, current: &Bindings, shipped: &Bindings) -> Vec<Change> {
-    let (now, then) = (
-        bindings_table(current, APPLICATION_TABLE),
-        bindings_table(shipped, APPLICATION_TABLE),
-    );
-    let mut keys: Vec<&String> = Vec::new();
-    for (k, _) in now.iter().chain(&then) {
-        if !keys.contains(&k) {
-            keys.push(k);
-        }
+/// Turns sending keys as other keys on, as Kanaemi does it on each OS, or
+/// off on every OS.
+pub fn send(on: bool, tables: &ApplicationTables) -> Vec<Edit> {
+    if on {
+        remaps::all_default(tables)
+    } else {
+        remaps::all_off(tables)
     }
-    keys.into_iter()
-        .filter_map(|key| {
-            let default = then.iter().any(|(k, _)| k == key);
-            let written = match (on, default) {
-                (true, _) | (false, false) => None,
-                (false, true) => Some(UNBOUND.to_owned()),
-            };
-            let current = now.iter().find(|(k, _)| k == key).map(|(_, v)| v);
-            let unchanged = match &written {
-                None => default && current.is_some() || !default && current.is_none(),
-                Some(_) => current.is_none(),
-            };
-            (!unchanged).then(|| (APPLICATION_TABLE, key.clone(), written))
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -394,6 +377,7 @@ mod tests {
     use kanaemi_core::Gesture;
 
     use super::*;
+    use crate::remaps::tests::edited;
 
     fn intents() -> impl Iterator<Item = &'static Intent> {
         GROUPS.iter().flat_map(|(_, intents)| intents.iter())
@@ -629,17 +613,42 @@ mod tests {
         assert!(!begin().changed(&shipped, &shipped));
     }
 
+    fn loaded(text: &str) -> Settings {
+        let (settings, problems) = Settings::load(text, Path::new("/nonexistent"));
+        assert!(problems.is_empty(), "{problems:?}\n{text}");
+        settings
+    }
+
     #[test]
-    fn sending_keys_as_other_keys_is_turned_off_and_on() {
-        let shipped = Bindings::default();
-        assert!(sending(&shipped));
-        let off = written(&send(false, &shipped, &shipped));
-        assert!(!sending(&off));
-        assert!(
-            send(true, &off, &shipped)
-                .iter()
-                .all(|(_, _, value)| value.is_none())
-        );
-        assert!(send(true, &shipped, &shipped).is_empty());
+    fn every_os_sends_keys_as_other_keys_by_default_so_the_switch_starts_on() {
+        for os in kanaemi_core::Os::ALL {
+            let shipped = Bindings {
+                application: kanaemi_core::default_remaps(Some(os)),
+                ..Bindings::default()
+            };
+
+            assert!(sending(&shipped), "{os:?}");
+        }
+    }
+
+    #[test]
+    fn sending_keys_as_other_keys_is_turned_off_and_on_on_every_os() {
+        let text = "[keys.application.linux]\n\"ctrl+k\" = \"end\"\n\
+                    [keys.application.windows]\n\"ctrl+h\" = \"@none\"\n";
+        assert!(sending(&loaded(text).config.bindings));
+
+        let off = edited(text, &send(false, &loaded(text).application_tables));
+
+        let tables = loaded(&off).application_tables;
+        assert!(!sending(&loaded(&off).config.bindings));
+        for row in remaps::rows(&tables) {
+            assert!(row.sent.iter().all(|(_, to)| to.is_none()), "{row:?}");
+        }
+
+        let on = edited(&off, &send(true, &tables));
+
+        assert_eq!(loaded(&on).application_tables, ApplicationTables::default());
+        assert!(sending(&loaded(&on).config.bindings));
+        assert!(send(true, &loaded(&on).application_tables).is_empty());
     }
 }
