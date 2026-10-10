@@ -344,6 +344,10 @@ impl Converter for SharedEngine {
     fn complete(&self, reading: &str) -> Vec<String> {
         self.0.borrow().complete(reading)
     }
+
+    fn preview(&self, reading: &str, limit: usize) -> Vec<String> {
+        self.0.borrow().preview(reading, limit)
+    }
 }
 
 #[cfg(test)]
