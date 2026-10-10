@@ -99,7 +99,7 @@
                   ln -s /usr/bin/codesign /usr/bin/iconutil macos-tools/
                   PATH=$PWD/macos-tools:$PATH bash apps/macos/bundle.sh target/release
                   mkdir -p $out/Applications
-                  cp -R target/Kanaemi.app $out/Applications/
+                  cp -R target/bundle.noindex/Kanaemi.app $out/Applications/
                 '';
                 # Stripping would break the bundle's signature.
                 dontStrip = true;

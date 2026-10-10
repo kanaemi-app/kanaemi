@@ -5,7 +5,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-app="$root/target/Kanaemi.app"
+app="$root/target/bundle.noindex/Kanaemi.app"
 out="$root/target/package"
 
 cargo build --release -p kanaemi-macos -p kanaemi-settings --manifest-path "$root/Cargo.toml"

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-app="$root/target/Kanaemi.app"
+app="$root/target/bundle.noindex/Kanaemi.app"
 dest="$HOME/Library/Input Methods/Kanaemi.app"
 
 # Signed by the identity releases are signed with when the keychain has it,
