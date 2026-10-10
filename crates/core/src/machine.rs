@@ -129,6 +129,9 @@ pub struct Core<C> {
     config: Config,
     mode: Mode,
     password: bool,
+    /// Whether the keys of [`crate::Bindings::application`] are sent in the
+    /// application with the focus.
+    sending: bool,
     state: State,
     /// Outermost first.
     registrations: Vec<Registration>,
@@ -158,6 +161,7 @@ impl<C: Converter> Core<C> {
             config,
             mode: Mode::Abc,
             password: false,
+            sending: true,
             state: State::idle(),
             registrations: Vec::new(),
             modifiers_held: Vec::new(),
@@ -265,6 +269,16 @@ impl<C: Converter> Core<C> {
 
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    /// Tells which application has the focus, by the name
+    /// [`Config::send_except`] lists it under.
+    pub fn set_application(&mut self, app: &str) {
+        self.sending = !self
+            .config
+            .send_except
+            .iter()
+            .any(|except| except.eq_ignore_ascii_case(app));
     }
 
     fn key_in_field(&mut self, key: KeyEvent) -> bool {
@@ -609,12 +623,13 @@ impl<C: Converter> Core<C> {
             return self.act(action, pressed);
         }
         if !self.composing() {
-            if let Some(remap) = self
-                .config
-                .bindings
-                .application
-                .iter()
-                .find(|b| b.from == pressed)
+            if self.sending
+                && let Some(remap) = self
+                    .config
+                    .bindings
+                    .application
+                    .iter()
+                    .find(|b| b.from == pressed)
             {
                 self.send = Some(remap.to);
                 return true;

@@ -12,6 +12,11 @@ pub struct Config {
     /// is ignored, so it cannot end the preedit by accident; with one of these
     /// modifiers it commits what is visible and passes on instead.
     pub pass_while_composing: Modifiers,
+    /// The applications the keys of [`Bindings::application`] are not sent
+    /// in, as the host names the one with the focus, ignoring case: there
+    /// those keys pass on as they are. Terminals give them meanings of their
+    /// own.
+    pub send_except: Vec<String>,
     /// How long a key may be down and still be tapped.
     pub tap_timeout_ms: u64,
     /// Whether to show the input mode for a moment when it changes.
@@ -30,6 +35,7 @@ impl Default for Config {
             romaji: RomajiTable::empty(),
             bindings: Bindings::default(),
             pass_while_composing: Modifiers::default(),
+            send_except: Vec::new(),
             tap_timeout_ms: 300,
             mode_indicator: true,
             keep_unfinished_romaji: true,
