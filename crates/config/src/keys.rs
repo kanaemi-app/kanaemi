@@ -62,7 +62,10 @@ impl Scene {
     pub(crate) fn allows(self, action: Action) -> bool {
         use Action::*;
         match self {
-            Self::Reading => !matches!(action, Forget | Pick(_) | UndoCommit),
+            Self::Reading => !matches!(
+                action,
+                Forget | Pick(_) | UndoCommit | NextPage | PreviousPage
+            ),
             Self::Completion => !matches!(action, Forget | UndoCommit | RereadKana),
             Self::Candidates => !matches!(
                 action,
@@ -178,6 +181,8 @@ fn every_action() -> Vec<Action> {
         Action::End,
         Action::Complete,
         Action::CompletePrevious,
+        Action::NextPage,
+        Action::PreviousPage,
         Action::Register,
         Action::Forget,
         Action::Abc,
@@ -221,6 +226,8 @@ pub fn format_action(action: Action) -> String {
         Action::Complete => "complete".to_owned(),
         Action::CompletePrevious => "complete-previous".to_owned(),
         Action::RereadKana => "reread-kana".to_owned(),
+        Action::NextPage => "next-page".to_owned(),
+        Action::PreviousPage => "previous-page".to_owned(),
     };
     format!("@{name}")
 }
@@ -355,6 +362,8 @@ const NAMED_KEYS: &[(&str, Key)] = &[
     ("down", Key::Down),
     ("home", Key::Home),
     ("end", Key::End),
+    ("page-up", Key::PageUp),
+    ("page-down", Key::PageDown),
     ("left-shift", Key::ShiftLeft),
     ("right-shift", Key::ShiftRight),
     ("left-ctrl", Key::CtrlLeft),

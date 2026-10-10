@@ -330,6 +330,45 @@ fn chords() {
     assert_eq!(parse_chord("ctrl+"), None);
     assert_eq!(parse_chord("hyper+a"), None);
     assert_eq!(parse_chord("ab"), None);
+    assert_eq!(parse_chord("page-down"), Some(plain(Key::PageDown)));
+    assert_eq!(parse_chord("page-up"), Some(plain(Key::PageUp)));
+}
+
+#[test]
+fn ctrl_n_and_ctrl_p_turn_the_page_of_a_list_shown_and_convert_nothing() {
+    let (settings, problems) = load("");
+    assert_eq!(problems, Vec::<String>::new());
+    let bindings = &settings.config.bindings;
+    for list in [&bindings.candidates, &bindings.completion] {
+        assert_eq!(target(list, ctrl('n')), Some(Action::NextPage));
+        assert_eq!(target(list, ctrl('p')), Some(Action::PreviousPage));
+    }
+    assert_eq!(target(&bindings.reading, ctrl('n')), None);
+    assert_eq!(target(&bindings.reading, ctrl('p')), None);
+}
+
+#[test]
+fn page_keys_are_bound_where_a_list_is_shown_and_nowhere_else() {
+    assert_eq!(parse_action("@next-page"), Some(Action::NextPage));
+    assert_eq!(parse_action("@previous-page"), Some(Action::PreviousPage));
+    let (settings, problems) = load(
+        "[keys.candidates]\n\"page-down\" = \"@next-page\"\n\
+         [keys.completion]\n\"page-up\" = \"@previous-page\"",
+    );
+    assert_eq!(problems, Vec::<String>::new());
+    let bindings = &settings.config.bindings;
+    assert_eq!(
+        target(&bindings.candidates, plain(Key::PageDown)),
+        Some(Action::NextPage)
+    );
+    assert_eq!(
+        target(&bindings.completion, plain(Key::PageUp)),
+        Some(Action::PreviousPage)
+    );
+    for table in ["reading", "registration", "kana", "abc"] {
+        assert!(!actions(table).contains(&Action::NextPage), "{table}");
+        assert!(!actions(table).contains(&Action::PreviousPage), "{table}");
+    }
 }
 
 /// The template with every setting line uncommented.
@@ -770,7 +809,7 @@ fn the_bindings_tables_are_written_as_the_file_writes_them() {
     let reading = bindings_table(&bindings, "reading");
     let application = bindings_table(&bindings, APPLICATION_TABLE);
 
-    assert!(reading.contains(&("ctrl+n".to_owned(), "@next".to_owned())));
+    assert!(reading.contains(&("space".to_owned(), "@next".to_owned())));
     assert!(application.contains(&("ctrl+m".to_owned(), "enter".to_owned())));
     assert_eq!(bindings_table(&bindings, "nowhere"), []);
 }
@@ -1156,7 +1195,6 @@ fn tab_completes_the_reading_and_goes_back_to_it_while_choosing() {
         assert!(!actions(table).contains(&Action::Complete), "{table}");
     }
     let completion = &settings.config.bindings.completion;
-    assert_eq!(target(completion, ctrl('n')), Some(Action::Complete));
     assert_eq!(target(completion, plain(Key::Down)), Some(Action::Complete));
     assert_eq!(
         target(completion, plain(Key::Char('1'))),
