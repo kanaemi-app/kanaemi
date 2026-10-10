@@ -1,6 +1,6 @@
 //! How the settings file names keys, actions and the bindings tables.
 
-use kanaemi_core::{Action, Binding, Bindings, Chord, Form, Gesture, Key, Modifiers};
+use kanaemi_core::{Action, Binding, Bindings, Chord, Form, Gesture, Key, Modifiers, Os};
 
 /// Takes a binding out.
 pub const UNBOUND: &str = "@none";
@@ -8,6 +8,15 @@ pub const UNBOUND: &str = "@none";
 /// The bindings table that remaps keys sent to the application, beside the
 /// table of each scene.
 pub const APPLICATION_TABLE: &str = "application";
+
+/// The table inside the application table that remaps keys on `os` only.
+pub fn os_table(os: Os) -> &'static str {
+    match os {
+        Os::MacOs => "macos",
+        Os::Windows => "windows",
+        Os::Linux => "linux",
+    }
+}
 
 /// How many candidates `@select-N` can pick, each by its place on a page.
 const PICKABLE: u8 = 9;
@@ -280,7 +289,7 @@ pub fn parse_chord(text: impl AsRef<str>) -> Option<Chord> {
 
 /// How a chord is written in the settings file; `None` for a key the file has
 /// no name for.
-pub(crate) fn format_chord(chord: Chord) -> Option<String> {
+pub fn format_chord(chord: Chord) -> Option<String> {
     let key = match chord.key {
         // A shifted letter is read back as its capital.
         Key::Char(c) if chord.mods.shift => c.to_ascii_lowercase().to_string(),

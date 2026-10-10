@@ -97,6 +97,26 @@ fn resetting_puts_the_template_back() {
 }
 
 #[test]
+fn a_key_of_an_os_table_goes_under_that_table_and_back() {
+    for os in kanaemi_core::Os::ALL.map(kanaemi_config::os_table) {
+        let path = ["keys", "application", os, "ctrl+w"];
+
+        let text = edited(TEMPLATE, |e| e.set(&path, "alt+backspace"));
+
+        assert!(
+            text.contains(&format!(
+                "\n[keys.application.{os}]\n\"ctrl+w\" = \"alt+backspace\"\n"
+            )),
+            "{text}"
+        );
+        assert!(text.contains("#[keys.application]\n"), "{text}");
+        settings(&text);
+        let reset = edited(&text, |e| e.reset(&path));
+        assert_eq!(reset, TEMPLATE, "{os}");
+    }
+}
+
+#[test]
 fn resetting_one_item_keeps_the_others_and_their_section() {
     let text = edited(TEMPLATE, |e| {
         e.set(&["marks", "reading"], "▽");

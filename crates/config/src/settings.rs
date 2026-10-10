@@ -4,17 +4,18 @@
 //! default; each item that could not be read is reported so the settings app
 //! can show it and the IME can log it.
 
+use std::collections::HashMap;
 use std::path::Path;
 
-use kanaemi_core::{Binding, Config, Modifiers, Remap, RomajiTable};
+use kanaemi_core::{Binding, Chord, Config, Modifiers, Os, Remap, RomajiTable};
 use toml::{Table, Value};
 
 use crate::folder::stays_inside;
 use crate::keys::{Scene, is_modifier, sendable};
 use crate::{
     APPLICATION_TABLE, BUILTIN_PREFIX, DICTIONARY_DIR, DictionarySource, FILE_NAME, UNBOUND,
-    builtin_dictionary, default_romaji_table, parse_action, parse_binding_key, parse_chord,
-    read_romaji_table,
+    builtin_dictionary, default_romaji_table, os_table, parse_action, parse_binding_key,
+    parse_chord, read_romaji_table,
 };
 
 /// The name the dictionary list gives the user custom dictionary.
@@ -33,6 +34,21 @@ pub struct Settings {
     /// The functions not to use, as the functions folder names them, or with
     /// [`BUILTIN_PREFIX`] for a built-in one.
     pub disabled_functions: Vec<String>,
+    /// What the application table and the OS tables inside it write, every
+    /// OS's alike, where [`Config::bindings`] has only what the running OS
+    /// sends.
+    pub application_tables: ApplicationTables,
+}
+
+/// What the application table and its OS tables write, as written: each key
+/// that can be read, once, with the key it is sent as, or `None` where a
+/// table takes the remap off.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ApplicationTables {
+    /// The table for every OS.
+    pub shared: Vec<(Chord, Option<Chord>)>,
+    /// The table of each OS that writes one, written over the shared one.
+    pub os: HashMap<Os, Vec<(Chord, Option<Chord>)>>,
 }
 
 /// An item that could not be read, named by its path in the file.
@@ -128,6 +144,7 @@ impl Settings {
                 romaji_tables: None,
                 control_port: None,
                 disabled_functions: Vec::new(),
+                application_tables: ApplicationTables::default(),
             },
             problems: Vec::new(),
             dir: dir.as_ref(),
@@ -346,44 +363,16 @@ impl Reader<'_> {
         let Value::Table(table) = value else {
             return self.problem(item, ProblemKind::NotATable);
         };
-        let scene = Scene::named(key);
-        if scene.is_none() && key != APPLICATION_TABLE {
-            return self.problem(item, ProblemKind::UnknownItem);
+        if key == APPLICATION_TABLE {
+            return self.application(item, table);
         }
+        let Some(scene) = Scene::named(key) else {
+            return self.problem(item, ProblemKind::UnknownItem);
+        };
         for (written, to) in table {
             let at = format!("{item}.{written}");
             let Some(to) = to.as_str() else {
                 self.problem(at, ProblemKind::NotAString);
-                continue;
-            };
-            let Some(scene) = scene else {
-                let Some(from) = parse_chord(&written) else {
-                    self.problem(at, ProblemKind::UnknownKey(written));
-                    continue;
-                };
-                if is_modifier(from.key) {
-                    self.problem(at, ProblemKind::ModifierKey);
-                    continue;
-                }
-                let to = match to {
-                    UNBOUND => None,
-                    to => match parse_chord(to) {
-                        Some(to) if sendable(to.key) => Some(to),
-                        Some(_) => {
-                            self.problem(at, ProblemKind::NotSendable);
-                            continue;
-                        }
-                        None => {
-                            self.problem(at, ProblemKind::UnknownKey(to.to_owned()));
-                            continue;
-                        }
-                    },
-                };
-                let remaps = &mut self.settings.config.bindings.application;
-                remaps.retain(|b| b.from != from);
-                if let Some(to) = to {
-                    remaps.push(Remap { from, to });
-                }
                 continue;
             };
             let Some((from, gesture)) = parse_binding_key(&written) else {
@@ -411,4 +400,84 @@ impl Reader<'_> {
             }
         }
     }
+
+    /// Every table kept as written, and the shared remaps, then those of the
+    /// running OS's table over them, sent whatever order the file writes
+    /// them in.
+    fn application(&mut self, item: &str, table: Table) {
+        let mut tables = ApplicationTables::default();
+        for (written, to) in table {
+            let at = format!("{item}.{written}");
+            match to {
+                Value::String(to) => {
+                    if let Some((from, to)) = self.remap(&at, &written, &to) {
+                        write(&mut tables.shared, from, to);
+                    }
+                }
+                Value::Table(table) => {
+                    let Some(os) = Os::ALL.into_iter().find(|os| os_table(*os) == written) else {
+                        self.problem(at, ProblemKind::UnknownItem);
+                        continue;
+                    };
+                    let entries = tables.os.entry(os).or_default();
+                    for (written, to) in table {
+                        let at = format!("{at}.{written}");
+                        let Some(to) = to.as_str() else {
+                            self.problem(at, ProblemKind::NotAString);
+                            continue;
+                        };
+                        if let Some((from, to)) = self.remap(&at, &written, to) {
+                            write(entries, from, to);
+                        }
+                    }
+                }
+                _ => self.problem(at, ProblemKind::NotAString),
+            }
+        }
+        tables.os.retain(|_, entries| !entries.is_empty());
+        let running = Os::RUNNING.and_then(|os| tables.os.get(&os));
+        let remaps = &mut self.settings.config.bindings.application;
+        for &(from, to) in tables.shared.iter().chain(running.into_iter().flatten()) {
+            remaps.retain(|r| r.from != from);
+            if let Some(to) = to {
+                remaps.push(Remap { from, to });
+            }
+        }
+        self.settings.application_tables = tables;
+    }
+
+    /// The key pressed and the key sent in its place, `None` to take a remap
+    /// out; reported at `at` when either cannot be.
+    fn remap(&mut self, at: &str, written: &str, to: &str) -> Option<(Chord, Option<Chord>)> {
+        let Some(from) = parse_chord(written) else {
+            self.problem(at, ProblemKind::UnknownKey(written.to_owned()));
+            return None;
+        };
+        if is_modifier(from.key) {
+            self.problem(at, ProblemKind::ModifierKey);
+            return None;
+        }
+        let to = match to {
+            UNBOUND => None,
+            to => match parse_chord(to) {
+                Some(to) if sendable(to.key) => Some(to),
+                Some(_) => {
+                    self.problem(at, ProblemKind::NotSendable);
+                    return None;
+                }
+                None => {
+                    self.problem(at, ProblemKind::UnknownKey(to.to_owned()));
+                    return None;
+                }
+            },
+        };
+        Some((from, to))
+    }
+}
+
+/// Writes `from` into a table as `to`, in place of a line for the same key
+/// written another way before it.
+fn write(entries: &mut Vec<(Chord, Option<Chord>)>, from: Chord, to: Option<Chord>) {
+    entries.retain(|(f, _)| *f != from);
+    entries.push((from, to));
 }
