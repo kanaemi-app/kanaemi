@@ -12,6 +12,7 @@ mod accessibility;
 #[cfg(target_os = "macos")]
 mod app;
 mod candidates;
+mod handled;
 #[cfg(target_os = "macos")]
 mod indicator;
 #[cfg(target_os = "macos")]
