@@ -118,6 +118,12 @@ pub enum Action {
     Complete,
     /// Go round the readings [`Action::Complete`] gives the other way.
     CompletePrevious,
+    /// The first candidate of the next page, the first page after the last;
+    /// in a list of readings to complete with, the first reading of the next
+    /// page, the reading as typed after the last.
+    NextPage,
+    /// [`Action::NextPage`] the other way.
+    PreviousPage,
     /// Take the kana just typed without a reading back to a reading; in a
     /// reading taken back so and left as it was, commit its first kana.
     RereadKana,
@@ -344,9 +350,13 @@ impl Default for Bindings {
         ];
         let choosing = [
             key(Key::Space, plain, Next),
-            key(Key::Char('n'), ctrl, Next),
             key(Key::Space, shift, Previous),
-            key(Key::Char('p'), ctrl, Previous),
+        ];
+        // Emacs's page keys, near at hand where Page Down and Page Up are far
+        // away or missing; they turn only a list shown, so they convert nothing.
+        let paging = [
+            key(Key::Char('n'), ctrl, NextPage),
+            key(Key::Char('p'), ctrl, PreviousPage),
         ];
         let editing = [
             key(Key::Delete, plain, Delete),
@@ -404,17 +414,17 @@ impl Default for Bindings {
             completion: [
                 &completing[..],
                 &[
-                    key(Key::Char('n'), ctrl, Complete),
-                    key(Key::Char('p'), ctrl, CompletePrevious),
                     key(Key::Down, plain, Complete),
                     key(Key::Up, plain, CompletePrevious),
                 ],
+                &paging,
                 &picking,
             ]
             .concat(),
             candidates: [
                 &choosing[..],
                 &[key(Key::Down, plain, Next), key(Key::Up, plain, Previous)],
+                &paging,
                 &deciding,
                 &forms,
                 &picking,

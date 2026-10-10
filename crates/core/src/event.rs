@@ -38,6 +38,8 @@ pub enum Key {
     Down,
     Home,
     End,
+    PageUp,
+    PageDown,
     /// A modifier key going down, on its own.
     Modifier,
     /// Any other key: it ends a modifier tap and passes on. While something

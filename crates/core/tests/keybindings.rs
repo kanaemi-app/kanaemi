@@ -193,11 +193,25 @@ fn ctrl_j_and_ctrl_m_commit_like_enter() {
 }
 
 #[test]
-fn ctrl_n_and_ctrl_p_move_through_candidates() {
+fn ctrl_n_and_ctrl_p_neither_convert_a_reading_nor_reach_the_application() {
+    let mut t = reading_kanji();
+    for c in ['n', 'p'] {
+        let out = t.ctrl(c);
+        assert!(out.consumed, "Ctrl+{c}");
+        assert_eq!(out.preedit, "›かんじ", "Ctrl+{c}");
+        assert_eq!(out.candidates, None, "Ctrl+{c}");
+    }
+}
+
+#[test]
+fn space_and_shift_space_move_one_candidate_and_ctrl_n_and_ctrl_p_one_page() {
     let mut t = reading_kanji();
     t.key(Key::Space);
-    assert_eq!(t.ctrl('n').preedit, "»感じ");
-    assert_eq!(t.ctrl('p').preedit, "»漢字");
+    assert_eq!(t.key(Key::Space).preedit, "»感じ");
+    assert_eq!(t.shifted(Key::Space).preedit, "»漢字");
+    assert_eq!(t.key(Key::Down).preedit, "»感じ");
+    assert_eq!(t.key(Key::Up).preedit, "»漢字");
+    assert_eq!(t.ctrl('n').preedit, "»漢字", "one page: back to its first");
 }
 
 #[test]
@@ -510,13 +524,12 @@ fn a_key_in_an_application_keys_are_not_sent_to_works_as_if_not_replaced() {
 }
 
 #[test]
-fn ctrl_n_converts_a_reading_but_types_no_space_in_the_text_to_register() {
+fn ctrl_n_types_no_space_in_the_text_to_register() {
     let mut t = reading_kanji();
     assert!(
         t.key(Key::Up).consumed,
         "an arrow does not reach the application"
     );
-    assert_eq!(t.ctrl('n').preedit, "»漢字");
 
     let mut t = T::new();
     t.kana();
@@ -531,8 +544,6 @@ fn ctrl_n_converts_a_reading_but_types_no_space_in_the_text_to_register() {
 
 #[test]
 fn previous_in_a_reading_converts_to_the_last_candidate() {
-    let mut t = reading_kanji();
-    assert_eq!(t.ctrl('p').preedit, "»kanji");
     let mut t = reading_kanji();
     assert_eq!(t.shifted(Key::Space).preedit, "»kanji");
 }
@@ -552,8 +563,12 @@ fn space_is_a_key_like_any_other_and_can_do_something_else() {
     let mut t = T::with_config(config);
     t.kana();
     t.typ(";kanji");
-    assert_eq!(t.ctrl('n').preedit, "»漢字", "Ctrl+N still converts");
-    assert_eq!(t.ctrl('n').preedit, "»感じ");
+    assert_eq!(
+        t.key(Key::Space).preedit,
+        "»漢字",
+        "Space still converts a reading"
+    );
+    assert_eq!(t.key(Key::Down).preedit, "»感じ");
     assert_eq!(t.key(Key::Space).commit.as_deref(), Some("感じ"));
 }
 

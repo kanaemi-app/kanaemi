@@ -1,6 +1,14 @@
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
     pub surface: String,
+    /// The name of the dictionary it came from, for the host to show beside
+    /// it. `None` for one no dictionary gave, such as the reading as
+    /// katakana.
+    pub source: Option<String>,
+    /// For a reading to complete with, the candidate converting it gives
+    /// first, for the host to show beside it. `None` otherwise, and for a
+    /// reading that converts to nothing.
+    pub preview: Option<String>,
 }
 
 /// Turns readings into candidates. What the user commits, registers and
@@ -22,6 +30,19 @@ pub trait Converter {
     fn registered_text(&self, reading: &str, okurigana: Option<&str>, surface: &str) -> String {
         let _ = (reading, okurigana);
         surface.to_owned()
+    }
+
+    /// The first `limit` candidates converting `reading` gives, best first,
+    /// shown with it while it is listed to complete with. The user has not
+    /// converted it, so a converter that keeps what it converted to learn
+    /// from keeps nothing of this. By default, those of
+    /// [`Converter::convert`].
+    fn preview(&self, reading: &str, limit: usize) -> Vec<String> {
+        self.convert(reading, None)
+            .into_iter()
+            .take(limit)
+            .map(|candidate| candidate.surface)
+            .collect()
     }
 
     /// Readings longer than `reading` that start with it, best first, to
