@@ -55,6 +55,14 @@ impl RomajiTable {
             .any(|(r, _)| r.len() > prefix.len() && r.starts_with(prefix))
     }
 
+    /// Whether `c` after `pending` makes a rule, or the start of one.
+    pub(crate) fn goes_on(&self, pending: &str, c: char) -> bool {
+        self.rules.iter().any(|(r, _)| {
+            r.strip_prefix(pending)
+                .is_some_and(|rest| rest.starts_with(c))
+        })
+    }
+
     pub(crate) fn is_input_char(&self, c: char) -> bool {
         c.is_ascii_lowercase() || self.rules.iter().any(|(r, _)| r.contains(c))
     }

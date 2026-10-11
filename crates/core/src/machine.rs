@@ -442,7 +442,7 @@ impl<C: Converter> Core<C> {
                 };
                 // What the key does is known only once it is let go or
                 // another key is typed.
-                if self.bound(pressed, Gesture::Hold).is_some() {
+                if self.bound_typed(pressed, Gesture::Hold).is_some() {
                     self.held = Some(Held {
                         pressed,
                         at: event.time_ms,
@@ -632,7 +632,7 @@ impl<C: Converter> Core<C> {
     /// key pressed alone, or a character typed while it was held. One to pass
     /// on goes as the character it types.
     fn replay(&mut self, typed: Chord) {
-        let consumed = match self.bound(typed, Gesture::Press) {
+        let consumed = match self.bound_typed(typed, Gesture::Press) {
             Some(action) => self.act(action, typed),
             // Not sent as another key: the press is gone, and a sent key
             // could not keep its place among the characters typed.
@@ -704,6 +704,37 @@ impl<C: Converter> Core<C> {
         }
     }
 
+    /// What a key typed now is bound to: none when it goes on with the
+    /// unfinished romaji into a rule. A key already held acts by [`Self::bound`],
+    /// typing nothing itself.
+    fn bound_typed(&self, chord: Chord, gesture: Gesture) -> Option<Action> {
+        if self.goes_on_with_romaji(chord) {
+            return None;
+        }
+        self.bound(chord, gesture)
+    }
+
+    /// Whether `chord` types a key that goes on with the unfinished romaji
+    /// into a rule: a binding would cut the rule short. The romaji waiting
+    /// after the okurigana goes on by its own test, while choosing.
+    fn goes_on_with_romaji(&self, chord: Chord) -> bool {
+        let Chord { key, mods } = chord;
+        if self.mode != Mode::Kana || mods.ctrl || mods.cmd || mods.alt {
+            return false;
+        }
+        let c = match key {
+            Key::Char(c) => c,
+            Key::Space => ' ',
+            _ => return false,
+        };
+        let pending = match &self.state {
+            State::Idle { pending } => pending,
+            State::Reading(word) => &word.pending,
+            State::Candidates(_) => return false,
+        };
+        !pending.is_empty() && self.config.romaji.goes_on(pending, c)
+    }
+
     /// Whether anything is being typed: a word, unfinished romaji or a
     /// registration.
     fn composing(&self) -> bool {
@@ -715,7 +746,7 @@ impl<C: Converter> Core<C> {
     fn press(&mut self, key: Key, mods: Modifiers) -> bool {
         let shortcut = mods.ctrl || mods.cmd || mods.alt;
         let pressed = Chord { key, mods };
-        if let Some(action) = self.bound(pressed, Gesture::Press) {
+        if let Some(action) = self.bound_typed(pressed, Gesture::Press) {
             return self.act(action, pressed);
         }
         if !self.composing() {

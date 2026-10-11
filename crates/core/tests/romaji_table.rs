@@ -128,14 +128,23 @@ fn the_space_key_types_what_a_rule_taking_a_space_makes() {
 }
 
 #[test]
-fn a_rule_can_take_a_space_after_other_input_where_the_space_key_is_unbound() {
-    let mut config = config();
-    assert_eq!(config.romaji.apply("z \t・"), Vec::<usize>::new());
-    config.bindings.reading.retain(|b| b.from.key != Key::Space);
-    let mut t = T::with_config(config);
-    t.kana();
+fn a_key_going_on_with_unfinished_romaji_into_a_rule_is_typed_before_its_binding() {
+    let mut t = with_rules("z \t・");
     assert_eq!(t.ch('z').commit, None);
     assert_eq!(t.key(Key::Space).commit.as_deref(), Some("・"));
+
+    let mut t = with_rules("z \t・");
+    t.ch(';');
+    t.typ("kaz");
+    assert_eq!(t.key(Key::Space).preedit, "›か・", "in a reading too");
+}
+
+#[test]
+fn a_key_going_on_with_unfinished_romaji_into_no_rule_does_what_it_is_bound_to() {
+    let mut t = with_rules("z \t・");
+    t.ch(';');
+    t.typ("kanjik");
+    assert_eq!(t.key(Key::Space).preedit, "»漢字");
 }
 
 #[test]
