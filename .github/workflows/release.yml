@@ -34,7 +34,7 @@ jobs:
       - name: Gather the descriptions into the catalog
         run: |
           jq -s --arg version "$TAG" \
-            '{format: 1, version: $version, packages: sort_by(.os, .arch, .format)}' \
+            '{format: 2, version: $version, packages: sort_by(.os, .arch, .framework, .format)}' \
             packages/*.json >index.json
           rm packages/*.json
         env:

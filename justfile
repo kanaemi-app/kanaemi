@@ -65,9 +65,13 @@ install-windows:
 package-macos:
     apps/macos/package.sh
 
-# Make the Debian and RPM packages in target/package; run outside the Nix shell, with nfpm.
+# Make the IBus Debian and RPM packages in target/package; run outside the Nix shell, with nfpm.
 package-ibus:
     apps/ibus/package.sh
+
+# Make the Fcitx5 Debian and RPM packages in target/package; run outside the Nix shell, with nfpm and Fcitx5's development files.
+package-fcitx5:
+    apps/fcitx5/package.sh
 
 # Make the Windows Installer package in target/package; needs the WiX toolset.
 package-windows:

@@ -31,8 +31,17 @@ for path in target/package/*.pkg target/package/*.msi target/package/*.deb targe
     echo "$file: a release would rename it; name it with letters, digits, '.', '_' and '-' only" >&2
     exit 1
   fi
-  printf '{"file":"%s","os":"%s","arch":"%s","format":"%s","size":%s,"sha256":"%s"}\n' \
-    "$file" "$os" "$arch" "${file##*.}" "$(wc -c <"$path" | tr -d ' ')" "$(sha256 "$path")" \
+  # Linux has a package for each input method framework, named after it.
+  framework=""
+  if [ "$os" = linux ]; then
+    case "$file" in
+      ibus-*) framework=',"framework":"ibus"' ;;
+      fcitx5-*) framework=',"framework":"fcitx5"' ;;
+      *) echo "$file: no input method framework in its name" >&2; exit 1 ;;
+    esac
+  fi
+  printf '{"file":"%s","os":"%s","arch":"%s"%s,"format":"%s","size":%s,"sha256":"%s"}\n' \
+    "$file" "$os" "$arch" "$framework" "${file##*.}" "$(wc -c <"$path" | tr -d ' ')" "$(sha256 "$path")" \
     >"$path.json"
   described=$((described + 1))
 done
