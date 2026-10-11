@@ -8,9 +8,8 @@
 // engine on a Unix with IBus sends it.
 #![cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 
+mod client;
 mod ibus;
-mod keys;
-mod reply;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod service;
 

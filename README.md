@@ -91,6 +91,7 @@ just accuracy        # 変換の正解率を測る（KANAEMI_ACCURACY_DICTIONARI
 just bench           # ベンチマークを流す（CI はビルドだけ確かめる）
 just install-macos   # macOS の入力方式を ~/Library/Input Methods に入れる
 just install-ibus    # Linux（IBus）の入力方式を入れる
+just install-fcitx5  # Linux（Fcitx5）の入力方式を入れる（Nix の開発環境の外で）
 just install-windows # Windows の入力方式を入れる（管理者のシェルで）
 ```
 
@@ -102,7 +103,9 @@ just install-windows # Windows の入力方式を入れる（管理者のシェ�
 | `crates/runtime` | どの OS の入力方式にも共通する、辞書・モデル・設定・ログ・入力欄ごとの状態 |
 | `apps/macos` | macOS の入力方式（Input Method Kit） |
 | `apps/windows` | Windows の入力方式（Text Services Framework） |
+| `crates/linux` | Linux の入力方式に共通する、キーの読み方と表示するものの組み立て |
 | `apps/ibus` | Linux の入力方式（IBus） |
+| `apps/fcitx5` | Linux の入力方式（Fcitx5） |
 | `apps/settings` | 設定アプリ |
 
 - [docs/concept.md](docs/concept.md)：考え方

@@ -479,9 +479,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.6.0"
+version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f74872d07caf508b30a21f6836e7d7016a2eaf7d9ff4f48deaa58cd8a0407630"
+checksum = "50a649af8a827553c29fb0cb4bd4a6f1a0dd695bd3232b9bc98bd9c8a3ffbb8b"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -2709,6 +2709,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kanaemi-fcitx5"
+version = "0.0.0"
+dependencies = [
+ "cc",
+ "kanaemi-config",
+ "kanaemi-core",
+ "kanaemi-linux",
+ "kanaemi-runtime",
+ "pkg-config",
+ "tracing",
+]
+
+[[package]]
 name = "kanaemi-functions"
 version = "0.0.0"
 dependencies = [
@@ -2727,11 +2740,21 @@ version = "0.0.0"
 dependencies = [
  "kanaemi-config",
  "kanaemi-core",
+ "kanaemi-linux",
  "kanaemi-runtime",
  "serde",
  "tracing",
  "zbus",
  "zvariant",
+]
+
+[[package]]
+name = "kanaemi-linux"
+version = "0.0.0"
+dependencies = [
+ "kanaemi-core",
+ "kanaemi-runtime",
+ "tracing",
 ]
 
 [[package]]

@@ -14,22 +14,21 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use kanaemi_core::Event;
+use kanaemi_linux::keys::{self, Keys, RELEASE_MASK};
+use kanaemi_linux::reply::{self, Reply, Signal};
 use kanaemi_runtime::{Field, Profile};
 use zbus::names::BusName;
 use zbus::object_server::ObjectServer;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
 use zbus::{Connection, interface};
 
+use crate::client;
 use crate::ibus::{self, Property};
-use crate::keys::{Keys, RELEASE_MASK};
-use crate::reply::{self, Reply, Signal};
 
 /// The bus name ibus-daemon expects, as the component file gives it.
 const BUS_NAME: &str = "org.freedesktop.IBus.Kanaemi";
 const ENGINE_INTERFACE: &str = "org.freedesktop.IBus.Engine";
 const SETTINGS_KEY: &str = "settings";
-/// The settings app, installed beside the engine.
-const SETTINGS_APP: &str = "kanaemi-settings";
 
 /// One input context's field, with what IBus last said of it.
 struct Context {
@@ -61,7 +60,7 @@ impl Shell {
             focused: None,
             keys: Keys::default(),
             started: Instant::now(),
-            indicator: reply::shows_indicator(&desktop),
+            indicator: client::shows_indicator(&desktop),
             connection: None,
         }
     }
@@ -75,36 +74,13 @@ impl Shell {
         self.contexts.insert(id, context);
     }
 
-    /// Feeds one event to the context's field and says what to tell IBus. A
-    /// panic clears the preedit, starts the field over and hands the key to
-    /// the application.
+    /// Feeds one event to the context's field and says what to tell IBus.
     fn handle(&mut self, id: u32, event: Event) -> Reply {
-        let Some(context) = self.contexts.get_mut(&id) else {
-            return Reply::NOTHING;
-        };
-        let profile = &mut self.profile;
-        let handled = catch_unwind(AssertUnwindSafe(|| context.field.handle(profile, event)));
-        match handled {
-            Ok(output) => {
-                tracing::debug!(?event, ?output, "handled");
-                let mut reply = reply::reply(&output, self.indicator);
-                // The text is erased by keys forwarded ahead of what follows,
-                // which IBus takes without telling whether they arrived.
-                if output.erase.is_some() {
-                    let erased = self.handle(id, Event::Erased(true));
-                    reply.signals.extend(erased.signals);
-                }
-                reply
+        match self.contexts.get_mut(&id) {
+            Some(context) => {
+                kanaemi_linux::handle(&mut context.field, &mut self.profile, event, self.indicator)
             }
-            Err(_) => {
-                // The event is left out: it may be a key the user typed.
-                tracing::warn!("handling an event panicked; the state was reset");
-                context.field.restart(profile);
-                Reply {
-                    consumed: false,
-                    signals: vec![Signal::Preedit(String::new(), 0), Signal::HideCandidates],
-                }
-            }
+            None => Reply::NOTHING,
         }
     }
 
@@ -132,7 +108,7 @@ impl Shell {
     /// comes in, so a field that turns out to be a password one is focused
     /// again with that known.
     fn set_content_type(&mut self, id: u32, purpose: u32, hints: u32) -> Option<Reply> {
-        let (password, private) = reply::content_type(purpose, hints);
+        let (password, private) = client::content_type(purpose, hints);
         let context = self.contexts.get_mut(&id)?;
         context.private = private;
         context.field.set_private(private);
@@ -147,14 +123,8 @@ impl Shell {
         if self.focused == Some(id) {
             self.focused = None;
         }
-        let Some(context) = self.contexts.get_mut(&id) else {
-            return;
-        };
-        let profile = &mut self.profile;
-        let dropped = catch_unwind(AssertUnwindSafe(|| context.field.drop_focus(profile)));
-        if dropped.is_err() {
-            tracing::warn!("dropping the focus panicked; the state was reset");
-            context.field.restart(profile);
+        if let Some(context) = self.contexts.get_mut(&id) {
+            kanaemi_linux::drop_focus(&mut context.field, &mut self.profile);
         }
     }
 
@@ -308,14 +278,19 @@ async fn emit(
                 }
                 send(connection, path, "HideLookupTable", &()).await
             }
-            Signal::Forward(keyval, state) => {
-                let press = (keyval, 0u32, state);
-                let release = (keyval, 0u32, state | RELEASE_MASK);
-                match send(connection, path, "ForwardKeyEvent", &press).await {
-                    Ok(()) => send(connection, path, "ForwardKeyEvent", &release).await,
-                    failed => failed,
+            // Forwarded keys reach the application in order, before what
+            // follows.
+            Signal::Erase(text) => {
+                let mut sent = Ok(());
+                for (keyval, state) in keys::erasing(&text) {
+                    sent = forward(connection, path, keyval, state).await;
+                    if sent.is_err() {
+                        break;
+                    }
                 }
+                sent
             }
+            Signal::Forward(keyval, state) => forward(connection, path, keyval, state).await,
             Signal::Indicator(mode) => {
                 let label = ibus::text(reply::mode_label(mode));
                 let shown = send(connection, path, "UpdateAuxiliaryText", &(label, true)).await;
@@ -327,6 +302,19 @@ async fn emit(
             tracing::warn!(%error, "IBus not told");
         }
     }
+}
+
+/// Presses and lets go of a key in the application.
+async fn forward(
+    connection: &Connection,
+    path: &ObjectPath<'_>,
+    keyval: u32,
+    state: u32,
+) -> zbus::Result<()> {
+    let press = (keyval, 0u32, state);
+    let release = (keyval, 0u32, state | RELEASE_MASK);
+    send(connection, path, "ForwardKeyEvent", &press).await?;
+    send(connection, path, "ForwardKeyEvent", &release).await
 }
 
 async fn send<B>(
@@ -439,7 +427,7 @@ impl Engine {
         // The one engine moves between fields: one naming no program is in
         // none, not in the one before.
         let id = self.id;
-        let program = reply::program(client).unwrap_or_default().to_owned();
+        let program = client::program(client).unwrap_or_default().to_owned();
         self.shell
             .ask(move |shell| shell.set_application(id, &program));
         self.focus_in().await;
@@ -544,22 +532,9 @@ impl Service {
 
 /// Opens the settings app installed beside the engine.
 fn open_settings() {
-    let Ok(exe) = std::env::current_exe() else {
-        tracing::warn!("the engine's own path is unknown; settings app not opened");
-        return;
-    };
-    let app = exe.with_file_name(SETTINGS_APP);
-    match std::process::Command::new(&app).spawn() {
-        // Waited for on a thread of its own, so no finished app lingers.
-        Ok(mut child) => {
-            let waiting = std::thread::Builder::new()
-                .name("settings-launcher".to_owned())
-                .spawn(move || child.wait());
-            if let Err(error) = waiting {
-                tracing::warn!(%error, "settings app not waited for");
-            }
-        }
-        Err(error) => tracing::warn!(app = %app.display(), %error, "settings app not opened"),
+    match std::env::current_exe() {
+        Ok(exe) => kanaemi_linux::open_settings(&exe),
+        Err(_) => tracing::warn!("the engine's own path is unknown; settings app not opened"),
     }
 }
 

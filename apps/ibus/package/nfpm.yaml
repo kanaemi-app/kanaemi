@@ -1,5 +1,5 @@
 # The Debian and RPM packages; apps/ibus/package.sh fills in the variables.
-name: kanaemi
+name: ibus-kanaemi
 arch: ${ARCH}
 platform: linux
 version: ${VERSION}
@@ -12,34 +12,45 @@ license: MIT
 # The engine talks to ibus-daemon without linking to it. The libraries the
 # binaries link to are worked out by package.sh where they are built.
 overrides:
+  # The package was named kanaemi before Fcitx5 had one of its own; this one
+  # takes its place.
   deb:
     depends:
       - ibus
 ${DEB_DEPENDS}
+    replaces:
+      - kanaemi
+    conflicts:
+      - kanaemi
   rpm:
     depends:
       - ibus
 ${RPM_DEPENDS}
+    # Obsoletes, in RPM.
+    replaces:
+      - kanaemi
 
 contents:
   - src: ${RELEASE}/kanaemi-ibus
-    dst: /usr/lib/kanaemi/kanaemi-ibus
+    dst: /usr/lib/ibus-kanaemi/kanaemi-ibus
     file_info:
       mode: 0755
   # The engine opens the settings app from beside itself.
   - src: ${RELEASE}/kanaemi-settings
-    dst: /usr/lib/kanaemi/kanaemi-settings
+    dst: /usr/lib/ibus-kanaemi/kanaemi-settings
     file_info:
       mode: 0755
   - src: ${ROOT}/apps/macos/assets/logo/kanaemi-icon.svg
-    dst: /usr/lib/kanaemi/kanaemi.svg
+    dst: /usr/lib/ibus-kanaemi/kanaemi.svg
   - src: ${COMPONENT}
     dst: /usr/share/ibus/component/kanaemi.xml
+    file_info:
+      mode: 0644
   - src: ${ROOT}/LICENSE
-    dst: /usr/share/doc/kanaemi/copyright
+    dst: /usr/share/doc/ibus-kanaemi/copyright
     packager: deb
   - src: ${ROOT}/LICENSE
-    dst: /usr/share/licenses/kanaemi/LICENSE
+    dst: /usr/share/licenses/ibus-kanaemi/LICENSE
     packager: rpm
 
 scripts:

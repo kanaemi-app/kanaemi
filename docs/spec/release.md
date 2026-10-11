@@ -10,7 +10,7 @@ GitHub のリリースを公開すると、そのタグから OS ごとのイン
 
 ```json
 {
-  "format": 1,
+  "format": 2,
   "version": "v0.1.0",
   "packages": [
     {
@@ -20,16 +20,26 @@ GitHub のリリースを公開すると、そのタグから OS ごとのイン
       "format": "pkg",
       "size": 12345678,
       "sha256": "…"
+    },
+    {
+      "file": "fcitx5-kanaemi_0.1.0_amd64.deb",
+      "os": "linux",
+      "arch": "x64",
+      "framework": "fcitx5",
+      "format": "deb",
+      "size": 12345678,
+      "sha256": "…"
     }
   ]
 }
 ```
 
-- `format`：目録の形の版。この形は `1`。形を変えたら上げる。
+- `format`：目録の形の版。この形は `2`。形を変えたら上げる。
 - `version`：リリースのタグ。
 - `packages`：リリースに付けたインストーラーのすべて。
 - `file`：リリースに付けたファイルの名前。`https://github.com/kanaemi-app/kanaemi/releases/download/<タグ>/<名前>` で取れる。
 - `os`：`macos`・`windows`・`linux` のどれか。
 - `arch`：インストーラーが動く CPU。`x64` か `arm64`。
+- `framework`：`linux` のインストーラーだけにある。どの入力の仕組みで動く入力方式か。`ibus` か `fcitx5`。
 - `format`：インストーラーの形式。ファイル名の拡張子（`pkg`・`msi`・`deb`・`rpm`）。
 - `size`・`sha256`：ファイルのバイト数と、小文字の 16 進の SHA-256。

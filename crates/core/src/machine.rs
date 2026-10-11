@@ -184,6 +184,10 @@ pub struct Core<C> {
     /// Whether the keys of [`crate::Bindings::application`] are sent in the
     /// application with the focus.
     sending: bool,
+    /// Whether the application with the focus is excepted from them.
+    excepted: bool,
+    /// Whether the host can send keys as they are, with no other modifier.
+    sends_keys: bool,
     state: State,
     /// Outermost first.
     registrations: Vec<Registration>,
@@ -227,6 +231,8 @@ impl<C: Converter> Core<C> {
             mode: Mode::Abc,
             password: false,
             sending: true,
+            excepted: false,
+            sends_keys: true,
             state: State::idle(),
             registrations: Vec::new(),
             modifiers_held: Vec::new(),
@@ -356,11 +362,21 @@ impl<C: Converter> Core<C> {
     /// Tells which application has the focus, by the name
     /// [`Config::send_except`] lists it under.
     pub fn set_application(&mut self, app: &str) {
-        self.sending = !self
+        self.excepted = self
             .config
             .send_except
             .iter()
             .any(|except| except.eq_ignore_ascii_case(app));
+        self.sending = self.sends_keys && !self.excepted;
+    }
+
+    /// Tells whether the host can send a key with only its own modifiers.
+    /// Where it cannot, as where the modifiers held down go with every key
+    /// it sends, the keys of [`crate::Bindings::application`] pass on as
+    /// they are, in every application.
+    pub fn set_sends_keys(&mut self, sends: bool) {
+        self.sends_keys = sends;
+        self.sending = self.sends_keys && !self.excepted;
     }
 
     fn key_in_field(&mut self, key: KeyEvent) -> bool {

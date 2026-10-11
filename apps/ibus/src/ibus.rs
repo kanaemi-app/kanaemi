@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use zvariant::{StructureBuilder, Value};
 
-use crate::reply::Item;
+use kanaemi_linux::reply::Item;
 
 /// An underline attribute, and its value for none.
 const ATTR_UNDERLINE: u32 = 1;

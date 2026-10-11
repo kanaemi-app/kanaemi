@@ -1,0 +1,57 @@
+# The Debian and RPM packages; apps/fcitx5/package.sh fills in the variables.
+name: fcitx5-kanaemi
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+maintainer: Alisue <lambdalisue@gmail.com>
+description: Kanaemi Japanese input method, a Fcitx5 add-on
+homepage: https://github.com/kanaemi-app/kanaemi
+license: MIT
+
+# The libraries the add-on and the settings app link to, Fcitx5's among
+# them, are worked out by package.sh where they are built.
+overrides:
+  deb:
+    depends:
+      - fcitx5
+${DEB_DEPENDS}
+  rpm:
+    depends:
+      - fcitx5
+${RPM_DEPENDS}
+
+contents:
+  - src: ${RELEASE}/libkanaemi_fcitx5.so
+    dst: ${LIB}/kanaemi-fcitx5.so
+    file_info:
+      mode: 0644
+  # The add-on opens the settings app from beside the file its link names.
+  - src: ${LIB}/kanaemi-fcitx5.so
+    dst: ${DEB_ADDONS}/kanaemi.so
+    type: symlink
+    packager: deb
+  - src: ${LIB}/kanaemi-fcitx5.so
+    dst: ${RPM_ADDONS}/kanaemi.so
+    type: symlink
+    packager: rpm
+  - src: ${RELEASE}/kanaemi-settings
+    dst: ${LIB}/kanaemi-settings
+    file_info:
+      mode: 0755
+  - src: ${ROOT}/apps/macos/assets/logo/kanaemi-icon.svg
+    dst: ${LIB}/kanaemi.svg
+  - src: ${OUT}/fcitx5-addon.conf
+    dst: /usr/share/fcitx5/addon/kanaemi.conf
+    file_info:
+      mode: 0644
+  - src: ${OUT}/fcitx5-inputmethod.conf
+    dst: /usr/share/fcitx5/inputmethod/kanaemi.conf
+    file_info:
+      mode: 0644
+  - src: ${ROOT}/LICENSE
+    dst: /usr/share/doc/fcitx5-kanaemi/copyright
+    packager: deb
+  - src: ${ROOT}/LICENSE
+    dst: /usr/share/licenses/fcitx5-kanaemi/LICENSE
+    packager: rpm

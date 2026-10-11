@@ -19,6 +19,8 @@ pub struct Field {
     private: bool,
     /// The application the field is in, told again to a core built anew.
     application: String,
+    /// Whether the host can send keys, told again to a core built anew.
+    sends_keys: bool,
 }
 
 impl Field {
@@ -31,6 +33,7 @@ impl Field {
             generation: profile.generation(),
             private: false,
             application: String::new(),
+            sends_keys: true,
         }
     }
 
@@ -41,15 +44,25 @@ impl Field {
         self.core.set_application(&self.application);
     }
 
+    /// Tells whether the host can send a key with only its own modifiers;
+    /// where it cannot, the keys sent in place of others pass on as they
+    /// are.
+    pub fn set_sends_keys(&mut self, sends: bool) {
+        self.sends_keys = sends;
+        self.core.set_sends_keys(sends);
+    }
+
     /// A field built again from `profile`, still the same one to it.
     fn rebuilt(&self, profile: &Profile) -> Self {
         let mut field = Self {
             id: self.id,
             private: self.private,
             application: self.application.clone(),
+            sends_keys: self.sends_keys,
             ..Self::new(profile)
         };
         field.core.set_application(&field.application);
+        field.core.set_sends_keys(field.sends_keys);
         field
     }
 
@@ -289,6 +302,29 @@ mod tests {
         assert_eq!(field.handle(&mut profile, ctrl_h).send, None);
         field.handle(&mut profile, Event::FocusOut);
         change_settings(&dir, &format!("mode_indicator = false\n{except}"));
+        field.handle(&mut profile, FOCUS_IN);
+        assert_eq!(field.handle(&mut profile, ctrl_h).send, None);
+    }
+
+    #[test]
+    fn a_host_that_cannot_send_keys_outlives_a_core_built_again() {
+        let dir = temp_dir("sends-keys");
+        let mut profile = Profile::open(&dir);
+        let mut field = Field::new(&profile);
+        field.set_sends_keys(false);
+        let ctrl_h = Event::Key(KeyEvent {
+            key: Key::Char('h'),
+            mods: Modifiers {
+                ctrl: true,
+                ..Modifiers::default()
+            },
+            kind: KeyKind::Press,
+            time_ms: 0,
+        });
+        field.handle(&mut profile, FOCUS_IN);
+        assert_eq!(field.handle(&mut profile, ctrl_h).send, None);
+        field.handle(&mut profile, Event::FocusOut);
+        change_settings(&dir, "mode_indicator = false\n");
         field.handle(&mut profile, FOCUS_IN);
         assert_eq!(field.handle(&mut profile, ctrl_h).send, None);
     }

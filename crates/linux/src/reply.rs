@@ -1,17 +1,11 @@
-//! What the engine tells IBus after an event, decided apart from D-Bus so it
-//! builds and tests on every platform.
+//! What an input method tells its framework after an event, decided apart
+//! from the framework so it builds and tests on every platform.
 
-use kanaemi_core::{Candidate, CandidateView, Chord, Key, Mode, Modifiers, Output};
+use kanaemi_core::{Candidate, CandidateView, Mode, Output};
 
 use crate::keys;
 
-/// The input purposes of a password and a PIN, as IBus numbers them.
-const SECRET_PURPOSES: [u32; 2] = [8, 9];
-/// The hint of a field whose text is not to be remembered, such as one in a
-/// browser's private window.
-const PRIVATE_HINT: u32 = 1 << 11;
-
-/// One thing to tell IBus, in the order the list gives.
+/// One thing to tell the framework, in the order the list gives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Signal {
     Commit(String),
@@ -21,6 +15,8 @@ pub enum Signal {
     /// it, if anything.
     Candidates(Vec<Item>, usize, Option<String>),
     HideCandidates,
+    /// Text just before the caret to erase, ahead of what follows.
+    Erase(String),
     Forward(u32, u32),
     /// The mode to show by the caret for a moment, after it changed.
     Indicator(Mode),
@@ -49,20 +45,12 @@ impl Reply {
     };
 }
 
-/// What to tell IBus to show `output`. The mode is shown by the caret only
+/// What to tell the framework to show `output`. The mode is shown by the caret only
 /// where the panel shows it well (`indicator`).
 pub fn reply(output: &Output, indicator: bool) -> Reply {
     let mut signals = Vec::new();
-    // Forwarded keys reach the application in order, before what follows.
     if let Some(text) = &output.erase {
-        let backspace = Chord {
-            key: Key::Backspace,
-            mods: Modifiers::default(),
-        };
-        if let Some((keyval, state)) = keys::key_to_send(backspace) {
-            let presses = kanaemi_runtime::backspaces(text);
-            signals.extend((0..presses).map(|_| Signal::Forward(keyval, state)));
-        }
+        signals.push(Signal::Erase(text.clone()));
     }
     if let Some(text) = &output.commit {
         signals.push(Signal::Commit(text.clone()));
@@ -95,7 +83,7 @@ const SEPARATOR: char = '　';
 
 /// The panel's text for each candidate: the candidate, then its dictionary
 /// or, for a reading to complete with, its first candidate, as the panel
-/// has no column for them. IBus hands a clicked candidate back by its
+/// has no column for them. A clicked candidate comes back by its
 /// position, so candidates that read alike need not be told apart.
 fn items(items: &[Candidate]) -> Vec<Item> {
     items
@@ -137,33 +125,6 @@ pub fn mode_label(mode: Mode) -> &'static str {
     match mode {
         Mode::Kana => "かな",
         Mode::Abc => "ABC",
-    }
-}
-
-/// Whether the panel of `desktop` (`XDG_CURRENT_DESKTOP`) shows the mode by
-/// the caret well: GNOME Shell does. IBus's own panel, on other desktops,
-/// keeps an empty frame of candidates up after the text goes, so there the
-/// mode is not shown at all.
-pub fn shows_indicator(desktop: &str) -> bool {
-    desktop.split(':').any(|d| d == "GNOME")
-}
-
-/// What a field's content type says: whether it takes a secret, and
-/// whether it asks that what is typed there not be recorded.
-pub fn content_type(purpose: u32, hints: u32) -> (bool, bool) {
-    (
-        SECRET_PURPOSES.contains(&purpose),
-        hints & PRIVATE_HINT != 0,
-    )
-}
-
-/// The program an input context's client (`FocusInId`) is, when it says:
-/// GTK's input modules append it (`gtk4-im:ghostty`), and XIM or GNOME
-/// Shell's own entries tell none.
-pub fn program(client: &str) -> Option<&str> {
-    match client.split_once(':') {
-        Some(("gtk-im" | "gtk3-im" | "gtk4-im", program)) => Some(program),
-        _ => None,
     }
 }
 
@@ -215,19 +176,17 @@ mod tests {
     }
 
     #[test]
-    fn text_to_erase_goes_first_as_backspaces() {
+    fn text_to_erase_goes_first() {
         let output = Output {
             erase: Some("記者𥸮".to_owned()),
+            commit: Some("木".to_owned()),
             ..output()
         };
-        let backspace = Signal::Forward(0xff08, 0);
         assert_eq!(
-            reply(&output, false).signals[..4],
+            reply(&output, false).signals[..2],
             [
-                backspace.clone(),
-                backspace.clone(),
-                backspace,
-                Signal::Preedit(String::new(), 0)
+                Signal::Erase("記者𥸮".to_owned()),
+                Signal::Commit("木".to_owned())
             ]
         );
     }
@@ -380,34 +339,5 @@ mod tests {
             ..output()
         };
         assert!(!reply(&output, false).consumed);
-    }
-
-    #[test]
-    fn gnome_shows_the_mode_by_the_caret_and_other_panels_do_not() {
-        assert!(shows_indicator("GNOME"));
-        assert!(shows_indicator("ubuntu:GNOME"));
-        assert!(!shows_indicator("KDE"));
-        assert!(!shows_indicator(""));
-    }
-
-    #[test]
-    fn a_password_or_pin_is_a_secret_and_the_private_hint_asks_for_no_record() {
-        assert_eq!(content_type(8, 0), (true, false));
-        assert_eq!(content_type(9, 0), (true, false));
-        assert_eq!(content_type(0, 1 << 11), (false, true));
-        assert_eq!(content_type(0, 0), (false, false));
-    }
-
-    #[test]
-    fn a_gtk_client_names_its_program_and_others_name_none() {
-        assert_eq!(program("gtk4-im:ghostty"), Some("ghostty"));
-        assert_eq!(
-            program("gtk3-im:gnome-terminal-server"),
-            Some("gnome-terminal-server")
-        );
-        assert_eq!(program("gtk-im:firefox"), Some("firefox"));
-        assert_eq!(program("xim"), None);
-        assert_eq!(program("gnome-shell"), None);
-        assert_eq!(program("fake"), None);
     }
 }

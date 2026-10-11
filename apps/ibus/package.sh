@@ -35,7 +35,7 @@ esac
 
 mkdir -p "$out"
 component="$out/kanaemi.xml"
-perl -pe "s|\@LIBDIR\@|/usr/lib/kanaemi|g; s|\@VERSION\@|$version|g" "$root/apps/ibus/kanaemi.xml" >"$component"
+perl -pe "s|\@LIBDIR\@|/usr/lib/ibus-kanaemi|g; s|\@VERSION\@|$version|g" "$root/apps/ibus/kanaemi.xml" >"$component"
 
 # Debian depends on the packages that hold the libraries the binaries link
 # to, as this system names them; dpkg-shlibdeps works in a debian folder.
@@ -58,5 +58,5 @@ ROOT="$root" RELEASE="$release" COMPONENT="$component" VERSION="$package_version
 # The files are named after the version as it is, not the package version:
 # a release renames an uploaded file with a tilde, and the catalog would then
 # name a file the release does not hold.
-nfpm package --config "$config" --packager deb --target "$out/kanaemi_${version}_${arch}.deb"
-nfpm package --config "$config" --packager rpm --target "$out/kanaemi-${version}.${rpm_arch}.rpm"
+nfpm package --config "$config" --packager deb --target "$out/ibus-kanaemi_${version}_${arch}.deb"
+nfpm package --config "$config" --packager rpm --target "$out/ibus-kanaemi-${version}.${rpm_arch}.rpm"

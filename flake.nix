@@ -69,7 +69,7 @@
               }
             else
               {
-                cargoExtraArgs = "-p kanaemi-ibus -p kanaemi-settings";
+                cargoExtraArgs = "-p kanaemi-ibus -p kanaemi-fcitx5 -p kanaemi-settings";
                 nativeBuildInputs = [ pkgs.pkg-config ];
                 # What the Dioxus desktop renderer (wry) links against.
                 buildInputs = [
@@ -79,6 +79,8 @@
                   pkgs.glib
                   pkgs.openssl
                   pkgs.xdotool
+                  # What the Fcitx5 add-on's C++ layer builds against.
+                  pkgs.fcitx5
                 ];
               }
           );
@@ -125,6 +127,16 @@
                   mkdir -p $out/share/ibus/component
                   substitute apps/ibus/kanaemi.xml $out/share/ibus/component/kanaemi.xml \
                     --replace-fail @LIBDIR@ $lib --replace-fail @VERSION@ ${version}
+                  install -Dm644 target/release/libkanaemi_fcitx5.so $lib/kanaemi-fcitx5.so
+                  # Where NixOS finds the add-ons given to i18n.inputMethod.fcitx5.addons.
+                  # The add-on opens the settings app from beside the file its link names.
+                  mkdir -p $out/lib/fcitx5
+                  ln -s $lib/kanaemi-fcitx5.so $out/lib/fcitx5/kanaemi.so
+                  mkdir -p $out/share/fcitx5/addon $out/share/fcitx5/inputmethod
+                  substitute apps/fcitx5/addon.conf $out/share/fcitx5/addon/kanaemi.conf \
+                    --replace-fail @VERSION@ ${version}
+                  substitute apps/fcitx5/inputmethod.conf $out/share/fcitx5/inputmethod/kanaemi.conf \
+                    --replace-fail @LIBDIR@ $lib
                 '';
                 # The settings app is not in bin, where the hook looks.
                 dontWrapGApps = true;
@@ -174,6 +186,8 @@
               pkgs.glib
               pkgs.openssl
               pkgs.xdotool
+              # What the Fcitx5 add-on's C++ layer builds against.
+              pkgs.fcitx5
             ];
           };
         }

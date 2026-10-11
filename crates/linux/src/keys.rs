@@ -1,14 +1,15 @@
-//! IBus key events, X keysyms with a modifier state, turned into the core's
-//! keys, and back for the keys the core sends to the application.
+//! Key events as IBus and Fcitx5 both give them, X keysyms with a modifier
+//! state, turned into the core's keys, and back for the keys the core sends
+//! to the application.
 
 use kanaemi_core::{Chord, Key, KeyEvent, KeyKind, Modifiers};
 
-pub const SHIFT_MASK: u32 = 1 << 0;
-pub const CONTROL_MASK: u32 = 1 << 2;
-pub const MOD1_MASK: u32 = 1 << 3;
+const SHIFT_MASK: u32 = 1 << 0;
+const CONTROL_MASK: u32 = 1 << 2;
+const MOD1_MASK: u32 = 1 << 3;
 /// Super as Qt sends it; GTK sets this and [`SUPER_MASK`] both.
-pub const MOD4_MASK: u32 = 1 << 6;
-pub const SUPER_MASK: u32 = 1 << 26;
+const MOD4_MASK: u32 = 1 << 6;
+const SUPER_MASK: u32 = 1 << 26;
 pub const RELEASE_MASK: u32 = 1 << 30;
 
 const XK_CAPS_LOCK: u32 = 0xffe5;
@@ -79,7 +80,8 @@ pub struct Keys {
 }
 
 impl Keys {
-    /// The core's key for an IBus key event; `None` when it is not a press
+    /// The core's key for a key event, its release marked in `state` by
+    /// [`RELEASE_MASK`] as IBus marks it; `None` when it is not a press
     /// or release the core needs. X repeats no modifier, so a modifier's
     /// press is always a new one. A key code of 0 says nothing of which key
     /// it is, and such a key reads as its keysym says.
@@ -193,13 +195,27 @@ pub fn key_to_send(chord: Chord) -> Option<(u32, u32)> {
         (chord.mods.shift, SHIFT_MASK),
         (chord.mods.ctrl, CONTROL_MASK),
         (chord.mods.alt, MOD1_MASK),
-        (chord.mods.cmd, SUPER_MASK),
+        // Qt, XIM and Wayland read only Mod4.
+        (chord.mods.cmd, SUPER_MASK | MOD4_MASK),
     ] {
         if on {
             state |= mask;
         }
     }
     Some((*keyval, state))
+}
+
+/// The keysym and modifier state of each Backspace that erases `text` just
+/// before the caret.
+pub fn erasing(text: &str) -> impl Iterator<Item = (u32, u32)> {
+    let backspace = Chord {
+        key: Key::Backspace,
+        mods: Modifiers::default(),
+    };
+    let presses = kanaemi_runtime::backspaces(text);
+    key_to_send(backspace)
+        .into_iter()
+        .flat_map(move |key| std::iter::repeat_n(key, presses))
 }
 
 #[cfg(test)]
@@ -353,5 +369,23 @@ mod tests {
         assert_eq!(send(Key::Backspace, false), Some((0xff08, 0)));
         assert_eq!(send(Key::Left, true), Some((0xff51, CONTROL_MASK)));
         assert_eq!(send(Key::Char('a'), false), None);
+    }
+
+    #[test]
+    fn text_is_erased_by_a_backspace_for_each_character() {
+        let keys: Vec<_> = erasing("記者𥸮").collect();
+        assert_eq!(keys, [(0xff08, 0); 3]);
+    }
+
+    #[test]
+    fn super_is_sent_as_gtk_and_qt_both_read_it() {
+        let chord = Chord {
+            key: Key::Left,
+            mods: Modifiers {
+                cmd: true,
+                ..Default::default()
+            },
+        };
+        assert_eq!(key_to_send(chord), Some((0xff51, SUPER_MASK | MOD4_MASK)));
     }
 }

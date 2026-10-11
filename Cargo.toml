@@ -14,6 +14,7 @@ kanaemi-config = { path = "crates/config" }
 kanaemi-core = { path = "crates/core" }
 kanaemi-engine = { path = "crates/engine" }
 kanaemi-functions = { path = "crates/functions" }
+kanaemi-linux = { path = "crates/linux" }
 kanaemi-runtime = { path = "crates/runtime" }
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 dioxus = "0.7.10"

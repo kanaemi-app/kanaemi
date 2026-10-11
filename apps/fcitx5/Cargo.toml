@@ -1,0 +1,24 @@
+[package]
+name = "kanaemi-fcitx5"
+description = "The Linux input method, a Fcitx5 add-on"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# What Fcitx5 is told is built and tested on every platform.
+kanaemi-core.workspace = true
+kanaemi-linux.workspace = true
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+kanaemi-config.workspace = true
+kanaemi-runtime.workspace = true
+tracing = { version = "0.1", features = ["release_max_level_info"] }
+
+[build-dependencies]
+cc = "1.7"
+pkg-config = "0.3.34"

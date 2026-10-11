@@ -40,14 +40,48 @@ X11 の GTK3・GTK4 と、GNOME Shell（Wayland）の GTK4 の入力欄で確か
 
 ## Fcitx5
 
-X11 の GTK3 の入力欄（`fcitx5-frontend-gtk3`）で確かめた。
+X11 の GTK3 の入力欄（`fcitx5-frontend-gtk3`）で確かめた。Kanaemi のアドオンは Debian 13（Fcitx5 5.1.12）の、Xvfb（X11）の上の GTK4 の入力欄（`fcitx5-frontend-gtk4`）で確かめた。
 
-- エンジンは `fcitx::InputMethodEngineV2` を継承した共有ライブラリ（アドオン）で、アドオンと入力メソッドの `.conf` で登録する。
-- `keyEvent` に押す・離すの両方が届く（`isRelease()`）。左右の Shift は keysym で区別できる。
-- 未確定文字列は、クライアントが対応していれば `InputPanel::setClientPreedit` のあと `InputContext::updatePreedit()` でアプリの中に出せる。印を付けたまま表示される。カーソルの位置は `InputContext::cursorRect()` で取れる。
+### 作り
+
+- エンジンは `fcitx::InputMethodEngineV2` を継承した共有ライブラリ（アドオン）で、アドオンと入力メソッドの `.conf` で登録する。`.conf` は XDG のデータのフォルダの `fcitx5/addon/`・`fcitx5/inputmethod/` から読まれ、`/usr/local/share` でもよい。
+- ライブラリは、`.conf` の `Library` に `.so` を付けた名前で、Fcitx5 のアドオンのフォルダ（`pkg-config --variable=libdir Fcitx5Core` の下の `fcitx5`。環境変数 `FCITX_ADDON_DIRS` で変えられる）だけから探される。ほかの場所のライブラリへのシンボリックリンクでも読み込める。
+- Fcitx5 はライブラリの `fcitx_addon_factory_instance` を探して呼ぶ。Rust の `cdylib` は Rust で定義した記号しか外に出さないので、C++ の `FCITX_ADDON_FACTORY` では見つからない。Rust の側で定義して、C++ のファクトリーを返す。
+- アドオンは Fcitx5 のプロセスで、1 つのイベントループの上で呼ばれる。ほかのスレッドから処理を頼むときは `EventDispatcher` を使う。
+- アドオンのフォルダは、Debian ではマルチアーキテクチャのライブラリのフォルダの下（`/usr/lib/aarch64-linux-gnu/fcitx5` など）、Fedora などの RPM のディストリビューションでは `/usr/lib64/fcitx5`。
+- アドオンが Fcitx5 のライブラリをリンクしないと、記号は読み込んだ Fcitx5 のものに解決されて動くが、どの版の Fcitx5 に対してビルドしたかがライブラリに残らない。パッケージの依存（`dpkg-shlibdeps`、RPM の自動の依存）は、リンクしたライブラリから決まる。
+- 入力コンテキストの `frontendName()` は 5.0.22 から。`frontend()` はそれより前からあり、同じ名前を返す。Ubuntu 22.04 の Fcitx5 は 5.0.14。
+
+### キー
+
+- `keyEvent` に押す・離すの両方が届く（`isRelease()`）。左右の Shift は keysym で区別できる。修飾キーの状態のビットは IBus と同じ（Shift `1 << 0`、Ctrl `1 << 2`、Alt `1 << 3`、Super `1 << 6` と `1 << 26`）。
 - 既定の設定では、左 Shift の単独押しを Fcitx5 が取る。「入力メソッドを一時的に切り替える」キー（`Hotkey/AltTriggerKeys`）の既定値が左 Shift で、押すとキーボード配列に切り替わり、エンジンは非アクティブになる。`~/.config/fcitx5/config` の `[Hotkey/AltTriggerKeys]` を空にすると届く。
+
+### フォーカス
+
+- 入力欄ごとに入力コンテキストがあり、エンジンは 1 つのまま、どのコンテキストのイベントかを受け取る。コンテキストごとの状態は `InputContextProperty` に持ち、コンテキストが消えるとそのデストラクターが呼ばれる。
+- フォーカスが外れると、そのコンテキストで `deactivate` が呼ばれる。そこで `commitString` した文字列は、フォーカスの外れた入力欄に届く。
+- フォーカスが外れるとき、`deactivate` より前に、Fcitx5 かクライアント（GTK の入力モジュールは `ClientUnfocusCommit` を持つ）が、アプリの中の未確定文字列を確定する。`TextFormatFlag::DontCommit` を付けた部分は確定されない。
+- 入力欄の種類は `capabilityFlags()` で分かる。GTK のパスワードと PIN の入力欄は `Password`、Wayland の機密のデータの入力欄は `Sensitive` になる。
+
+### 表示
+
+- 未確定文字列は、クライアントが対応していれば `InputPanel::setClientPreedit` のあと `InputContext::updatePreedit()` でアプリの中に出せる。印を付けたまま表示される。書式のない部分は、GTK4 では下線なしで出る。カーソルの位置は `InputContext::cursorRect()` で取れる。
+- 候補の一覧は、Fcitx5 のパネル（classicui）が出す。候補に付けた `comment` は、候補の後ろに離して出る。候補の `setComment` は 5.1.9 から。
+- パネルは、候補がなくても補助テキスト（`setAuxUp`）だけを小さな札として出し、補助テキストを消すと札も消える。
+
+### Wayland
+
+ヘッドレスの Sway（Debian 13、`WLR_BACKENDS=headless`）の上の GTK4 の入力欄で、`wtype` で打って確かめた。
+
+- Sway のような入力メソッドのプロトコルの第 2 版を使うコンポジターでは、入力コンテキストの `frontendName()` は `wayland_v2`、KWin のような第 1 版では `wayland` になる。
+- `wayland_v2` では、`forwardKey` は仮想キーボードを通して送られ、渡した修飾キーの状態は使われない（[waylandimserverv2.cpp](https://github.com/fcitx/fcitx5/blob/master/src/frontend/waylandim/waylandimserverv2.cpp) の `forwardKeyDelegate`）。上の環境では、送った Backspace は入力欄に効かなかった。`deleteSurroundingText` は効く。
+- `wayland`・`wayland_v2` のどちらでも、入力欄を手放してから `deactivate` が呼ばれ、そのあとの `commitString` は届かない（[waylandimserver.cpp](https://github.com/fcitx/fcitx5/blob/master/src/frontend/waylandim/waylandimserver.cpp)、`waylandimserverv2.cpp` の `done`）。上の環境では、読みを打っている途中で同じ窓の別の入力欄にフォーカスを移すと、読みはどちらの入力欄にも入らなかった。
+- どちらも `ClientUnfocusCommit` を持つので、フォーカスが外れたとき、Fcitx5 は未確定文字列を確定せずクライアントに任せる。上の環境の GTK4 は確定しなかった。
 
 ## 確かめていないこと
 
 - KDE（KWin の Wayland）での Fcitx5。違いが出るとすれば、Wayland の入力メソッドのプロトコル（未確定文字列の扱い、カーソルの位置と候補の窓の置き方）。
-- フォーカスが外れたとき、アプリが未確定文字列をそのまま確定してしまわないか（印や打ちかけが入らないか）。
+- IBus で、フォーカスが外れたとき、アプリが未確定文字列をそのまま確定してしまわないか（印や打ちかけが入らないか）。
+- Fcitx5 で、GTK 以外のクライアント（Qt、XIM）。
+- Fcitx5 のアドオンの RPM のパッケージを、RPM のディストリビューションで入れること。
