@@ -64,6 +64,38 @@ fn a_letter_typed_and_let_go_while_space_is_held_begins_a_reading() {
 }
 
 #[test]
+fn a_key_bound_to_be_held_going_on_with_unfinished_romaji_into_a_rule_is_typed_at_once() {
+    let mut config = config();
+    config.romaji.apply("z \t・");
+    let mut t = T::with_config(config);
+    t.kana();
+    t.ch('z');
+    let out = t.down(Key::Space);
+    assert!(out.consumed);
+    assert_eq!(out.commit.as_deref(), Some("・"));
+}
+
+#[test]
+fn a_key_held_still_acts_before_a_character_while_romaji_is_unfinished() {
+    let mut config = unheld();
+    config.romaji.apply("z \t・");
+    config.bindings.reading.push(Binding {
+        from: plain(Key::Space),
+        gesture: Gesture::Hold,
+        to: Action::Backspace,
+    });
+    let mut t = T::with_config(config);
+    t.kana();
+    t.ch(';');
+    t.typ("kanji");
+    t.down(Key::Space);
+    t.typ("za");
+    t.release(Key::Char('a'));
+    t.release(Key::Space);
+    assert_eq!(t.key(Key::Enter).commit.as_deref(), Some("かんあ"));
+}
+
+#[test]
 fn bindings_tell_whether_a_key_is_bound_to_be_held() {
     assert!(config().bindings.hold_a_key());
     assert!(!unheld().bindings.hold_a_key());

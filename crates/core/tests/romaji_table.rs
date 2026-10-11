@@ -106,9 +106,65 @@ fn romaji_table_escapes() {
 #[test]
 fn invalid_romaji_table_lines_are_skipped_and_reported() {
     let mut t = RomajiTable::empty();
-    let text = "a\tあ\nb\nc\t\n\td\ne\tえ\tx\n\\q\tq\nf g\tふ\n!\ni\tい";
+    let text = "a\tあ\nb\nc\t\n\td\ne\tえ\tx\n\\q\tq\nfあ\tふ\n!\ni\tい";
     assert_eq!(t.apply(text), vec![2, 3, 4, 5, 6, 7, 8]);
     assert_eq!(typed_with(t, "ai"), "あい");
+}
+
+fn with_rules(rules: &str) -> T {
+    let mut romaji = romaji();
+    assert_eq!(romaji.apply(rules), Vec::<usize>::new());
+    let mut t = T::with_config(Config { romaji, ..config() });
+    t.kana();
+    t
+}
+
+#[test]
+fn the_space_key_types_what_a_rule_taking_a_space_makes() {
+    let mut t = with_rules(" \t　");
+    let out = t.key(Key::Space);
+    assert!(out.consumed);
+    assert_eq!(out.commit.as_deref(), Some("　"));
+}
+
+#[test]
+fn a_key_going_on_with_unfinished_romaji_into_a_rule_is_typed_before_its_binding() {
+    let mut t = with_rules("z \t・");
+    assert_eq!(t.ch('z').commit, None);
+    assert_eq!(t.key(Key::Space).commit.as_deref(), Some("・"));
+
+    let mut t = with_rules("z \t・");
+    t.ch(';');
+    t.typ("kaz");
+    assert_eq!(t.key(Key::Space).preedit, "›か・", "in a reading too");
+}
+
+#[test]
+fn a_key_going_on_with_unfinished_romaji_into_no_rule_does_what_it_is_bound_to() {
+    let mut t = with_rules("z \t・");
+    t.ch(';');
+    t.typ("kanjik");
+    assert_eq!(t.key(Key::Space).preedit, "»漢字");
+}
+
+#[test]
+fn without_a_rule_taking_a_space_the_space_key_passes_on() {
+    let mut t = T::new();
+    t.kana();
+    let out = t.key(Key::Space);
+    assert!(!out.consumed);
+    assert_eq!(out.commit, None);
+
+    let mut t = with_rules(" \t　\n! ");
+    assert!(!t.key(Key::Space).consumed, "the rule was removed");
+}
+
+#[test]
+fn a_space_bound_to_a_function_acts_before_a_rule_taking_a_space() {
+    let mut t = with_rules(" \t　");
+    t.ch(';');
+    t.typ("kanji");
+    assert_eq!(t.key(Key::Space).preedit, "»漢字");
 }
 
 #[test]

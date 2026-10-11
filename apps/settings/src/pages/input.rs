@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn the_invalid_lines_of_a_romaji_table_are_named_by_number() {
-        let said = romaji_warning("# 説明\nka\tか\nbad line\nki\tき\na b\tあ\n");
+        let said = romaji_warning("# 説明\nka\tか\nbad line\nki\tき\naあ\tあ\n");
 
         assert_eq!(
             said.as_deref(),
