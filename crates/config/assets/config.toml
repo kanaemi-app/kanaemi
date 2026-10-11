@@ -5,7 +5,8 @@
 #
 # キーの書き方：修飾キー（ctrl・cmd・alt・shift）を + でつなぐ（"ctrl+h"、"shift+space"）。
 # キーは 1 文字（"a"・"0"・";"）か、space・enter・esc・backspace・delete・left・right・up・
-# down・home・end・page-up・page-down・f1〜f12・eisu（英数）・kana（かな）・henkan（変換）・muhenkan（無変換）か、
+# down・home・end・page-up・page-down・f1〜f12・eisu（英数）・kana（かな）・henkan（変換）・muhenkan（無変換）・
+# zenkaku-hankaku（半角/全角）・caps-lock か、
 # 修飾キーの Shift・Ctrl・Cmd（Win）・Option（Alt）の左右（left-shift・right-shift・left-ctrl・right-ctrl・
 # left-cmd・right-cmd・left-alt・right-alt）。
 # 修飾キーは押したときに働き、キー自体もアプリに渡る。後ろに #tap を付けると（"left-shift#tap"）、ほかの修飾キーを

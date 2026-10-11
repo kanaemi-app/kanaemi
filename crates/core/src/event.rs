@@ -30,6 +30,11 @@ pub enum Key {
     Henkan,
     /// The JIS keyboard's 無変換 key, on Windows.
     Muhenkan,
+    /// The JIS keyboard's 半角/全角 key, on Windows and Linux.
+    ZenkakuHankaku,
+    /// Caps Lock pressed, either way its lock turns. Bound nowhere, it
+    /// does nothing, as a modifier key going down.
+    CapsLock,
     /// A function key, numbered from 1.
     F(u8),
     Left,

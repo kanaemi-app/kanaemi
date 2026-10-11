@@ -26,7 +26,7 @@ const SIDED: [(u32, Key); 8] = [
 ];
 
 /// The keys the core knows by name rather than by what they type.
-const NAMED: [(u32, Key); 18] = [
+const NAMED: [(u32, Key); 21] = [
     (0xff08, Key::Backspace),
     (0xff09, Key::Tab),
     (0xff0d, Key::Enter),
@@ -45,6 +45,10 @@ const NAMED: [(u32, Key); 18] = [
     (0xff22, Key::Muhenkan),
     (0xff30, Key::Eisu),
     (0xff27, Key::Kana),
+    (0xff2a, Key::ZenkakuHankaku),
+    // Zenkaku and Hankaku, which a keymap may give the key by turns.
+    (0xff28, Key::ZenkakuHankaku),
+    (0xff29, Key::ZenkakuHankaku),
 ];
 
 /// The keypad's keys that the main keys have too, and Tab as X names it
@@ -112,9 +116,9 @@ impl Keys {
             return Some(event(key, mods, kind));
         }
         if keyval == XK_CAPS_LOCK {
-            // Caps Lock going down ends a tap. It goes as a bare key, so the
-            // core does not commit as for a shortcut.
-            return (!release).then(|| event(Key::Modifier, Modifiers::default(), KeyKind::Press));
+            // Each press is one, as on platforms that tell only of its lock
+            // turning; no binding waits on its release.
+            return (!release).then(|| event(Key::CapsLock, mods, KeyKind::Press));
         }
         let down = (keycode != 0)
             .then(|| self.typed.iter().position(|(code, _)| *code == keycode))
@@ -335,8 +339,23 @@ mod tests {
     }
 
     #[test]
-    fn caps_lock_ends_a_tap_as_a_bare_key() {
-        assert_eq!(translate(XK_CAPS_LOCK, 0, 0).unwrap().key, Key::Modifier);
+    fn caps_lock_is_the_cores_caps_lock_with_the_modifiers_held() {
+        let e = translate(XK_CAPS_LOCK, SHIFT_MASK, 0).unwrap();
+        assert_eq!(
+            (e.key, e.kind, e.mods.shift),
+            (Key::CapsLock, KeyKind::Press, true)
+        );
+    }
+
+    #[test]
+    fn zenkaku_hankaku_is_one_key_whichever_keysym_x_gives_it() {
+        for keysym in [0xff2a, 0xff28, 0xff29] {
+            assert_eq!(
+                translate(keysym, 0, 0).unwrap().key,
+                Key::ZenkakuHankaku,
+                "{keysym:#x}"
+            );
+        }
     }
 
     #[test]

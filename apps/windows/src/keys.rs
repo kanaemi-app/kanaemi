@@ -35,8 +35,16 @@ pub const VK_LMENU: u16 = 0xa4;
 pub const VK_RMENU: u16 = 0xa5;
 /// The JIS keyboard's 英数 key.
 pub const VK_DBE_ALPHANUMERIC: u16 = 0xf0;
+/// The JIS keyboard's かな key with Shift.
+pub const VK_DBE_KATAKANA: u16 = 0xf1;
 /// The JIS keyboard's かな key.
 pub const VK_DBE_HIRAGANA: u16 = 0xf2;
+/// The JIS keyboard's 半角/全角 key, as an IME sees it.
+pub const VK_KANJI: u16 = 0x19;
+/// The JIS keyboard's 半角/全角 key, as the keyboard gives it: the two codes
+/// take turns.
+pub const VK_OEM_AUTO: u16 = 0xf3;
+pub const VK_OEM_ENLW: u16 = 0xf4;
 
 /// The right Shift's scan code: both Shift keys come as `VK_SHIFT`.
 pub const SCAN_RSHIFT: u16 = 0x36;
@@ -84,11 +92,10 @@ impl Keys {
             };
         }
         if raw.vk == VK_CAPITAL {
-            // Caps Lock going down ends a tap. It goes as a bare key, so the
-            // core does not commit as for a shortcut.
-            return raw
-                .down
-                .then(|| event(Key::Modifier, Modifiers::default(), KeyKind::Press));
+            // Each press is one, as on platforms that tell only of its lock
+            // turning; no binding waits on its release.
+            return (raw.down && !raw.repeat)
+                .then(|| event(Key::CapsLock, raw.mods, KeyKind::Press));
         }
         if !raw.down {
             let key = match self.typed.iter().position(|(vk, _)| *vk == raw.vk) {
@@ -152,7 +159,7 @@ fn sided(raw: &RawKey) -> Option<Key> {
 }
 
 /// The keys the core knows by name rather than by what they type.
-const NAMED: [(u16, Key); 18] = [
+const NAMED: [(u16, Key); 22] = [
     (VK_BACK, Key::Backspace),
     (VK_TAB, Key::Tab),
     (VK_RETURN, Key::Enter),
@@ -171,6 +178,10 @@ const NAMED: [(u16, Key); 18] = [
     (VK_NONCONVERT, Key::Muhenkan),
     (VK_DBE_ALPHANUMERIC, Key::Eisu),
     (VK_DBE_HIRAGANA, Key::Kana),
+    (VK_DBE_KATAKANA, Key::Kana),
+    (VK_KANJI, Key::ZenkakuHankaku),
+    (VK_OEM_AUTO, Key::ZenkakuHankaku),
+    (VK_OEM_ENLW, Key::ZenkakuHankaku),
 ];
 
 fn named(vk: u16) -> Option<Key> {
@@ -402,11 +413,48 @@ mod tests {
     }
 
     #[test]
-    fn caps_lock_ends_a_tap_as_a_bare_key() {
+    fn caps_lock_is_the_cores_caps_lock_with_the_modifiers_held() {
+        let e = translate(&RawKey {
+            mods: Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            ..raw(VK_CAPITAL, true)
+        })
+        .unwrap();
         assert_eq!(
-            translate(&raw(VK_CAPITAL, true)).unwrap().key,
-            Key::Modifier
+            (e.key, e.kind, e.mods.shift),
+            (Key::CapsLock, KeyKind::Press, true)
         );
+        let held = RawKey {
+            repeat: true,
+            ..raw(VK_CAPITAL, true)
+        };
+        assert_eq!(translate(&held), None);
+    }
+
+    #[test]
+    fn zenkaku_hankaku_is_one_key_whichever_code_windows_gives_it() {
+        for vk in [VK_KANJI, VK_OEM_AUTO, VK_OEM_ENLW] {
+            assert_eq!(
+                translate(&raw(vk, true)).unwrap().key,
+                Key::ZenkakuHankaku,
+                "{vk:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn kana_with_shift_is_the_kana_key_with_shift() {
+        let e = translate(&RawKey {
+            mods: Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            ..raw(VK_DBE_KATAKANA, true)
+        })
+        .unwrap();
+        assert_eq!((e.key, e.mods.shift), (Key::Kana, true));
     }
 
     #[test]

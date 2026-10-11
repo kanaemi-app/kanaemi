@@ -923,7 +923,16 @@ fn picking_a_candidate_by_number_is_an_action() {
 #[test]
 fn every_named_key_can_be_listed_and_read() {
     let names = key_names();
-    for name in ["left-shift", "eisu", "henkan", "space", "f1", "f12"] {
+    for name in [
+        "left-shift",
+        "eisu",
+        "henkan",
+        "zenkaku-hankaku",
+        "caps-lock",
+        "space",
+        "f1",
+        "f12",
+    ] {
         assert!(names.contains(&name.to_owned()), "{name}");
     }
     for name in &names {

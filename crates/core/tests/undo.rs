@@ -39,6 +39,13 @@ fn undoing_asks_the_host_to_erase_the_commit_before_choosing_again() {
 }
 
 #[test]
+fn caps_lock_bound_nowhere_keeps_the_commit_undoable() {
+    let mut t = committed();
+    t.key(Key::CapsLock);
+    assert_eq!(undo(&mut t).erase.as_deref(), Some("記者"));
+}
+
+#[test]
 fn the_candidate_chosen_is_chosen_again() {
     let mut t = T::new();
     t.kana();

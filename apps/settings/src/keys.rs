@@ -31,7 +31,8 @@ pub struct Held {
 pub fn recorded(held: Held, key: &str, code: &str) -> Option<String> {
     let mut shift = held.shift;
     let name = match key {
-        "Shift" | "Control" | "Alt" | "Meta" | "CapsLock" => return None,
+        "Shift" | "Control" | "Alt" | "Meta" => return None,
+        "CapsLock" => "caps-lock".to_owned(),
         "Enter" => "enter".to_owned(),
         "Tab" => "tab".to_owned(),
         "Escape" => "esc".to_owned(),
@@ -50,6 +51,7 @@ pub fn recorded(held: Held, key: &str, code: &str) -> Option<String> {
         "KanaMode" | "Lang1" => "kana".to_owned(),
         "Convert" => "henkan".to_owned(),
         "NonConvert" => "muhenkan".to_owned(),
+        "Zenkaku" | "Hankaku" | "ZenkakuHankaku" => "zenkaku-hankaku".to_owned(),
         _ if key.len() > 1 && key.starts_with('F') && key[1..].parse::<u8>().is_ok() => {
             key.to_lowercase()
         }
@@ -1524,6 +1526,8 @@ pub fn shown(text: &str) -> String {
         "kana" => "かな".to_owned(),
         "henkan" => "変換".to_owned(),
         "muhenkan" => "無変換".to_owned(),
+        "zenkaku-hankaku" => "半角/全角".to_owned(),
+        "caps-lock" => "Caps Lock".to_owned(),
         key => key.to_uppercase(),
     });
     parts.join("+")
@@ -1793,6 +1797,23 @@ mod tests {
         assert_eq!(
             recorded(Held::default(), "Lang2", "Lang2").as_deref(),
             Some("eisu")
+        );
+        assert_eq!(shown("zenkaku-hankaku"), "半角/全角");
+        for key in ["Zenkaku", "Hankaku", "ZenkakuHankaku"] {
+            assert_eq!(
+                recorded(Held::default(), key, "Backquote").as_deref(),
+                Some("zenkaku-hankaku"),
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn caps_lock_is_named_and_recorded() {
+        assert_eq!(shown("caps-lock"), "Caps Lock");
+        assert_eq!(
+            recorded(Held::default(), "CapsLock", "CapsLock").as_deref(),
+            Some("caps-lock")
         );
     }
 

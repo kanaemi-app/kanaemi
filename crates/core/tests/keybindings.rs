@@ -673,6 +673,70 @@ fn a_shift_tap_is_a_binding_that_can_be_taken_out() {
 }
 
 #[test]
+fn the_zenkaku_hankaku_and_caps_lock_keys_can_be_bound_in_each_mode() {
+    for key in [Key::ZenkakuHankaku, Key::CapsLock] {
+        let mut config = config();
+        config.bindings.kana.push(Binding {
+            from: plain(key),
+            gesture: Gesture::Press,
+            to: Action::Abc,
+        });
+        config.bindings.abc.push(Binding {
+            from: plain(key),
+            gesture: Gesture::Press,
+            to: Action::Kana,
+        });
+        let mut t = T::with_config(config);
+        assert_eq!(t.key(key).mode, Mode::Kana, "{key:?}");
+        assert_eq!(t.key(key).mode, Mode::Abc, "{key:?}");
+    }
+}
+
+#[test]
+fn caps_lock_bound_nowhere_leaves_what_is_typed_as_it_is() {
+    let mut t = T::new();
+    t.kana();
+    t.typ("k");
+    let out = t.key(Key::CapsLock);
+    assert!(!out.consumed);
+    assert_eq!(out.commit, None);
+    assert_eq!(t.typ("a").0, "か");
+
+    let shortcut = t.press(
+        Key::CapsLock,
+        Modifiers {
+            ctrl: true,
+            ..Default::default()
+        },
+    );
+    assert!(!shortcut.consumed);
+}
+
+#[test]
+fn caps_lock_can_be_replaced_for_the_application() {
+    let mut bindings = Bindings::default();
+    bindings.application.push(Remap {
+        from: plain(Key::CapsLock),
+        to: plain(Key::Backspace),
+    });
+    let mut t = T::with_config(Config {
+        bindings,
+        ..config()
+    });
+    let out = t.key(Key::CapsLock);
+    assert!(out.consumed);
+    assert_eq!(out.send, Some(plain(Key::Backspace)));
+}
+
+#[test]
+fn zenkaku_hankaku_bound_nowhere_does_nothing_while_typing_as_the_jis_keys_do() {
+    let mut t = reading_kanji();
+    let out = t.key(Key::ZenkakuHankaku);
+    assert!(out.consumed);
+    assert_eq!(out.preedit, "›かんじ");
+}
+
+#[test]
 fn a_shift_tap_can_do_something_else() {
     let mut config = config();
     config.bindings.reading.push(Binding {

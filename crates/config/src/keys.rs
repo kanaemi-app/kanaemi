@@ -376,6 +376,8 @@ const NAMED_KEYS: &[(&str, Key)] = &[
     ("kana", Key::Kana),
     ("henkan", Key::Henkan),
     ("muhenkan", Key::Muhenkan),
+    ("zenkaku-hankaku", Key::ZenkakuHankaku),
+    ("caps-lock", Key::CapsLock),
 ];
 
 /// Only named keys can be sent: a character's key code depends on the

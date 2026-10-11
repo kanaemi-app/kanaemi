@@ -325,14 +325,17 @@ impl Keys {
                     return None;
                 }
                 let Some(index) = SIDED.iter().position(|(code, ..)| *code == raw.key_code) else {
-                    // Caps Lock or Fn going down ends a tap. It goes as a bare key, so
-                    // the core does not commit as for a shortcut.
-                    let modifier = match raw.key_code {
-                        57 => CAPS_LOCK,
-                        63 => FUNCTION,
-                        _ => return None,
-                    };
-                    let down = raw.flags & modifier != 0;
+                    // macOS tells of Caps Lock only by its lock turning, once a
+                    // press: either way is a press.
+                    if raw.key_code == 57 {
+                        return Some(event(Key::CapsLock, KeyKind::Press));
+                    }
+                    // Fn going down ends a tap. It goes as a bare key, so the
+                    // core does not commit as for a shortcut.
+                    if raw.key_code != 63 {
+                        return None;
+                    }
+                    let down = raw.flags & FUNCTION != 0;
                     return down.then(|| KeyEvent {
                         key: Key::Modifier,
                         mods: Modifiers::default(),
@@ -1183,13 +1186,25 @@ mod tests {
     }
 
     #[test]
-    fn caps_lock_or_fn_going_down_is_a_modifier_key() {
+    fn fn_going_down_is_a_modifier_key() {
         let mut keys = Keys::default();
-        for (code, flag) in [(57, CAPS_LOCK), (63, FUNCTION)] {
-            let e = keys.translate(flags_changed(code, flag | SHIFT)).unwrap();
-            assert_eq!((e.key, e.mods), (Key::Modifier, Modifiers::default()));
-            assert_eq!(keys.translate(flags_changed(code, SHIFT)), None);
-        }
+        let e = keys.translate(flags_changed(63, FUNCTION | SHIFT)).unwrap();
+        assert_eq!((e.key, e.mods), (Key::Modifier, Modifiers::default()));
+        assert_eq!(keys.translate(flags_changed(63, SHIFT)), None);
+    }
+
+    #[test]
+    fn caps_lock_is_pressed_whichever_way_its_lock_turns() {
+        let mut keys = Keys::default();
+        let on = keys
+            .translate(flags_changed(57, CAPS_LOCK | SHIFT))
+            .unwrap();
+        assert_eq!(
+            (on.key, on.kind, on.mods.shift),
+            (Key::CapsLock, KeyKind::Press, true)
+        );
+        let off = keys.translate(at(flags_changed(57, 0), 500)).unwrap();
+        assert_eq!((off.key, off.kind), (Key::CapsLock, KeyKind::Press));
     }
 
     #[test]

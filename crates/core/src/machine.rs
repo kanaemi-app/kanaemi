@@ -367,8 +367,9 @@ impl<C: Converter> Core<C> {
         let consumed = self.key(key);
         // The application may move the caret or type: what is before the
         // caret is no longer known.
-        if key.kind == KeyKind::Press && !is_modifier(key.key) && (!consumed || self.send.is_some())
-        {
+        // Caps Lock passed on turns its lock, and the field stays as it is.
+        let quiet = is_modifier(key.key) || (key.key == Key::CapsLock && self.send.is_none());
+        if key.kind == KeyKind::Press && !quiet && (!consumed || self.send.is_some()) {
             self.undoable = None;
             self.kana_run = None;
         }
@@ -730,11 +731,14 @@ impl<C: Converter> Core<C> {
                 self.send = Some(remap.to);
                 return true;
             }
-        } else if shortcut {
+        } else if shortcut && key != Key::CapsLock {
             let pass = self.config.pass_while_composing;
             if !((mods.cmd && pass.cmd) || (mods.ctrl && pass.ctrl) || (mods.alt && pass.alt)) {
                 return true;
             }
+        }
+        if key == Key::CapsLock {
+            return false;
         }
         self.press_plain(key, mods)
     }
@@ -2102,6 +2106,7 @@ fn named(key: Key) -> bool {
             | Key::Kana
             | Key::Henkan
             | Key::Muhenkan
+            | Key::ZenkakuHankaku
     )
 }
 
