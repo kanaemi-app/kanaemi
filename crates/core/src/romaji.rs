@@ -190,10 +190,10 @@ fn parse_line(line: &str) -> Option<Line> {
     Some(Line::Add(parse_input(input)?, output))
 }
 
-/// Input is printable ASCII.
+/// Input is printable ASCII, the space included.
 fn parse_input(field: &str) -> Option<String> {
     let input = unescape(field, true)?;
-    let valid = !input.is_empty() && input.chars().all(|c| matches!(c, '!'..='~'));
+    let valid = !input.is_empty() && input.chars().all(|c| matches!(c, ' '..='~'));
     valid.then_some(input)
 }
 

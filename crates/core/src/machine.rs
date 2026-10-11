@@ -763,11 +763,17 @@ impl<C: Converter> Core<C> {
         }
         match self.mode {
             Mode::Abc => self.direct(key),
-            Mode::Kana => match mem::replace(&mut self.state, State::idle()) {
-                State::Idle { pending } => self.idle(pending, key),
-                State::Reading(word) => self.reading(word, key),
-                State::Candidates(selection) => self.candidates(selection, key),
-            },
+            Mode::Kana => {
+                let key = match key {
+                    Key::Space if self.config.romaji.is_input_char(' ') => Key::Char(' '),
+                    key => key,
+                };
+                match mem::replace(&mut self.state, State::idle()) {
+                    State::Idle { pending } => self.idle(pending, key),
+                    State::Reading(word) => self.reading(word, key),
+                    State::Candidates(selection) => self.candidates(selection, key),
+                }
+            }
         }
     }
 

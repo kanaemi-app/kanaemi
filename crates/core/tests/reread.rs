@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use kanaemi_core::{Event, Key, Mode, Modifiers, Output};
+use kanaemi_core::{Config, Event, Key, Mode, Modifiers, Output};
 
 fn reread(t: &mut T) -> Output {
     t.ctrl(';')
@@ -60,6 +60,18 @@ fn text_that_is_not_kana_ends_the_run() {
     assert_eq!(reread(&mut t).erase.as_deref(), Some("んじ"));
     let mut t = typed("ka-");
     assert_eq!(reread(&mut t).erase.as_deref(), Some("かー"), "ー is kana");
+}
+
+#[test]
+fn a_space_typed_through_the_table_ends_the_run() {
+    let mut romaji = romaji();
+    romaji.apply(" \t　");
+    let mut t = T::with_config(Config { romaji, ..config() });
+    t.kana();
+    t.typ("ka");
+    t.key(Key::Space);
+    t.typ("nji");
+    assert_eq!(reread(&mut t).erase.as_deref(), Some("んじ"));
 }
 
 #[test]
